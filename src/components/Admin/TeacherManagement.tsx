@@ -1,0 +1,710 @@
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../../context/AuthContext';
+import { User, ClassItem, SubjectItem, TeacherAssignment } from '../../types';
+import {
+  Users,
+  Plus,
+  Trash2,
+  BookOpen,
+  Shield,
+  Check,
+  CheckCircle2,
+  Edit2,
+  KeyRound,
+  Eye,
+  EyeOff,
+  AlertTriangle,
+  X,
+} from 'lucide-react';
+
+export const TeacherManagement: React.FC = () => {
+  const { fetchWithAuth, lang, t } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [teachers, setTeachers] = useState<any[]>([]);
+  const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [subjects, setSubjects] = useState<SubjectItem[]>([]);
+  const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
+
+  // Create Teacher Modal
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [tName, setTName] = useState('');
+  const [tNameMl, setTNameMl] = useState('');
+  const [tUsername, setTUsername] = useState('');
+  const [tPassword, setTPassword] = useState('teacher123');
+  const [tPhone, setTPhone] = useState('');
+
+  // Edit Teacher Modal
+  const [editingTeacher, setEditingTeacher] = useState<any | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editNameMl, setEditNameMl] = useState('');
+  const [editUsername, setEditUsername] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+
+  // Password Reset / Edit Modal
+  const [passwordTargetTeacher, setPasswordTargetTeacher] = useState<any | null>(null);
+  const [newPasswordVal, setNewPasswordVal] = useState('');
+  const [showPasswordMap, setShowPasswordMap] = useState<Record<string, boolean>>({});
+
+  // Assign Class & Subject Modal
+  const [assignTeacher, setAssignTeacher] = useState<any | null>(null);
+  const [assignClassId, setAssignClassId] = useState('');
+  const [assignSubjectId, setAssignSubjectId] = useState('');
+
+  const isMl = lang === 'ml';
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const [resT, resC, resS, resA] = await Promise.all([
+        fetchWithAuth('/api/teachers'),
+        fetchWithAuth('/api/classes'),
+        fetchWithAuth('/api/subjects'),
+        fetchWithAuth('/api/teacher-assignments'),
+      ]);
+      const tData = await resT.json();
+      const cData = await resC.json();
+      const sData = await resS.json();
+      const aData = await resA.json();
+
+      setTeachers(tData);
+      setClasses(cData);
+      setSubjects(sData);
+      setAssignments(aData);
+      if (cData.length > 0 && !assignClassId) setAssignClassId(cData[0].id);
+      if (sData.length > 0 && !assignSubjectId) setAssignSubjectId(sData[0].id);
+    } catch (err) {
+      console.error('Error loading teachers:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const toggleShowPassword = (teacherId: string) => {
+    setShowPasswordMap(prev => ({
+      ...prev,
+      [teacherId]: !prev[teacherId],
+    }));
+  };
+
+  const handleCreateTeacher = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetchWithAuth('/api/teachers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: tName.trim(),
+          nameMl: tNameMl.trim() || tName.trim(),
+          username: tUsername.trim(),
+          password: tPassword.trim(),
+          phone: tPhone.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to create teacher account');
+      }
+      setShowAddModal(false);
+      setTName('');
+      setTNameMl('');
+      setTUsername('');
+      setTPhone('');
+      loadData();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleOpenEdit = (teacher: any) => {
+    setEditingTeacher(teacher);
+    setEditName(teacher.name);
+    setEditNameMl(teacher.nameMl || '');
+    setEditUsername(teacher.username);
+    setEditPhone(teacher.phone || '');
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTeacher) return;
+    try {
+      const res = await fetchWithAuth(`/api/teachers/${editingTeacher.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editName.trim(),
+          nameMl: editNameMl.trim() || editName.trim(),
+          username: editUsername.trim(),
+          phone: editPhone.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to update teacher account');
+      }
+      setEditingTeacher(null);
+      loadData();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleDeleteTeacher = async (teacher: any) => {
+    const confirm = window.confirm(
+      `Are you sure you want to delete teacher account "${teacher.name}" (@${teacher.username})? All their class/subject assignments will be removed.`
+    );
+    if (!confirm) return;
+
+    try {
+      const res = await fetchWithAuth(`/api/teachers/${teacher.id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to delete teacher account');
+      }
+      loadData();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleOpenResetPassword = (teacher: any) => {
+    setPasswordTargetTeacher(teacher);
+    setNewPasswordVal(teacher.plainPassword && teacher.plainPassword !== '—' ? teacher.plainPassword : '');
+  };
+
+  const handleSavePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordTargetTeacher || !newPasswordVal.trim()) return;
+
+    try {
+      const res = await fetchWithAuth(`/api/users/${passwordTargetTeacher.id}/password`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newPassword: newPasswordVal.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to update password');
+      }
+      setPasswordTargetTeacher(null);
+      setNewPasswordVal('');
+      loadData();
+      alert(`Password for ${passwordTargetTeacher.name} updated successfully!`);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleAddAssignment = async () => {
+    if (!assignTeacher || !assignClassId || !assignSubjectId) return;
+    try {
+      const res = await fetchWithAuth('/api/teacher-assignments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          teacherId: assignTeacher.id,
+          classId: assignClassId,
+          subjectId: assignSubjectId,
+        }),
+      });
+      if (res.ok) {
+        setAssignTeacher(null);
+        loadData();
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to assign teacher');
+      }
+    } catch (err) {
+      alert('Failed to assign teacher');
+    }
+  };
+
+  const handleRemoveAssignment = async (assignId: string) => {
+    if (!window.confirm('Remove this subject assignment?')) return;
+    try {
+      const res = await fetchWithAuth(`/api/teacher-assignments/${assignId}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        loadData();
+      }
+    } catch (err) {
+      alert('Failed to delete assignment');
+    }
+  };
+
+  // Helper to get subject display name strictly in Malayalam
+  const getSubjectMalayalamName = (sub: SubjectItem, clsNumericGrade?: number) => {
+    if (clsNumericGrade === 9 && (sub.id === 'sub_history_buhuth' || sub.code === 'HST')) {
+      return 'ബുഹൂസ്';
+    }
+    return sub.nameMl || sub.nameEn;
+  };
+
+  if (loading) {
+    return <div className="text-center py-10 text-xs text-slate-500">Loading teacher accounts...</div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">{t.navTeachers} ({teachers.length})</h2>
+          <p className="text-xs text-slate-500">
+            Full management controls: edit teacher names, assign subjects/classes, reset passwords, and delete accounts.
+          </p>
+        </div>
+
+        <button
+          onClick={() => setShowAddModal(true)}
+          className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
+        >
+          <Plus className="w-4 h-4" />
+          Create Teacher Account
+        </button>
+      </div>
+
+      {teachers.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
+          <Users className="w-10 h-10 mx-auto text-slate-400 mb-2" />
+          <h3 className="font-bold text-slate-800 text-sm">No Teachers Added Yet</h3>
+          <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+            The database is in a fresh clean state. Click the "Create Teacher Account" button above to add Usthad teachers and assign them to classes and subjects.
+          </p>
+        </div>
+      ) : (
+        /* Teachers Cards List */
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {teachers.map(teacher => {
+            const tAssignments = assignments.filter(a => a.teacherId === teacher.id);
+            const isPasswordVisible = !!showPasswordMap[teacher.id];
+
+            return (
+              <div
+                key={teacher.id}
+                className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4 flex flex-col justify-between hover:shadow-sm transition"
+              >
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full">
+                      Usthad Account
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleOpenEdit(teacher)}
+                        className="p-1 text-slate-400 hover:text-emerald-700 hover:bg-slate-100 rounded-lg transition"
+                        title="Edit Teacher"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteTeacher(teacher)}
+                        className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                        title="Delete Teacher"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <h3 className="font-bold text-slate-900 text-base mt-2">
+                    {teacher.name}
+                  </h3>
+                  {teacher.nameMl && teacher.nameMl !== teacher.name && (
+                    <p className="text-xs text-slate-600 font-medium">{teacher.nameMl}</p>
+                  )}
+                  <p className="text-xs text-slate-500 font-mono">@{teacher.username}</p>
+                  {teacher.phone && (
+                    <p className="text-xs text-slate-500 mt-0.5">📞 {teacher.phone}</p>
+                  )}
+
+                  {/* Password & Credentials Management Box */}
+                  <div className="mt-3 p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                        <KeyRound className="w-3 h-3 text-slate-400" /> Login Password:
+                      </span>
+                      <button
+                        onClick={() => handleOpenResetPassword(teacher)}
+                        className="text-[10px] font-bold text-emerald-800 hover:underline"
+                      >
+                        Reset / Edit
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between bg-white px-2 py-1 rounded-lg border border-slate-200">
+                      <span className="font-mono text-xs font-semibold text-slate-800">
+                        {isPasswordVisible ? teacher.plainPassword || '—' : '••••••••'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleShowPassword(teacher.id)}
+                        className="text-slate-400 hover:text-slate-600 p-0.5"
+                        title={isPasswordVisible ? 'Hide Password' : 'Show Password'}
+                      >
+                        {isPasswordVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Assigned Subjects List - Strictly in Malayalam */}
+                  <div className="mt-3 pt-3 border-t border-slate-100 space-y-1.5">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Assigned Classes & Subjects ({tAssignments.length}):
+                    </span>
+                    {tAssignments.length === 0 ? (
+                      <span className="text-xs text-slate-400 italic">No classes assigned yet</span>
+                    ) : (
+                      <div className="space-y-1 max-h-36 overflow-y-auto">
+                        {tAssignments.map(a => {
+                          const cls = classes.find(c => c.id === a.classId);
+                          const sub = subjects.find(s => s.id === a.subjectId);
+                          const subMlName = sub ? getSubjectMalayalamName(sub, cls?.numericGrade) : '—';
+
+                          return (
+                            <div
+                              key={a.id}
+                              className="flex items-center justify-between text-xs bg-slate-50 p-2 rounded-lg border border-slate-200"
+                            >
+                              <span className="font-semibold text-slate-800">
+                                {cls?.name} • <span className="text-emerald-950 font-bold">{subMlName}</span>
+                              </span>
+                              <button
+                                onClick={() => handleRemoveAssignment(a.id)}
+                                className="text-slate-400 hover:text-rose-600 p-0.5 transition"
+                                title="Remove assignment"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    onClick={() => setAssignTeacher(teacher)}
+                    className="w-full py-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Assign Class & Subject
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Add Teacher Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-slate-900">Create New Teacher Account</h3>
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateTeacher} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Teacher Name (English)</label>
+                <input
+                  type="text"
+                  value={tName}
+                  onChange={e => setTName(e.target.value)}
+                  placeholder="e.g. Usthad Ibrahim Moulavi"
+                  className="w-full p-2 border rounded-lg focus:outline-emerald-700"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Teacher Name (Malayalam)</label>
+                <input
+                  type="text"
+                  value={tNameMl}
+                  onChange={e => setTNameMl(e.target.value)}
+                  placeholder="ഉദാ: ഉസ്താദ് ഇബ്രാഹിം മൗലവി"
+                  className="w-full p-2 border rounded-lg focus:outline-emerald-700"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Login Username</label>
+                <input
+                  type="text"
+                  value={tUsername}
+                  onChange={e => setTUsername(e.target.value)}
+                  placeholder="e.g. teacher.ibrahim"
+                  className="w-full p-2 border rounded-lg font-mono focus:outline-emerald-700"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Login Password</label>
+                <input
+                  type="text"
+                  value={tPassword}
+                  onChange={e => setTPassword(e.target.value)}
+                  className="w-full p-2 border rounded-lg font-mono focus:outline-emerald-700"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Phone Number</label>
+                <input
+                  type="text"
+                  value={tPhone}
+                  onChange={e => setTPhone(e.target.value)}
+                  placeholder="+91 9847..."
+                  className="w-full p-2 border rounded-lg focus:outline-emerald-700"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="px-3.5 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 font-bold text-white bg-emerald-800 rounded-lg hover:bg-emerald-900 cursor-pointer"
+                >
+                  Create Account
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Teacher Modal */}
+      {editingTeacher && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-slate-900">Edit Teacher Account</h3>
+              <button
+                onClick={() => setEditingTeacher(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Teacher Name (English)</label>
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={e => setEditName(e.target.value)}
+                  className="w-full p-2 border rounded-lg focus:outline-emerald-700"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Teacher Name (Malayalam)</label>
+                <input
+                  type="text"
+                  value={editNameMl}
+                  onChange={e => setEditNameMl(e.target.value)}
+                  className="w-full p-2 border rounded-lg focus:outline-emerald-700"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Login Username</label>
+                <input
+                  type="text"
+                  value={editUsername}
+                  onChange={e => setEditUsername(e.target.value)}
+                  className="w-full p-2 border rounded-lg font-mono focus:outline-emerald-700"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Phone Number</label>
+                <input
+                  type="text"
+                  value={editPhone}
+                  onChange={e => setEditPhone(e.target.value)}
+                  className="w-full p-2 border rounded-lg focus:outline-emerald-700"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingTeacher(null)}
+                  className="px-3.5 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 font-bold text-white bg-emerald-800 rounded-lg hover:bg-emerald-900 cursor-pointer"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reset / Edit Password Modal */}
+      {passwordTargetTeacher && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-1.5">
+                <KeyRound className="w-4 h-4 text-emerald-800" />
+                Reset Password
+              </h3>
+              <button
+                onClick={() => setPasswordTargetTeacher(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-4">
+              Update login password for <strong>{passwordTargetTeacher.name}</strong> (@{passwordTargetTeacher.username}):
+            </p>
+
+            <form onSubmit={handleSavePassword} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">New Password</label>
+                <input
+                  type="text"
+                  value={newPasswordVal}
+                  onChange={e => setNewPasswordVal(e.target.value)}
+                  placeholder="Enter new password"
+                  className="w-full p-2 border rounded-lg font-mono focus:outline-emerald-700"
+                  required
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setPasswordTargetTeacher(null)}
+                  className="px-3 py-1.5 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-3.5 py-1.5 font-bold text-white bg-emerald-800 rounded-lg hover:bg-emerald-900 cursor-pointer"
+                >
+                  Update Password
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Assign Class & Subject Modal */}
+      {assignTeacher && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-base font-bold text-slate-900">
+                Assign Class & Subject to {assignTeacher.name}
+              </h3>
+              <button
+                onClick={() => setAssignTeacher(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-4">
+              Select class and subject. Teacher will only have access to enter marks for their assigned matrix.
+            </p>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Class</label>
+                <select
+                  value={assignClassId}
+                  onChange={e => setAssignClassId(e.target.value)}
+                  className="w-full p-2 border rounded-lg bg-slate-50 font-semibold focus:outline-emerald-700"
+                >
+                  {classes.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.nameMl})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Subject (വിഷയം — strictly in Malayalam)
+                </label>
+                <select
+                  value={assignSubjectId}
+                  onChange={e => setAssignSubjectId(e.target.value)}
+                  className="w-full p-2 border rounded-lg bg-slate-50 font-semibold focus:outline-emerald-700"
+                >
+                  {subjects.map(s => {
+                    const selClass = classes.find(c => c.id === assignClassId);
+                    const subMl = getSubjectMalayalamName(s, selClass?.numericGrade);
+                    return (
+                      <option key={s.id} value={s.id}>
+                        {subMl} ({s.code})
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setAssignTeacher(null)}
+                  className="px-3.5 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddAssignment}
+                  className="px-4 py-2 font-bold text-white bg-emerald-800 rounded-lg hover:bg-emerald-900 cursor-pointer"
+                >
+                  Confirm Assignment
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
