@@ -197,6 +197,25 @@ export const StudentManagement: React.FC = () => {
     }
   };
 
+  const handleExportCsv = async () => {
+    try {
+      const res = await fetchWithAuth(`/api/students/export-csv${selectedClassId ? `?classId=${selectedClassId}` : ''}`);
+      if (!res.ok) throw new Error('Failed to export students CSV');
+      const text = await res.text();
+      const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `students_list${selectedClassId ? `_${selectedClassId}` : ''}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.message || 'Error exporting CSV');
+    }
+  };
+
   // Filter students
   const filteredStudents = students.filter(s => {
     const matchClass = selectedClassId ? s.classId === selectedClassId : true;
@@ -221,14 +240,14 @@ export const StudentManagement: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <a
-            href={`/api/students/export-csv${selectedClassId ? `?classId=${selectedClassId}` : ''}`}
-            download
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-2xs"
+          <button
+            type="button"
+            onClick={handleExportCsv}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
             {t.exportCsv}
-          </a>
+          </button>
 
           <button
             onClick={() => setShowImportModal(true)}

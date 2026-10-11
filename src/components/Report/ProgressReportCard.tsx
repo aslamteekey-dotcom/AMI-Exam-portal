@@ -191,17 +191,17 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
           </div>
 
           {/* 3. DYNAMIC ASSESSMENT COMPONENTS & SUBJECT MARKS TABLE */}
-          {/* Strictly displaying Subject names in Malayalam */}
+          {/* Strictly displaying Subject names in Malayalam, while Assessment Components and Table Headers are strictly in English */}
           <div className="mb-5 overflow-hidden border border-emerald-900/30 rounded-lg">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-emerald-900 text-white font-semibold text-center border-b border-emerald-950">
                   <th className="py-2.5 px-3 text-left w-10">#</th>
-                  <th className="py-2.5 px-3 text-left">വിഷയം (Subject)</th>
-                  <th className="py-2.5 px-3 text-left">{t.components}</th>
-                  <th className="py-2.5 px-2 w-20">{t.maxMarks}</th>
-                  <th className="py-2.5 px-2 w-24">{t.totalObtained}</th>
-                  <th className="py-2.5 px-2 w-24">{t.result}</th>
+                  <th className="py-2.5 px-3 text-left">Subject</th>
+                  <th className="py-2.5 px-3 text-left">Components</th>
+                  <th className="py-2.5 px-2 w-20">Max Marks</th>
+                  <th className="py-2.5 px-2 w-24">Total</th>
+                  <th className="py-2.5 px-2 w-24">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
@@ -221,7 +221,7 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
                             return (
                               <div key={comp.key} className="flex justify-between text-[11px] text-slate-700 border-b border-dotted border-slate-200 pb-0.5">
                                 <span>
-                                  {comp.labelMl}{' '}
+                                  {comp.labelEn}{' '}
                                   <span className="text-slate-400">({comp.maxMarks})</span>
                                 </span>
                                 <span className={`font-semibold font-mono ${isMissingCeComp ? 'text-amber-700 font-bold' : ''}`}>
@@ -238,7 +238,7 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
                       <td className="py-2.5 px-2 text-center font-bold font-mono text-sm">
                         {isSubAbsent ? (
                           <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded text-xs">
-                            {isMl ? 'പങ്കെടുത്തില്ല' : 'Absent'}
+                            Absent
                           </span>
                         ) : sub.hasMissingCe ? (
                           <span className="text-amber-800 bg-amber-50 px-2 py-0.5 rounded text-[11px] font-bold">
@@ -252,7 +252,7 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
                       </td>
                       <td className="py-2.5 px-2 text-center">
                         {isSubAbsent ? (
-                          <span className="text-amber-800 text-[11px] font-semibold">{isMl ? 'പങ്കെടുത്തില്ല' : 'Absent'}</span>
+                          <span className="text-amber-800 text-[11px] font-semibold">Absent</span>
                         ) : sub.hasMissingCe ? (
                           <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded text-[10px] font-bold">
                             Withheld
@@ -265,7 +265,7 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
                                 : 'bg-rose-100 text-rose-800'
                             }`}
                           >
-                            {isMl ? sub.statusTextMl : sub.statusTextEn}
+                            {sub.statusTextEn === 'Passed' ? 'Pass' : sub.statusTextEn}
                           </span>
                         ) : (
                           <span className="text-slate-400 text-[11px]">—</span>
@@ -282,7 +282,7 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
           <div className="bg-emerald-900 text-white rounded-lg p-4 mb-6 shadow-sm">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center divide-x divide-emerald-800/60">
               <div>
-                <span className="text-xs text-emerald-200 block uppercase tracking-wider">{t.totalObtained}</span>
+                <span className="text-xs text-emerald-200 block uppercase tracking-wider">Total</span>
                 <span className="text-2xl font-black font-mono mt-0.5 block">
                   {report.hasAbsentSubjects || report.hasIncompleteSubjects || report.hasWithheldCe ? (
                     <span className="text-emerald-300 text-lg">{report.totalObtainedMarks} / {report.totalMaxMarks}*</span>
@@ -292,13 +292,13 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
                 </span>
               </div>
               <div>
-                <span className="text-xs text-emerald-200 block uppercase tracking-wider">{t.percentage}</span>
+                <span className="text-xs text-emerald-200 block uppercase tracking-wider">Percentage</span>
                 <span className="text-2xl font-black font-mono mt-0.5 block">
                   {report.percentage !== null ? `${report.percentage}%` : 'N/A'}
                 </span>
               </div>
               <div>
-                <span className="text-xs text-emerald-200 block uppercase tracking-wider">{t.rank}</span>
+                <span className="text-xs text-emerald-200 block uppercase tracking-wider">Rank</span>
                 <div className="flex items-center justify-center gap-1 mt-0.5">
                   <Award className="w-5 h-5 text-amber-400" />
                   <span className="text-2xl font-black font-mono text-amber-300">
@@ -310,11 +310,11 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
                 </span>
               </div>
               <div>
-                <span className="text-xs text-emerald-200 block uppercase tracking-wider">{t.result}</span>
+                <span className="text-xs text-emerald-200 block uppercase tracking-wider">Status</span>
                 <span className={`text-base font-bold mt-1 block px-2 py-0.5 rounded ${
                   report.resultStatus === 'Withheld' ? 'bg-amber-400 text-amber-950' : ''
                 }`}>
-                  {isMl ? report.resultStatusMl : report.resultStatus}
+                  {report.resultStatus === 'Passed' ? 'Pass' : report.resultStatus}
                 </span>
               </div>
             </div>

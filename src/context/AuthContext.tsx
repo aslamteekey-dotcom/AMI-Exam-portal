@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
 import { Language, translations } from '../i18n';
+import { clientStorageApi } from '../services/clientStorageApi';
+
+// Pure client-side authentication and mock API routes running 100% in-browser on Vercel
 
 interface AuthContextType {
   user: User | null;
@@ -18,10 +21,10 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => clientStorageApi.getCurrentUser());
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('madrasa_auth_token'));
   const [lang, setLangState] = useState<Language>(() => (localStorage.getItem('madrasa_lang') as Language) || 'en');
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const setLang = (l: Language) => {
     setLangState(l);
@@ -31,34 +34,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const t = translations[lang];
 
   const fetchWithAuth = async (url: string, options: RequestInit = {}): Promise<Response> => {
-    const headers = new Headers(options.headers || {});
-    if (token) {
-      headers.set('Authorization', `Bearer ${token}`);
-    }
-    return fetch(url, { ...options, headers });
+    return clientStorageApi.handleRequest(url, options);
   };
 
   const refreshUser = async () => {
-    if (!token) {
-      setUser(null);
-      setIsLoading(false);
-      return;
-    }
-    try {
-      const res = await fetchWithAuth('/api/auth/me');
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data.user);
-      } else {
-        localStorage.removeItem('madrasa_auth_token');
-        setToken(null);
-        setUser(null);
-      }
-    } catch (err) {
-      console.error('Failed to fetch auth session:', err);
-    } finally {
-      setIsLoading(false);
-    }
+    const current = clientStorageApi.getCurrentUser();
+    setUser(current);
+    setIsLoading(false);
   };
 
   useEffect(() => {
@@ -67,33 +49,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (username: string, pass: string) => {
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password: pass }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        return { success: false, error: data.error || 'Login failed' };
+      const res = clientStorageApi.login(username, pass);
+      if (!res.success || !res.user || !res.token) {
+        return { success: false, error: res.error || 'Authentication failed. Please check your credentials.' };
       }
-      setToken(data.token);
-      setUser(data.user);
-      localStorage.setItem('madrasa_auth_token', data.token);
+      setToken(res.token);
+      setUser(res.user);
       return { success: true };
     } catch (err: any) {
-      return { success: false, error: err.message || 'Network error' };
+      return { success: false, error: err.message || 'Login error' };
     }
   };
 
-  const logout = async () => {
-    if (token) {
-      try {
-        await fetchWithAuth('/api/auth/logout', { method: 'POST' });
-      } catch (err) {
-        // ignore
-      }
-    }
-    localStorage.removeItem('madrasa_auth_token');
+  const logout = () => {
+    clientStorageApi.logout();
     setToken(null);
     setUser(null);
   };
@@ -125,3 +94,4 @@ export const useAuth = () => {
   }
   return context;
 };
+

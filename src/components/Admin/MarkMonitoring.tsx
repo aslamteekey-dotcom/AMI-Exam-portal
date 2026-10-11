@@ -178,8 +178,8 @@ export const MarkMonitoring: React.FC = () => {
         <table className="w-full text-xs text-left">
           <thead className="bg-slate-100 text-slate-700 font-bold border-b">
             <tr>
-              <th className="p-3 w-28">{t.class}</th>
-              <th className="p-3">{t.subject}</th>
+              <th className="p-3 w-28">Class</th>
+              <th className="p-3">Subject</th>
               <th className="p-3">Assigned Usthad (Teacher)</th>
               <th className="p-3 text-center w-24">Students</th>
               <th className="p-3 text-center w-36">Status</th>

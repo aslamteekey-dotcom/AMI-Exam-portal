@@ -60,6 +60,26 @@ export const BulkReportsPrint: React.FC = () => {
     }
   };
 
+  const handleExportCsv = async () => {
+    if (!selectedClassId || !selectedExamId) return;
+    try {
+      const res = await fetchWithAuth(`/api/export/class-results-csv?classId=${selectedClassId}&examId=${selectedExamId}`);
+      if (!res.ok) throw new Error('Failed to export CSV');
+      const text = await res.text();
+      const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `class_${selectedClassId}_results.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.message || 'Error exporting CSV');
+    }
+  };
+
   if (loading) {
     return <div className="text-center py-10 text-xs text-slate-500">Loading progress report center...</div>;
   }
@@ -85,14 +105,14 @@ export const BulkReportsPrint: React.FC = () => {
         </div>
 
         {reportsData && (
-          <a
-            href={`/api/export/class-results-csv?classId=${selectedClassId}&examId=${selectedExamId}`}
-            download
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-2xs"
+          <button
+            type="button"
+            onClick={handleExportCsv}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
             Export Class Results CSV
-          </a>
+          </button>
         )}
       </div>
 

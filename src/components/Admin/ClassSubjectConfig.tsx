@@ -167,7 +167,7 @@ export const ClassSubjectConfig: React.FC = () => {
                         className="flex justify-between items-center text-slate-700 py-0.5 border-b border-slate-100 last:border-none"
                       >
                         <span className="font-medium">
-                          {isMl ? comp.labelMl : comp.labelEn}
+                          {comp.labelEn}
                         </span>
                         <span className="font-mono font-bold text-emerald-900">
                           {comp.maxMarks}

@@ -366,19 +366,19 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
           <table className="w-full text-left border-collapse text-sm">
             <thead>
               <tr className="bg-slate-100 text-slate-700 text-xs uppercase tracking-wider border-b border-slate-200">
-                <th className="py-3 px-4 w-16 text-center">{t.rollNo}</th>
-                <th className="py-3 px-4 w-52">{t.studentName}</th>
+                <th className="py-3 px-4 w-16 text-center">Roll No</th>
+                <th className="py-3 px-4 w-52">Student Name</th>
                 <th className="py-3 px-4 w-28 text-center">Status</th>
                 {components.map(comp => (
                   <th key={comp.componentKey} className="py-3 px-3 text-center min-w-[130px]">
-                    <div>{isMl ? comp.labelMl : comp.labelEn}</div>
+                    <div>{comp.labelEn}</div>
                     <div className="text-[10px] text-emerald-800 font-bold lowercase">
                       (max {comp.maxMarks})
                     </div>
                   </th>
                 ))}
                 <th className="py-3 px-4 w-28 text-center font-bold bg-slate-200/60">
-                  {t.totalObtained}
+                  Total
                   <div className="text-[10px] text-slate-500 lowercase">(max {subjectMaxMarks})</div>
                 </th>
               </tr>
@@ -510,7 +510,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
             <div className="flex justify-between items-center mb-4 pb-2 border-b">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
-                  Mark Sheet Preview: {subject?.displayNameEn} ({cls?.name})
+                  Mark Sheet Preview: {cls?.numericGrade === 9 && (subject?.id === 'sub_history_buhuth' || subject?.code === 'HST') ? 'ബുഹൂസ്' : subject?.displayNameMl || subject?.nameMl || subject?.nameEn} ({cls?.name})
                 </h3>
                 <p className="text-xs text-slate-500">{exam?.nameEn} • Al-Madrasathul Islamiya Pallikkuth</p>
               </div>
