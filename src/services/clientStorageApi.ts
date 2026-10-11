@@ -173,7 +173,7 @@ export function getDefaultSubjects(): SubjectItem[] {
   ];
 }
 
-// Initial clean seed data generator
+// Initial clean seed data generator with complete mock data
 export function getInitialClientSeedData(): MadrasaDatabase {
   const academicYear: AcademicYear = {
     id: 'ay_2026_2027',
@@ -195,7 +195,33 @@ export function getInitialClientSeedData(): MadrasaDatabase {
 
   const subjects = getDefaultSubjects();
 
-  // Fresh clean state: Only Principal ASLAM TK, NO dummy teachers, parents, students, or exams
+  const examinations: Examination[] = [
+    {
+      id: 'exam_half_yearly_2026_27',
+      academicYearId: 'ay_2026_2027',
+      nameEn: 'Half-Yearly Examination 2026–2027',
+      nameMl: 'അർദ്ധവാർഷിക പരീക്ഷ 2026–2027',
+      startDate: '2026-10-15',
+      endDate: '2026-10-25',
+      isPublished: false,
+      status: 'ongoing',
+      classesParticipating: ['cls_1', 'cls_2', 'cls_3', 'cls_4', 'cls_5', 'cls_6', 'cls_7', 'cls_8', 'cls_9'],
+      passMarkPercentage: 35,
+    },
+    {
+      id: 'exam_annual_2026_27',
+      academicYearId: 'ay_2026_2027',
+      nameEn: 'Annual Examination 2026–2027',
+      nameMl: 'വാർഷിക പരീക്ഷ 2026–2027',
+      startDate: '2027-03-10',
+      endDate: '2027-03-22',
+      isPublished: false,
+      status: 'draft',
+      classesParticipating: ['cls_1', 'cls_2', 'cls_3', 'cls_4', 'cls_5', 'cls_6', 'cls_7', 'cls_8', 'cls_9'],
+      passMarkPercentage: 35,
+    },
+  ];
+
   const users: User[] = [
     {
       id: 'usr_admin',
@@ -208,6 +234,333 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       email: 'aslamteekey@gmail.com',
       phone: '+91 9447123456',
       createdAt: '2026-06-01T08:00:00Z',
+    },
+    {
+      id: 'usr_t1',
+      username: 'usthad.abdulrahman',
+      name: 'Usthad Abdul Rahman',
+      nameMl: 'ഉസ്താദ് അബ്ദുൽ റഹ്മാൻ',
+      role: 'teacher',
+      plainPassword: 'teacher123',
+      active: true,
+      email: 'abdulrahman@madrasapallikkuth.edu',
+      phone: '+91 9847123456',
+      createdAt: '2026-06-01T08:00:00Z',
+    },
+    {
+      id: 'usr_t2',
+      username: 'usthad.muhammad',
+      name: 'Usthad Muhammad Faizy',
+      nameMl: 'ഉസ്താദ് മുഹമ്മദ് ഫൈസി',
+      role: 'teacher',
+      plainPassword: 'teacher123',
+      active: true,
+      email: 'muhammadfaizy@madrasapallikkuth.edu',
+      phone: '+91 9847234567',
+      createdAt: '2026-06-01T08:00:00Z',
+    },
+    {
+      id: 'usr_t3',
+      username: 'usthad.usman',
+      name: 'Usthad Usman Musliyar',
+      nameMl: 'ഉസ്താദ് ഉസ്മാൻ മുസ്ലിയാർ',
+      role: 'teacher',
+      plainPassword: 'teacher123',
+      active: true,
+      email: 'usmanmusliyar@madrasapallikkuth.edu',
+      phone: '+91 9847345678',
+      createdAt: '2026-06-01T08:00:00Z',
+    },
+    {
+      id: 'usr_p1',
+      username: 'parent.hamza',
+      name: 'Hamza K',
+      nameMl: 'ഹംസ കെ',
+      role: 'parent',
+      plainPassword: '9001',
+      active: true,
+      email: 'hamza.k@gmail.com',
+      phone: '+91 9846123456',
+      createdAt: '2026-06-01T08:00:00Z',
+    },
+  ];
+
+  const students: Student[] = [
+    // Class 1
+    {
+      id: 'st_101',
+      admissionNo: '1001',
+      rollNo: 1,
+      nameEn: 'Muhammed Raihan',
+      nameMl: 'മുഹമ്മദ് റൈഹാൻ',
+      classId: 'cls_1',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Hamza K',
+      parentNameMl: 'ഹംസ കെ',
+      parentPhone: '+91 9846123456',
+      parentUserId: 'usr_p1',
+      status: 'active',
+      gender: 'M',
+    },
+    {
+      id: 'st_102',
+      admissionNo: '1002',
+      rollNo: 2,
+      nameEn: 'Fathima Rida',
+      nameMl: 'ഫാത്തിമ റിദ',
+      classId: 'cls_1',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Ibrahim M',
+      parentNameMl: 'ഇബ്രാഹിം എം',
+      parentPhone: '+91 9846123457',
+      status: 'active',
+      gender: 'F',
+    },
+    {
+      id: 'st_103',
+      admissionNo: '1003',
+      rollNo: 3,
+      nameEn: 'Bilal Ahmed',
+      nameMl: 'ബിലാൽ അഹമ്മദ്',
+      classId: 'cls_1',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Musthafa P',
+      parentNameMl: 'മുസ്തഫ പി',
+      parentPhone: '+91 9846123458',
+      status: 'active',
+      gender: 'M',
+    },
+    {
+      id: 'st_104',
+      admissionNo: '1004',
+      rollNo: 4,
+      nameEn: 'Ayesha Noor',
+      nameMl: 'ആയിഷ നൂർ',
+      classId: 'cls_1',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Kabeer T',
+      parentNameMl: 'കബീർ ടി',
+      parentPhone: '+91 9846123459',
+      status: 'active',
+      gender: 'F',
+    },
+    // Class 2
+    {
+      id: 'st_201',
+      admissionNo: '2001',
+      rollNo: 1,
+      nameEn: 'Zayan Malik',
+      nameMl: 'സയാൻ മാലിക്',
+      classId: 'cls_2',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Shafi V',
+      parentNameMl: 'ഷാഫി വി',
+      parentPhone: '+91 9846123460',
+      status: 'active',
+      gender: 'M',
+    },
+    {
+      id: 'st_202',
+      admissionNo: '2002',
+      rollNo: 2,
+      nameEn: 'Huda Fathima',
+      nameMl: 'ഹുദ ഫാത്തിമ',
+      classId: 'cls_2',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Rasheed A',
+      parentNameMl: 'റഷീദ് എ',
+      parentPhone: '+91 9846123461',
+      status: 'active',
+      gender: 'F',
+    },
+    // Class 5
+    {
+      id: 'st_501',
+      admissionNo: '5001',
+      rollNo: 1,
+      nameEn: 'Ahmed Nihal',
+      nameMl: 'അഹമ്മദ് നിഹാൽ',
+      classId: 'cls_5',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Abdul Latheef',
+      parentNameMl: 'അബ്ദുൽ ലത്തീഫ്',
+      parentPhone: '+91 9846123462',
+      status: 'active',
+      gender: 'M',
+    },
+    {
+      id: 'st_502',
+      admissionNo: '5002',
+      rollNo: 2,
+      nameEn: 'Aisha Minha',
+      nameMl: 'ആയിഷ മിൻഹ',
+      classId: 'cls_5',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Usman Farook',
+      parentNameMl: 'ഉസ്മാൻ ഫാറൂഖ്',
+      parentPhone: '+91 9846123463',
+      status: 'active',
+      gender: 'F',
+    },
+    {
+      id: 'st_503',
+      admissionNo: '5003',
+      rollNo: 3,
+      nameEn: 'Zainul Abid',
+      nameMl: 'സൈനുൽ ആബിദ്',
+      classId: 'cls_5',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Hamza K',
+      parentNameMl: 'ഹംസ കെ',
+      parentPhone: '+91 9846123456',
+      parentUserId: 'usr_p1',
+      status: 'active',
+      gender: 'M',
+    },
+    {
+      id: 'st_504',
+      admissionNo: '5004',
+      rollNo: 4,
+      nameEn: 'Safwan Ali',
+      nameMl: 'സഫ്‍വാൻ അലി',
+      classId: 'cls_5',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Ali Master',
+      parentNameMl: 'അലി മാസ്റ്റർ',
+      parentPhone: '+91 9846123464',
+      status: 'active',
+      gender: 'M',
+    },
+    // Class 9
+    {
+      id: 'st_901',
+      admissionNo: '9001',
+      rollNo: 1,
+      nameEn: 'Salman Faris',
+      nameMl: 'സൽമാൻ ഫാരിസ്',
+      classId: 'cls_9',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Hamza K',
+      parentNameMl: 'ഹംസ കെ',
+      parentPhone: '+91 9846123456',
+      parentUserId: 'usr_p1',
+      status: 'active',
+      gender: 'M',
+    },
+    {
+      id: 'st_902',
+      admissionNo: '9002',
+      rollNo: 2,
+      nameEn: 'Maryam Safa',
+      nameMl: 'മറിയം സഫ',
+      classId: 'cls_9',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Abdulla Master',
+      parentNameMl: 'അബ്ദുള്ള മാസ്റ്റർ',
+      parentPhone: '+91 9846123465',
+      status: 'active',
+      gender: 'F',
+    },
+    {
+      id: 'st_903',
+      admissionNo: '9003',
+      rollNo: 3,
+      nameEn: 'Adil Ibrahim',
+      nameMl: 'ആദിൽ ഇബ്രാഹിം',
+      classId: 'cls_9',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Ibrahim M',
+      parentNameMl: 'ഇബ്രാഹിം എം',
+      parentPhone: '+91 9846123457',
+      status: 'active',
+      gender: 'M',
+    },
+  ];
+
+  const teacherAssignments: TeacherAssignment[] = [
+    // Class 1
+    { id: 'asgn_1', teacherId: 'usr_t1', classId: 'cls_1', subjectId: 'sub_hifz' },
+    { id: 'asgn_2', teacherId: 'usr_t2', classId: 'cls_1', subjectId: 'sub_tarbiyah' },
+    { id: 'asgn_3', teacherId: 'usr_t1', classId: 'cls_1', subjectId: 'sub_arabic' },
+    { id: 'asgn_4', teacherId: 'usr_t3', classId: 'cls_1', subjectId: 'sub_islamic_studies' },
+    // Class 5
+    { id: 'asgn_5', teacherId: 'usr_t2', classId: 'cls_5', subjectId: 'sub_fiqh' },
+    { id: 'asgn_6', teacherId: 'usr_t2', classId: 'cls_5', subjectId: 'sub_hadith' },
+    { id: 'asgn_7', teacherId: 'usr_t3', classId: 'cls_5', subjectId: 'sub_tafsir' },
+    { id: 'asgn_8', teacherId: 'usr_t1', classId: 'cls_5', subjectId: 'sub_arabic' },
+    { id: 'asgn_9', teacherId: 'usr_t3', classId: 'cls_5', subjectId: 'sub_history_buhuth' },
+    // Class 9
+    { id: 'asgn_10', teacherId: 'usr_t3', classId: 'cls_9', subjectId: 'sub_history_buhuth' },
+    { id: 'asgn_11', teacherId: 'usr_t1', classId: 'cls_9', subjectId: 'sub_tilawah' },
+    { id: 'asgn_12', teacherId: 'usr_t2', classId: 'cls_9', subjectId: 'sub_fiqh' },
+  ];
+
+  const markSheets: MarkSheet[] = [
+    {
+      id: 'ms_c1_hifz',
+      examinationId: 'exam_half_yearly_2026_27',
+      academicYearId: 'ay_2026_2027',
+      classId: 'cls_1',
+      subjectId: 'sub_hifz',
+      assignedTeacherId: 'usr_t1',
+      status: 'approved',
+      studentMarks: {
+        st_101: { studentId: 'st_101', isAbsent: false, componentMarks: { new_portion: 28, revision: 9, ce: 10 }, subjectTotal: 47 },
+        st_102: { studentId: 'st_102', isAbsent: false, componentMarks: { new_portion: 27, revision: 8, ce: 9 }, subjectTotal: 44 },
+        st_103: { studentId: 'st_103', isAbsent: false, componentMarks: { new_portion: 25, revision: 8, ce: 8 }, subjectTotal: 41 },
+        st_104: { studentId: 'st_104', isAbsent: false, componentMarks: { new_portion: 29, revision: 10, ce: 10 }, subjectTotal: 49 },
+      },
+      verifiedAt: '2026-10-18T10:00:00Z',
+      verifiedBy: 'usr_admin',
+      lastUpdated: '2026-10-18T10:00:00Z',
+    },
+    {
+      id: 'ms_c1_tarbiyah',
+      examinationId: 'exam_half_yearly_2026_27',
+      academicYearId: 'ay_2026_2027',
+      classId: 'cls_1',
+      subjectId: 'sub_tarbiyah',
+      assignedTeacherId: 'usr_t2',
+      status: 'submitted',
+      studentMarks: {
+        st_101: { studentId: 'st_101', isAbsent: false, componentMarks: { salawat: 28, duas: 9, diary: 10 }, subjectTotal: 47 },
+        st_102: { studentId: 'st_102', isAbsent: false, componentMarks: { salawat: 26, duas: 8, diary: 9 }, subjectTotal: 43 },
+        st_103: { studentId: 'st_103', isAbsent: false, componentMarks: { salawat: 24, duas: 7, diary: 8 }, subjectTotal: 39 },
+        st_104: { studentId: 'st_104', isAbsent: false, componentMarks: { salawat: 29, duas: 9, diary: 10 }, subjectTotal: 48 },
+      },
+      submittedAt: '2026-10-18T11:00:00Z',
+      lastUpdated: '2026-10-18T11:00:00Z',
+    },
+    {
+      id: 'ms_c5_fiqh',
+      examinationId: 'exam_half_yearly_2026_27',
+      academicYearId: 'ay_2026_2027',
+      classId: 'cls_5',
+      subjectId: 'sub_fiqh',
+      assignedTeacherId: 'usr_t2',
+      status: 'draft',
+      studentMarks: {
+        st_501: { studentId: 'st_501', isAbsent: false, componentMarks: { omr: 18, descriptive: 17, ce: 9 }, subjectTotal: 44 },
+        st_502: { studentId: 'st_502', isAbsent: false, componentMarks: { omr: 19, descriptive: 18, ce: 10 }, subjectTotal: 47 },
+      },
+      lastUpdated: '2026-10-18T12:00:00Z',
+    },
+    {
+      id: 'ms_c9_buhuth',
+      examinationId: 'exam_half_yearly_2026_27',
+      academicYearId: 'ay_2026_2027',
+      classId: 'cls_9',
+      subjectId: 'sub_history_buhuth',
+      assignedTeacherId: 'usr_t3',
+      status: 'approved',
+      studentMarks: {
+        st_901: { studentId: 'st_901', isAbsent: false, componentMarks: { omr: 19, descriptive: 19, ce: 10 }, subjectTotal: 48 },
+        st_902: { studentId: 'st_902', isAbsent: false, componentMarks: { omr: 18, descriptive: 18, ce: 9 }, subjectTotal: 45 },
+        st_903: { studentId: 'st_903', isAbsent: false, componentMarks: { omr: 17, descriptive: 16, ce: 8 }, subjectTotal: 41 },
+      },
+      verifiedAt: '2026-10-18T13:00:00Z',
+      verifiedBy: 'usr_admin',
+      lastUpdated: '2026-10-18T13:00:00Z',
     },
   ];
 
@@ -228,7 +581,7 @@ export function getInitialClientSeedData(): MadrasaDatabase {
     reportHeaderNotesEn: 'Samastha Kerala Islam Matha Vidyabhyasa Board Affiliation / State Madrasa Curriculum',
     reportHeaderNotesMl: 'സമസ്ത കേരള ഇസ്ലാം മത വിദ്യാഭ്യാസ ബോർഡ് അംഗീകൃതം',
     activeAcademicYearId: 'ay_2026_2027',
-    activeExamId: '',
+    activeExamId: 'exam_half_yearly_2026_27',
   };
 
   const auditLogs: AuditLog[] = [
@@ -241,7 +594,7 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       action: 'SYSTEM_INITIALIZED',
       recordType: 'system',
       recordId: 'init',
-      details: 'System initialized for Al-Madrasathul Islamiya Pallikkuth with Principal ASLAM TK. Fresh clean state.',
+      details: 'System initialized for Al-Madrasathul Islamiya Pallikkuth with Principal ASLAM TK, active examination, classes 1-9, teachers, and student records.',
     },
   ];
 
@@ -250,10 +603,10 @@ export function getInitialClientSeedData(): MadrasaDatabase {
     classes,
     subjects,
     academicYears: [academicYear],
-    examinations: [],
-    students: [],
-    teacherAssignments: [],
-    markSheets: [],
+    examinations,
+    students,
+    teacherAssignments,
+    markSheets,
     auditLogs,
     settings,
   };
@@ -304,20 +657,33 @@ export class ClientStorageApi {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        // Verify fresh state (no dummy teachers, principal is ASLAM TK)
-        const hasDummyTeachers = parsed?.users?.some(
-          (u: any) =>
-            u.username === 'teacher.muhammed' ||
-            u.username === 'teacher.ali' ||
-            u.username === 'teacher.usman' ||
-            (u.name && u.name.includes('Baqavi'))
-        );
-        const hasOldExamSeed = parsed?.examinations?.some((e: any) => e.id === 'exam_half_yearly_2026');
-        if (hasDummyTeachers || hasOldExamSeed || parsed?.settings?.principalNameEn !== 'ASLAM TK') {
+        // If stored data is empty or lacks students, exams, or teachers, reseed with complete mock data
+        if (
+          !parsed ||
+          !Array.isArray(parsed.students) ||
+          parsed.students.length === 0 ||
+          !Array.isArray(parsed.examinations) ||
+          parsed.examinations.length === 0 ||
+          !Array.isArray(parsed.users) ||
+          parsed.users.length === 0 ||
+          parsed?.settings?.principalNameEn !== 'ASLAM TK'
+        ) {
           const fresh = getInitialClientSeedData();
           this.saveDBSync(fresh);
           return fresh;
         }
+
+        // Ensure all collections are non-null arrays/objects
+        parsed.users = Array.isArray(parsed.users) ? parsed.users : [];
+        parsed.classes = Array.isArray(parsed.classes) ? parsed.classes : [];
+        parsed.subjects = Array.isArray(parsed.subjects) ? parsed.subjects : [];
+        parsed.academicYears = Array.isArray(parsed.academicYears) ? parsed.academicYears : [];
+        parsed.examinations = Array.isArray(parsed.examinations) ? parsed.examinations : [];
+        parsed.students = Array.isArray(parsed.students) ? parsed.students : [];
+        parsed.teacherAssignments = Array.isArray(parsed.teacherAssignments) ? parsed.teacherAssignments : [];
+        parsed.markSheets = Array.isArray(parsed.markSheets) ? parsed.markSheets : [];
+        parsed.auditLogs = Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [];
+        parsed.settings = parsed.settings || {};
 
         // Migrate and enforce assessment components strictly in English
         const defaultSubs = getDefaultSubjects();
@@ -358,6 +724,90 @@ export class ClientStorageApi {
     } catch (e) {
       console.error('Failed to save DB to localStorage:', e);
     }
+  }
+
+  public calculateExamStats(examId?: string): {
+    totalRequiredSheets: number;
+    countNotStarted: number;
+    countDraft: number;
+    countSubmitted: number;
+    countApproved: number;
+    countLocked: number;
+    countReturned: number;
+    pending: number;
+    submitted: number;
+    approved: number;
+    locked: number;
+  } {
+    const defaultStats = {
+      totalRequiredSheets: 0,
+      countNotStarted: 0,
+      countDraft: 0,
+      countSubmitted: 0,
+      countApproved: 0,
+      countLocked: 0,
+      countReturned: 0,
+      pending: 0,
+      submitted: 0,
+      approved: 0,
+      locked: 0,
+    };
+
+    if (!this.db) return defaultStats;
+
+    const targetExamId =
+      examId ||
+      this.db.settings?.activeExamId ||
+      (this.db.examinations || [])[0]?.id ||
+      '';
+
+    const exam = (this.db.examinations || []).find(e => e && e.id === targetExamId);
+
+    const examSheets = (this.db.markSheets || []).filter(
+      ms => ms && (!targetExamId || ms.examinationId === targetExamId)
+    );
+
+    let countDraft = 0;
+    let countSubmitted = 0;
+    let countApproved = 0;
+    let countLocked = 0;
+    let countReturned = 0;
+
+    examSheets.forEach(ms => {
+      if (!ms) return;
+      if (ms.status === 'draft') countDraft++;
+      else if (ms.status === 'submitted') countSubmitted++;
+      else if (ms.status === 'approved') countApproved++;
+      else if (ms.status === 'locked') countLocked++;
+      else if (ms.status === 'returned_for_correction') countReturned++;
+    });
+
+    let totalRequiredSheets = 0;
+    const participating = exam?.classesParticipating || (this.db.classes || []).map(c => c.id);
+    (this.db.classes || [])
+      .filter(c => c && participating.includes(c.id))
+      .forEach(cls => {
+        const applicable = (this.db.subjects || []).filter(
+          s => s && s.applicableClasses && s.applicableClasses.includes(cls.numericGrade)
+        );
+        totalRequiredSheets += applicable.length;
+      });
+
+    const countNotStarted = Math.max(0, totalRequiredSheets - examSheets.length);
+
+    return {
+      totalRequiredSheets,
+      countNotStarted,
+      countDraft,
+      countSubmitted,
+      countApproved,
+      countLocked,
+      countReturned,
+      pending: countDraft + countReturned,
+      submitted: countSubmitted,
+      approved: countApproved,
+      locked: countLocked,
+    };
   }
 
   public getCurrentUser(): User | null {
@@ -1400,25 +1850,29 @@ export class ClientStorageApi {
       const examReadinessMatch = path.match(/^\/api\/examinations\/([^/]+)\/readiness$/);
       if (examReadinessMatch && method === 'GET') {
         const examId = examReadinessMatch[1];
-        const exam = this.db.examinations.find(e => e.id === examId);
+        const exam = (this.db.examinations || []).find(e => e.id === examId);
         if (!exam) return this.jsonResponse({ error: 'Exam not found' }, 404);
 
         let totalExpectedSheets = 0;
+        let submittedSheets = 0;
         let approvedSheets = 0;
         let lockedSheets = 0;
         let missingSheets = 0;
         const sheetDetails: any[] = [];
 
-        exam.classesParticipating.forEach(cId => {
-          const cls = this.db.classes.find(c => c.id === cId);
+        (exam.classesParticipating || []).forEach(cId => {
+          const cls = (this.db.classes || []).find(c => c.id === cId);
           if (!cls) return;
-          const subjects = this.db.subjects.filter(s => s.applicableClasses.includes(cls.numericGrade));
+          const subjects = (this.db.subjects || []).filter(s => s.applicableClasses.includes(cls.numericGrade));
           subjects.forEach(sub => {
             totalExpectedSheets++;
-            const sheet = this.db.markSheets.find(
+            const sheet = (this.db.markSheets || []).find(
               ms => ms.examinationId === examId && ms.classId === cId && ms.subjectId === sub.id
             );
+            const asgn = (this.db.teacherAssignments || []).find(a => a.classId === cId && a.subjectId === sub.id);
+            const teacher = asgn ? (this.db.users || []).find(u => u.id === asgn.teacherId) : null;
             const status = sheet?.status || 'not_started';
+            if (status === 'submitted') submittedSheets++;
             if (status === 'approved') approvedSheets++;
             if (status === 'locked') lockedSheets++;
             if (status === 'not_started') missingSheets++;
@@ -1427,7 +1881,9 @@ export class ClientStorageApi {
               className: cls.name,
               subjectId: sub.id,
               subjectName: sub.nameMl,
+              teacherName: teacher ? teacher.name : 'Unassigned',
               status,
+              isReady: status === 'approved' || status === 'locked',
             });
           });
         });
@@ -1435,11 +1891,17 @@ export class ClientStorageApi {
         const isReady = totalExpectedSheets > 0 && approvedSheets + lockedSheets === totalExpectedSheets;
         return this.jsonResponse({
           exam,
+          totalRequiredSheets: totalExpectedSheets,
           totalExpectedSheets,
+          totalSubmitted: submittedSheets,
+          totalApproved: approvedSheets,
           approvedSheets,
+          totalLocked: lockedSheets,
           lockedSheets,
           missingSheets,
+          countNotStarted: missingSheets,
           isReady,
+          items: sheetDetails,
           sheetDetails,
         });
       }
@@ -1614,11 +2076,22 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/monitoring/overview' && method === 'GET') {
+        const stats = this.calculateExamStats();
+        const activeExam =
+          (this.db.examinations || []).find(e => e && e.id === this.db.settings?.activeExamId) ||
+          (this.db.examinations || []).find(e => e && e.isPublished) ||
+          (this.db.examinations || [])[0] ||
+          null;
+
         return this.jsonResponse({
-          activeExam: this.db.examinations.find(e => e.isPublished) || this.db.examinations[0] || null,
-          totalStudents: this.db.students.filter(s => s.status === 'active').length,
-          totalTeachers: this.db.users.filter(u => u.role === 'teacher').length,
-          totalClasses: this.db.classes.length,
+          activeExam,
+          totalStudents: (this.db.students || []).filter(s => s && s.status === 'active').length,
+          totalTeachers: (this.db.users || []).filter(u => u && u.role === 'teacher').length,
+          totalClasses: (this.db.classes || []).length,
+          totalSubjects: (this.db.subjects || []).length,
+          isPublished: Boolean(activeExam?.isPublished),
+          stats,
+          recentLogs: (this.db.auditLogs || []).slice(0, 10),
         });
       }
 

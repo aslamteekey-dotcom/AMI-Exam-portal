@@ -43,8 +43,30 @@ export const AdminDashboard: React.FC = () => {
     | 'settings'
   >('overview');
 
+  const defaultOverview = {
+    totalStudents: 0,
+    totalTeachers: 0,
+    totalClasses: 0,
+    totalSubjects: 0,
+    isPublished: false,
+    stats: {
+      totalRequiredSheets: 0,
+      countNotStarted: 0,
+      countDraft: 0,
+      countSubmitted: 0,
+      countApproved: 0,
+      countLocked: 0,
+      countReturned: 0,
+      pending: 0,
+      submitted: 0,
+      approved: 0,
+      locked: 0,
+    },
+    recentLogs: [],
+  };
+
   const [loading, setLoading] = useState(true);
-  const [overviewData, setOverviewData] = useState<any>(null);
+  const [overviewData, setOverviewData] = useState<any>(defaultOverview);
 
   // Quick verify modal from overview
   const [verifyTarget, setVerifyTarget] = useState<{
@@ -61,7 +83,14 @@ export const AdminDashboard: React.FC = () => {
       const res = await fetchWithAuth('/api/monitoring/overview');
       if (res.ok) {
         const data = await res.json();
-        setOverviewData(data);
+        setOverviewData({
+          ...defaultOverview,
+          ...data,
+          stats: {
+            ...defaultOverview.stats,
+            ...(data?.stats || {}),
+          },
+        });
       }
     } catch (err) {
       console.error('Error loading admin overview:', err);
@@ -224,14 +253,14 @@ export const AdminDashboard: React.FC = () => {
       </div>
 
       {/* Tab Contents */}
-      {activeTab === 'overview' && overviewData && (
+      {activeTab === 'overview' && (
         <div className="space-y-6">
           {/* 1. Core Summary Cards (10 required metrics) */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3.5 text-xs">
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
               <span className="text-[11px] font-bold text-slate-500 uppercase block">Total Students</span>
               <span className="text-2xl font-black text-slate-900 font-mono mt-1 block">
-                {overviewData.totalStudents}
+                {overviewData?.totalStudents ?? 0}
               </span>
               <span className="text-[10px] text-slate-400">Classes 1–9 Active</span>
             </div>
@@ -239,7 +268,7 @@ export const AdminDashboard: React.FC = () => {
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
               <span className="text-[11px] font-bold text-slate-500 uppercase block">Total Teachers</span>
               <span className="text-2xl font-black text-blue-900 font-mono mt-1 block">
-                {overviewData.totalTeachers}
+                {overviewData?.totalTeachers ?? 0}
               </span>
               <span className="text-[10px] text-slate-400">Usthads Assigned</span>
             </div>
@@ -247,7 +276,7 @@ export const AdminDashboard: React.FC = () => {
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
               <span className="text-[11px] font-bold text-slate-500 uppercase block">Classes & Grades</span>
               <span className="text-2xl font-black text-slate-900 font-mono mt-1 block">
-                {overviewData.totalClasses}
+                {overviewData?.totalClasses ?? 0}
               </span>
               <span className="text-[10px] text-slate-400">Class 1 to Class 9</span>
             </div>
@@ -255,7 +284,7 @@ export const AdminDashboard: React.FC = () => {
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
               <span className="text-[11px] font-bold text-slate-500 uppercase block">Total Subjects</span>
               <span className="text-2xl font-black text-slate-900 font-mono mt-1 block">
-                {overviewData.totalSubjects}
+                {overviewData?.totalSubjects ?? 0}
               </span>
               <span className="text-[10px] text-slate-400">50 Max Marks each</span>
             </div>
@@ -263,7 +292,7 @@ export const AdminDashboard: React.FC = () => {
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
               <span className="text-[11px] font-bold text-slate-500 uppercase block">Not Started</span>
               <span className="text-2xl font-black text-slate-400 font-mono mt-1 block">
-                {overviewData.stats.countNotStarted}
+                {overviewData?.stats?.countNotStarted ?? 0}
               </span>
               <span className="text-[10px] text-slate-400">Sheets uninitiated</span>
             </div>
@@ -271,7 +300,7 @@ export const AdminDashboard: React.FC = () => {
             <div className="bg-amber-50/60 p-4 rounded-2xl border border-amber-200 shadow-2xs">
               <span className="text-[11px] font-bold text-amber-800 uppercase block">In Progress</span>
               <span className="text-2xl font-black text-amber-900 font-mono mt-1 block">
-                {overviewData.stats.countDraft}
+                {overviewData?.stats?.countDraft ?? 0}
               </span>
               <span className="text-[10px] text-amber-700">Teacher Drafts</span>
             </div>
@@ -279,7 +308,7 @@ export const AdminDashboard: React.FC = () => {
             <div className="bg-blue-50/60 p-4 rounded-2xl border border-blue-200 shadow-2xs">
               <span className="text-[11px] font-bold text-blue-800 uppercase block">Submitted</span>
               <span className="text-2xl font-black text-blue-900 font-mono mt-1 block">
-                {overviewData.stats.countSubmitted}
+                {overviewData?.stats?.countSubmitted ?? 0}
               </span>
               <span className="text-[10px] text-blue-700">Awaiting Verification</span>
             </div>
@@ -287,7 +316,7 @@ export const AdminDashboard: React.FC = () => {
             <div className="bg-emerald-50/60 p-4 rounded-2xl border border-emerald-200 shadow-2xs">
               <span className="text-[11px] font-bold text-emerald-800 uppercase block">Approved</span>
               <span className="text-2xl font-black text-emerald-900 font-mono mt-1 block">
-                {overviewData.stats.countApproved}
+                {overviewData?.stats?.countApproved ?? 0}
               </span>
               <span className="text-[10px] text-emerald-700">Verified by Principal</span>
             </div>
@@ -295,7 +324,7 @@ export const AdminDashboard: React.FC = () => {
             <div className="bg-purple-50/60 p-4 rounded-2xl border border-purple-200 shadow-2xs">
               <span className="text-[11px] font-bold text-purple-800 uppercase block">Locked</span>
               <span className="text-2xl font-black text-purple-900 font-mono mt-1 block">
-                {overviewData.stats.countLocked}
+                {overviewData?.stats?.countLocked ?? 0}
               </span>
               <span className="text-[10px] text-purple-700">Prevented Edits</span>
             </div>
@@ -303,10 +332,10 @@ export const AdminDashboard: React.FC = () => {
             <div className="bg-emerald-900 text-white p-4 rounded-2xl shadow-2xs">
               <span className="text-[11px] font-bold text-emerald-200 uppercase block">Results Status</span>
               <span className="text-lg font-bold mt-1 block">
-                {overviewData.isPublished ? 'Published' : 'In Review'}
+                {overviewData?.isPublished ? 'Published' : 'In Review'}
               </span>
               <span className="text-[10px] text-emerald-300">
-                {overviewData.isPublished ? 'Parent Access Enabled' : 'Parent Access Hidden'}
+                {overviewData?.isPublished ? 'Parent Access Enabled' : 'Parent Access Hidden'}
               </span>
             </div>
           </div>
@@ -369,7 +398,7 @@ export const AdminDashboard: React.FC = () => {
             </div>
 
             <div className="divide-y divide-slate-100 text-xs">
-              {overviewData.recentLogs?.slice(0, 5).map((log: any) => (
+              {(overviewData?.recentLogs || []).slice(0, 5).map((log: any) => (
                 <div key={log.id} className="py-2.5 flex items-start justify-between gap-4">
                   <div>
                     <span className="font-bold text-slate-800">{log.userName}</span>

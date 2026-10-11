@@ -309,25 +309,25 @@ export const ExamManagement: React.FC = () => {
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
               <span className="text-[11px] font-bold text-slate-500 uppercase block">Total Mark Sheets</span>
               <span className="text-xl font-black text-slate-900 font-mono mt-0.5 block">
-                {readiness.totalRequiredSheets}
+                {readiness?.totalRequiredSheets ?? readiness?.totalExpectedSheets ?? 0}
               </span>
             </div>
             <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
               <span className="text-[11px] font-bold text-blue-700 uppercase block">Submitted</span>
               <span className="text-xl font-black text-blue-900 font-mono mt-0.5 block">
-                {readiness.totalSubmitted}
+                {readiness?.totalSubmitted ?? readiness?.submittedSheets ?? 0}
               </span>
             </div>
             <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200">
               <span className="text-[11px] font-bold text-emerald-700 uppercase block">Approved</span>
               <span className="text-xl font-black text-emerald-900 font-mono mt-0.5 block">
-                {readiness.totalApproved}
+                {readiness?.totalApproved ?? readiness?.approvedSheets ?? 0}
               </span>
             </div>
             <div className="bg-purple-50 p-4 rounded-xl border border-purple-200">
               <span className="text-[11px] font-bold text-purple-700 uppercase block">Locked</span>
               <span className="text-xl font-black text-purple-900 font-mono mt-0.5 block">
-                {readiness.totalLocked}
+                {readiness?.totalLocked ?? readiness?.lockedSheets ?? 0}
               </span>
             </div>
           </div>
@@ -349,7 +349,7 @@ export const ExamManagement: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {readiness.items.map((item: any, i: number) => (
+                  {(readiness?.items || readiness?.sheetDetails || []).map((item: any, i: number) => (
                     <tr key={i} className="hover:bg-slate-50">
                       <td className="p-2.5 font-bold text-slate-800">{item.className}</td>
                       <td className="p-2.5 font-medium">{item.subjectName}</td>
