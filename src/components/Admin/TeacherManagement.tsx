@@ -42,7 +42,7 @@ export const TeacherManagement: React.FC = () => {
 
   // Password Reset / Edit Modal
   const [passwordTargetTeacher, setPasswordTargetTeacher] = useState<any | null>(null);
-  const [newPasswordVal, setNewPasswordVal] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [showPasswordMap, setShowPasswordMap] = useState<Record<string, boolean>>({});
 
   // Assign Class & Subject Modal
@@ -174,25 +174,31 @@ export const TeacherManagement: React.FC = () => {
 
   const handleOpenResetPassword = (teacher: any) => {
     setPasswordTargetTeacher(teacher);
-    setNewPasswordVal(teacher.plainPassword && teacher.plainPassword !== '—' ? teacher.plainPassword : '');
+    setNewPassword(teacher.plainPassword && teacher.plainPassword !== '—' ? teacher.plainPassword : '');
   };
 
   const handleSavePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!passwordTargetTeacher || !newPasswordVal.trim()) return;
+    if (!passwordTargetTeacher || !newPassword.trim()) {
+      alert('Please enter a valid password.');
+      return;
+    }
 
     try {
       const res = await fetchWithAuth(`/api/users/${passwordTargetTeacher.id}/password`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ newPassword: newPasswordVal.trim() }),
+        body: JSON.stringify({
+          newPassword: newPassword.trim(),
+          password: newPassword.trim(),
+        }),
       });
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || 'Failed to update password');
       }
       setPasswordTargetTeacher(null);
-      setNewPasswordVal('');
+      setNewPassword('');
       loadData();
       alert(`Password for ${passwordTargetTeacher.name} updated successfully!`);
     } catch (err: any) {
@@ -600,8 +606,8 @@ export const TeacherManagement: React.FC = () => {
                 <label className="block font-bold text-slate-700 mb-1">New Password</label>
                 <input
                   type="text"
-                  value={newPasswordVal}
-                  onChange={e => setNewPasswordVal(e.target.value)}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="Enter new password"
                   className="w-full p-2 border rounded-lg font-mono focus:outline-emerald-700"
                   required

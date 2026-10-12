@@ -14,6 +14,7 @@ import {
   StudentProgressReport,
   SubjectAssessmentRule,
 } from '../types';
+import { firestoreSync } from './firestoreSync';
 
 export interface MadrasaDatabase {
   users: User[];
@@ -639,6 +640,90 @@ export class ClientStorageApi {
 
   private constructor() {
     this.db = this.loadDB();
+    this.initFirestoreSync();
+  }
+
+  private initFirestoreSync(): void {
+    if (typeof window === 'undefined') return;
+    try {
+      firestoreSync.subscribeToCollections({
+        onStudents: (remoteStudents) => {
+          if (Array.isArray(remoteStudents) && remoteStudents.length > 0) {
+            this.db.students = remoteStudents;
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
+            } catch {}
+          }
+        },
+        onTeachers: (remoteTeachers) => {
+          if (Array.isArray(remoteTeachers) && remoteTeachers.length > 0) {
+            // Merge teachers into users keeping admin
+            const nonTeachers = this.db.users.filter(u => u.role !== 'teacher');
+            this.db.users = [...nonTeachers, ...remoteTeachers];
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
+            } catch {}
+          }
+        },
+        onClasses: (remoteClasses) => {
+          if (Array.isArray(remoteClasses) && remoteClasses.length > 0) {
+            this.db.classes = remoteClasses;
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
+            } catch {}
+          }
+        },
+        onSubjects: (remoteSubjects) => {
+          if (Array.isArray(remoteSubjects) && remoteSubjects.length > 0) {
+            this.db.subjects = remoteSubjects;
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
+            } catch {}
+          }
+        },
+        onMarks: (remoteMarks) => {
+          if (Array.isArray(remoteMarks) && remoteMarks.length > 0) {
+            this.db.markSheets = remoteMarks;
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
+            } catch {}
+          }
+        },
+      });
+    } catch (e) {
+      console.warn('Firestore sync init error:', e);
+    }
+  }
+
+  public purgeDemoData(): { success: boolean; clearedCount: number } {
+    // Keep admin account
+    const adminUser: User = this.db.users.find(u => u.role === 'admin' || u.username === 'principal') || {
+      id: 'usr_admin',
+      username: 'principal',
+      name: 'ASLAM TK',
+      nameMl: 'അസ്‌ലം ടി.കെ.',
+      role: 'admin',
+      plainPassword: 'admin123',
+      passwordHash: clientHashPassword('admin123'),
+      active: true,
+    };
+
+    const previousCount = this.db.students.length;
+    // Clear students, demo marks, and demo teachers, assignments
+    this.db.students = [];
+    this.db.markSheets = [];
+    this.db.teacherAssignments = [];
+    this.db.users = [adminUser];
+
+    // Save to localStorage
+    this.saveDB();
+
+    // Purge in Firestore asynchronously
+    firestoreSync.purgeDemoDataFromFirestore().catch(e => {
+      console.warn('Firestore purge error:', e);
+    });
+
+    return { success: true, clearedCount: previousCount };
   }
 
   public static getInstance(): ClientStorageApi {
@@ -714,6 +799,21 @@ export class ClientStorageApi {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
     } catch (e) {
       console.error('Failed to save DB to localStorage:', e);
+    }
+
+    // Opportunistically sync collections to Firestore
+    if (this.db) {
+      firestoreSync
+        .pushFullStateToFirestore({
+          students: this.db.students || [],
+          teachers: (this.db.users || []).filter(u => u.role === 'teacher'),
+          classes: this.db.classes || [],
+          subjects: this.db.subjects || [],
+          marks: this.db.markSheets || [],
+        })
+        .catch(err => {
+          console.warn('Background Firestore sync info:', err);
+        });
     }
   }
 
@@ -1386,12 +1486,15 @@ export class ClientStorageApi {
         const uId = userPasswordMatch[1];
         const user = this.db.users.find(u => u.id === uId);
         if (!user) return this.jsonResponse({ error: 'User not found' }, 404);
-        if (!bodyData.password || !bodyData.password.trim()) {
+        const submittedPassword = bodyData.password ?? bodyData.newPassword ?? '';
+        const trimmed = String(submittedPassword).trim();
+        if (!trimmed) {
           return this.jsonResponse({ error: 'Password cannot be empty' }, 400);
         }
-        user.plainPassword = bodyData.password.trim();
+        user.plainPassword = trimmed;
+        user.passwordHash = clientHashPassword(trimmed);
         this.saveDB();
-        return this.jsonResponse({ success: true });
+        return this.jsonResponse({ success: true, message: 'Password updated successfully' });
       }
 
       // Teacher assignments
@@ -2116,6 +2219,14 @@ export class ClientStorageApi {
         }
         this.saveDBSync(bodyData);
         return this.jsonResponse({ success: true });
+      }
+
+      if (path === '/api/admin/clear-demo-data' && method === 'POST') {
+        const result = this.purgeDemoData();
+        return this.jsonResponse({
+          success: true,
+          message: `Purged demo data (${result.clearedCount} sample student records cleared). Admin account retained.`,
+        });
       }
 
       if (path === '/api/audit-logs' && method === 'GET') {

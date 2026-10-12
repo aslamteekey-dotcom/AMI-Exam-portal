@@ -14,6 +14,8 @@ import {
   EyeOff,
   User,
   Shield,
+  Trash2,
+  RefreshCw,
 } from 'lucide-react';
 
 export const BackupSettings: React.FC = () => {
@@ -178,6 +180,34 @@ export const BackupSettings: React.FC = () => {
     reader.readAsText(file);
   };
 
+  const handleClearDemoData = async () => {
+    const confirmed = window.confirm(
+      'Are you sure you want to clear all dummy / demo data?\n\n' +
+      'This action will permanently purge:\n' +
+      '• All demo student records\n' +
+      '• All dummy mark sheets & evaluation entries\n' +
+      '• All sample teacher accounts\n\n' +
+      'The Administrator account (@principal) will remain intact.\n' +
+      'Do you wish to proceed?'
+    );
+    if (!confirmed) return;
+
+    try {
+      const res = await fetchWithAuth('/api/admin/clear-demo-data', {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to clear demo data');
+      }
+      const data = await res.json();
+      alert(data.message || 'Demo data purged successfully!');
+      window.location.reload();
+    } catch (err: any) {
+      alert(err.message || 'Failed to clear demo data');
+    }
+  };
+
   if (loading || !settings) {
     return <div className="text-center py-10 text-xs text-slate-500">Loading settings...</div>;
   }
@@ -328,6 +358,16 @@ export const BackupSettings: React.FC = () => {
               className="hidden"
             />
           </label>
+
+          <button
+            type="button"
+            onClick={handleClearDemoData}
+            className="flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition shadow-2xs cursor-pointer ml-auto"
+            title="Purge sample students, demo marks, and demo teachers while keeping the admin account"
+          >
+            <Trash2 className="w-4 h-4 text-rose-600" />
+            Clear Demo Data
+          </button>
         </div>
       </div>
 

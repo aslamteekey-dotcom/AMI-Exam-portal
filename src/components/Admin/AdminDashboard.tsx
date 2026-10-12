@@ -26,6 +26,7 @@ import {
   Settings,
   Eye,
   Calendar,
+  Trash2,
 } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
@@ -103,6 +104,34 @@ export const AdminDashboard: React.FC = () => {
     loadOverview();
   }, []);
 
+  const handleClearDemoData = async () => {
+    const confirmed = window.confirm(
+      'Are you sure you want to clear all dummy / demo data?\n\n' +
+      'This will purge:\n' +
+      '• Sample students\n' +
+      '• Demo mark entries\n' +
+      '• Sample teachers\n\n' +
+      'The Administrator account (@principal) will remain intact.\n' +
+      'Do you wish to proceed?'
+    );
+    if (!confirmed) return;
+
+    try {
+      const res = await fetchWithAuth('/api/admin/clear-demo-data', {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to clear demo data');
+      }
+      const data = await res.json();
+      alert(data.message || 'Demo data purged successfully!');
+      window.location.reload();
+    } catch (err: any) {
+      alert(err.message || 'Failed to clear demo data');
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Principal Header Banner */}
@@ -120,7 +149,7 @@ export const AdminDashboard: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs bg-emerald-800/80 border border-emerald-700 text-emerald-100 font-semibold px-3 py-1.5 rounded-xl">
               Academic Year: 2026–2027
             </span>
@@ -135,6 +164,14 @@ export const AdminDashboard: React.FC = () => {
                 Results In Review
               </span>
             )}
+            <button
+              onClick={handleClearDemoData}
+              className="text-xs bg-rose-900/60 hover:bg-rose-900/90 text-rose-200 hover:text-white border border-rose-700 font-bold px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+              title="Purge dummy students, demo mark sheets, and sample teachers from Firestore & localStorage"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-300" />
+              Clear Demo Data
+            </button>
           </div>
         </div>
       </div>

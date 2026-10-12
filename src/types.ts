@@ -7,6 +7,7 @@ export interface User {
   nameMl?: string;
   role: UserRole;
   plainPassword?: string;
+  passwordHash?: string;
   active: boolean;
   email?: string;
   phone?: string;
