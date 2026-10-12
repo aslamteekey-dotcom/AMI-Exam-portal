@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   X,
   FileSpreadsheet,
+  Loader2,
 } from 'lucide-react';
 
 export const StudentManagement: React.FC = () => {
@@ -46,6 +47,7 @@ export const StudentManagement: React.FC = () => {
   const [csvText, setCsvText] = useState('');
   const [importPreview, setImportPreview] = useState<any>(null);
   const [isProcessingImport, setIsProcessingImport] = useState(false);
+  const [replaceExisting, setReplaceExisting] = useState(false);
 
   const isMl = lang === 'ml';
 
@@ -171,10 +173,10 @@ export const StudentManagement: React.FC = () => {
           throw new Error(err.error || 'Failed to update student');
         }
       } else {
-        const studentId = `stu_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const studentId = formData.admissionNo.trim();
         const newStudentData: Student = {
           id: studentId,
-          admissionNo: formData.admissionNo.trim(),
+          admissionNo: studentId,
           rollNo: Number(formData.rollNo) || 1,
           nameEn: formData.nameEn.trim(),
           nameMl: formData.nameMl.trim() || formData.nameEn.trim(),
@@ -189,7 +191,7 @@ export const StudentManagement: React.FC = () => {
 
         // 1. Persistent Firestore write
         try {
-          await setDoc(doc(db, 'students', studentId), cleanForFirestore(newStudentData));
+          await setDoc(doc(db, 'students', studentId), cleanForFirestore(newStudentData), { merge: true });
         } catch (firestoreErr: any) {
           console.error('Firestore write error when adding student:', firestoreErr);
           handleFirestoreError(firestoreErr, OperationType.WRITE, `students/${studentId}`);
@@ -370,53 +372,93 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
   };
 
   const handleCommitImport = async () => {
+    if (isProcessingImport) return;
     if (!importPreview?.records || importPreview.records.length === 0) return;
     setIsProcessingImport(true);
+
     try {
+      // 1. Clean slate option: If checked, delete existing class records before importing
+      if (replaceExisting) {
+        try {
+          const targetClasses = importClassId
+            ? [importClassId]
+            : Array.from(new Set(importPreview.records.map((r: any) => r.classId).filter(Boolean)));
+
+          const studentsToDelete = targetClasses.length > 0
+            ? students.filter(s => targetClasses.includes(s.classId))
+            : students;
+
+          for (const st of studentsToDelete) {
+            try {
+              await deleteDoc(doc(db, 'students', st.id));
+              if (st.admissionNo && st.admissionNo !== st.id) {
+                await deleteDoc(doc(db, 'students', String(st.admissionNo).trim()));
+              }
+            } catch (e) {
+              console.warn('Error deleting existing student for clean slate:', e);
+            }
+          }
+        } catch (csErr) {
+          console.warn('Clean slate pre-deletion warning:', csErr);
+        }
+      }
+
       const res = await fetchWithAuth('/api/students/import-commit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           records: importPreview.records,
           targetClassId: importClassId || undefined,
+          replaceExisting,
         }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        // Await writing imported records to Firestore
-        try {
-          if (Array.isArray(importPreview.records)) {
-            for (const r of importPreview.records) {
-              if (r.isValid) {
-                const sId = `stu_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-                await setDoc(doc(db, 'students', sId), cleanForFirestore({
-                  id: sId,
-                  admissionNo: r.admissionNo,
-                  rollNo: r.rollNo || 1,
-                  nameEn: r.nameEn,
-                  nameMl: r.nameMl || r.nameEn,
-                  classId: r.classId || importClassId || classes[0]?.id || 'cls_1',
-                  academicYearId: 'ay_2026_2027',
-                  parentNameEn: r.parentNameEn || '',
-                  parentPhone: r.parentPhone || '',
-                  gender: r.gender || 'M',
-                  status: 'active',
-                }));
-              }
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to commit import');
+      }
+
+      const data = await res.json();
+
+      // 2. Strict Deduplication in Firestore using sanitized Admission No as document key
+      // Do NOT generate random auto-IDs with addDoc.
+      // Guarantees that even if uploaded multiple times, existing records are updated rather than duplicated.
+      try {
+        if (Array.isArray(importPreview.records)) {
+          for (const student of importPreview.records) {
+            if (student.isValid) {
+              const sanitizedAdm = String(student.admissionNo).trim();
+              const studentData = cleanForFirestore({
+                id: sanitizedAdm,
+                admissionNo: sanitizedAdm,
+                rollNo: Number(student.rollNo) || 1,
+                nameEn: String(student.nameEn).trim(),
+                nameMl: student.nameMl ? String(student.nameMl).trim() : String(student.nameEn).trim(),
+                classId: student.classId || importClassId || classes[0]?.id || 'cls_1',
+                academicYearId: 'ay_2026_2027',
+                parentNameEn: student.parentNameEn ? String(student.parentNameEn).trim() : '',
+                parentNameMl: student.parentNameMl ? String(student.parentNameMl).trim() : (student.parentNameEn ? String(student.parentNameEn).trim() : ''),
+                parentPhone: student.parentPhone ? String(student.parentPhone).trim() : '',
+                gender: (student.gender || 'M').toUpperCase().startsWith('F') ? 'F' : 'M',
+                status: 'active',
+              });
+
+              await setDoc(doc(db, 'students', String(student.admissionNo).trim()), studentData, { merge: true });
             }
           }
-        } catch (fErr) {
-          console.warn('Firestore bulk import write warning:', fErr);
         }
-
-        alert(`Successfully imported ${data.importedCount} student records across classes!`);
-        setShowImportModal(false);
-        setImportPreview(null);
-        setCsvText('');
-        loadData();
+      } catch (fErr) {
+        console.warn('Firestore bulk import write warning:', fErr);
       }
-    } catch (err) {
-      alert('Failed to import records');
+
+      alert(`Successfully imported ${data.importedCount} student records across classes!`);
+      setShowImportModal(false);
+      setImportPreview(null);
+      setCsvText('');
+      setReplaceExisting(false);
+      await loadData();
+    } catch (err: any) {
+      alert(err.message || 'Failed to import records');
     } finally {
       setIsProcessingImport(false);
     }
@@ -785,11 +827,13 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
                 Import Students from Excel-Compatible CSV
               </h3>
               <button
+                disabled={isProcessingImport}
                 onClick={() => {
                   setShowImportModal(false);
                   setImportPreview(null);
+                  setReplaceExisting(false);
                 }}
-                className="text-slate-400 hover:text-slate-600 font-bold"
+                className="text-slate-400 hover:text-slate-600 font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
                 ✕
               </button>
@@ -803,7 +847,8 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
                   setImportClassId(e.target.value);
                   if (csvText) previewCsv(csvText, e.target.value);
                 }}
-                className="w-full p-2 border rounded-lg bg-slate-50 font-bold"
+                disabled={isProcessingImport}
+                className="w-full p-2 border rounded-lg bg-slate-50 font-bold disabled:opacity-50"
               >
                 <option value="">Auto-Detect from CSV Class Column (Multi-Class Upload)</option>
                 {classes.map(c => (
@@ -812,6 +857,21 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Clean Slate Option */}
+            <div className="flex items-center gap-2.5 p-3 bg-amber-50/80 border border-amber-200 rounded-xl">
+              <input
+                type="checkbox"
+                id="replaceExistingCheckbox"
+                checked={replaceExisting}
+                onChange={e => setReplaceExisting(e.target.checked)}
+                disabled={isProcessingImport}
+                className="w-4 h-4 text-emerald-800 rounded border-slate-300 focus:ring-emerald-700 cursor-pointer disabled:cursor-not-allowed"
+              />
+              <label htmlFor="replaceExistingCheckbox" className="text-xs font-semibold text-amber-950 cursor-pointer select-none">
+                Replace / Clear existing class records before importing
+              </label>
             </div>
 
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
@@ -887,8 +947,13 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
             <div className="flex justify-end gap-2 pt-2 border-t">
               <button
                 type="button"
-                onClick={() => setShowImportModal(false)}
-                className="px-3.5 py-2 text-slate-600 bg-slate-100 rounded-lg"
+                disabled={isProcessingImport}
+                onClick={() => {
+                  setShowImportModal(false);
+                  setImportPreview(null);
+                  setReplaceExisting(false);
+                }}
+                className="px-3.5 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
                 Cancel
               </button>
@@ -896,9 +961,19 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
                 type="button"
                 disabled={!importPreview || importPreview.validRows === 0 || isProcessingImport}
                 onClick={handleCommitImport}
-                className="px-4 py-2 font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg disabled:opacity-50"
+                className="px-4 py-2 font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-xs cursor-pointer"
               >
-                {isProcessingImport ? 'Importing...' : `Confirm Import (${importPreview?.validRows || 0} students)`}
+                {isProcessingImport ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Importing ({importPreview?.validRows || 0} students)...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="w-4 h-4 text-emerald-200" />
+                    <span>Confirm Import ({importPreview?.validRows || 0} students)</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

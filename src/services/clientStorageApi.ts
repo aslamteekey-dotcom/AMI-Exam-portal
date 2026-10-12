@@ -1914,10 +1914,24 @@ export class ClientStorageApi {
 
       // Student Import Commit (Automatically creates/updates parent accounts)
       if (path === '/api/students/import-commit' && method === 'POST') {
-        const { students, records, targetClassId } = bodyData;
+        const { students, records, targetClassId, replaceExisting } = bodyData;
         const itemsToProcess = Array.isArray(records) ? records : Array.isArray(students) ? students : [];
         let importedCount = 0;
         let parentAccountCount = 0;
+
+        // Clean slate option: replace / clear existing class records before importing
+        if (replaceExisting) {
+          if (targetClassId) {
+            this.db.students = this.db.students.filter(s => s.classId !== targetClassId);
+          } else {
+            const classesInImport = new Set(itemsToProcess.map((item: any) => item.classId).filter(Boolean));
+            if (classesInImport.size > 0) {
+              this.db.students = this.db.students.filter(s => !classesInImport.has(s.classId));
+            } else {
+              this.db.students = [];
+            }
+          }
+        }
 
         itemsToProcess.forEach((item: any) => {
           if (item.isValid === false) return;
@@ -1952,8 +1966,10 @@ export class ClientStorageApi {
             parentUserId = parentUser.id;
           }
 
-          let existing = this.db.students.find(s => s.admissionNo === admNo);
+          let existing = this.db.students.find(s => s.admissionNo === admNo || s.id === admNo);
           if (existing) {
+            existing.id = admNo;
+            existing.admissionNo = admNo;
             Object.assign(existing, {
               rollNo: Number(item.rollNo) || existing.rollNo,
               nameEn,
@@ -1965,9 +1981,8 @@ export class ClientStorageApi {
               parentUserId: parentUserId || existing.parentUserId,
             });
           } else {
-            const studentId = `stu_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
             this.db.students.push({
-              id: studentId,
+              id: admNo,
               admissionNo: admNo,
               rollNo: Number(item.rollNo) || 1,
               nameEn,
@@ -1997,9 +2012,13 @@ export class ClientStorageApi {
         });
 
         this.saveDB();
-        // Sync imported students and parents to Firestore
-        this.db.students.forEach(st => {
-          firestoreSync.syncStudent(st).catch(e => console.warn('Firestore syncStudent on import error:', e));
+        // Sync imported students to Firestore (strictly using admission number as document key)
+        itemsToProcess.forEach((item: any) => {
+          const admNo = String(item.admissionNo || '').trim();
+          const st = this.db.students.find(s => s.admissionNo === admNo);
+          if (st) {
+            firestoreSync.syncStudent(st).catch(e => console.warn('Firestore syncStudent on import error:', e));
+          }
         });
         this.db.users.filter(u => u.role === 'parent').forEach(p => {
           firestoreSync.syncParent(p).catch(e => console.warn('Firestore syncParent on import error:', e));

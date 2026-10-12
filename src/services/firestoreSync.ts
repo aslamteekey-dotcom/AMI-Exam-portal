@@ -424,12 +424,13 @@ export class FirestoreSyncService {
     this.unsubscribers = [];
   }
 
-  // Sync single student
+  // Sync single student (strictly deduplicated using sanitized Admission No)
   public async syncStudent(student: Student): Promise<void> {
     try {
-      await setDoc(doc(db, 'students', student.id), cleanForFirestore(student));
+      const docKey = String(student.admissionNo || student.id).trim();
+      await setDoc(doc(db, 'students', docKey), cleanForFirestore({ ...student, id: docKey }), { merge: true });
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `students/${student.id}`);
+      handleFirestoreError(e, OperationType.WRITE, `students/${student.admissionNo || student.id}`);
       throw e;
     }
   }
