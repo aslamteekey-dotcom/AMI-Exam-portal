@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { User, Student, ClassItem } from '../../types';
+import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import {
   Users,
   Plus,
@@ -78,6 +80,43 @@ export const ParentManagement: React.FC = () => {
 
   useEffect(() => {
     loadData();
+
+    // Real-time listener for Firestore 'parents' collection
+    let unsub: (() => void) | undefined;
+    try {
+      unsub = onSnapshot(
+        collection(db, 'parents'),
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const remoteParents = snapshot.docs.map((d) => ({
+              ...d.data(),
+              id: d.id,
+            } as User));
+
+            // Sync state strictly with Firestore documents
+            setParents((prev) => {
+              return remoteParents.map((rp) => {
+                const prevP = prev.find((item) => item.id === rp.id);
+                return {
+                  ...rp,
+                  linkedStudents: prevP?.linkedStudents || [],
+                };
+              });
+            });
+          }
+        },
+        (error) => {
+          console.error('Firestore parents onSnapshot error:', error);
+          handleFirestoreError(error, OperationType.GET, 'parents');
+        }
+      );
+    } catch (err) {
+      console.warn('Failed to attach parents onSnapshot listener:', err);
+    }
+
+    return () => {
+      if (unsub) unsub();
+    };
   }, []);
 
   const toggleShowPassword = (parentId: string) => {
@@ -111,10 +150,35 @@ export const ParentManagement: React.FC = () => {
       }
       if (!pass) pass = 'parent123';
 
+      const parentId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const newParentData: User = {
+        id: parentId,
+        username: pUsername.trim() || pName.trim(),
+        name: pName.trim(),
+        nameMl: pNameMl.trim() || pName.trim(),
+        role: 'parent',
+        plainPassword: pass,
+        phone: pPhone.trim(),
+        active: true,
+        createdAt: new Date().toISOString(),
+      };
+
+      // 1. Persistent Firestore write
+      try {
+        await setDoc(doc(db, 'parents', parentId), newParentData);
+      } catch (firestoreErr: any) {
+        console.error('Firestore write error when adding parent:', firestoreErr);
+        handleFirestoreError(firestoreErr, OperationType.WRITE, `parents/${parentId}`);
+        alert(`Firestore error: ${firestoreErr.message || 'Failed to save parent to cloud database'}`);
+        return;
+      }
+
+      // 2. Also register in local storage/API
       const res = await fetchWithAuth('/api/parents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          id: parentId,
           name: pName.trim(),
           nameMl: pNameMl.trim() || pName.trim(),
           username: pUsername.trim() || pName.trim(),
@@ -134,7 +198,7 @@ export const ParentManagement: React.FC = () => {
       setPPassword('');
       setPPhone('');
       setCreateChildIds([]);
-      loadData();
+      await loadData();
     } catch (err: any) {
       alert(err.message);
     }
@@ -152,22 +216,32 @@ export const ParentManagement: React.FC = () => {
     e.preventDefault();
     if (!editingParent) return;
     try {
+      const updateData = {
+        name: editName.trim(),
+        nameMl: editNameMl.trim() || editName.trim(),
+        username: editUsername.trim(),
+        phone: editPhone.trim(),
+      };
+
+      // 1. Persistent Firestore write
+      try {
+        await setDoc(doc(db, 'parents', editingParent.id), updateData, { merge: true });
+      } catch (firestoreErr: any) {
+        console.warn('Firestore parent edit warning:', firestoreErr);
+      }
+
+      // 2. Local update
       const res = await fetchWithAuth(`/api/parents/${editingParent.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: editName.trim(),
-          nameMl: editNameMl.trim() || editName.trim(),
-          username: editUsername.trim(),
-          phone: editPhone.trim(),
-        }),
+        body: JSON.stringify(updateData),
       });
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || 'Failed to update parent account');
       }
       setEditingParent(null);
-      loadData();
+      await loadData();
     } catch (err: any) {
       alert(err.message);
     }
@@ -180,6 +254,14 @@ export const ParentManagement: React.FC = () => {
     if (!confirm) return;
 
     try {
+      // 1. Delete from Firestore
+      try {
+        await deleteDoc(doc(db, 'parents', parent.id));
+      } catch (firestoreErr: any) {
+        console.warn('Firestore parent delete warning:', firestoreErr);
+      }
+
+      // 2. Delete from local state
       const res = await fetchWithAuth(`/api/parents/${parent.id}`, {
         method: 'DELETE',
       });
@@ -187,7 +269,7 @@ export const ParentManagement: React.FC = () => {
         const err = await res.json();
         throw new Error(err.error || 'Failed to delete parent account');
       }
-      loadData();
+      await loadData();
     } catch (err: any) {
       alert(err.message);
     }
@@ -203,6 +285,18 @@ export const ParentManagement: React.FC = () => {
     if (!passwordTargetParent || !newPasswordVal.trim()) return;
 
     try {
+      // 1. Update password in Firestore
+      try {
+        await setDoc(
+          doc(db, 'parents', passwordTargetParent.id),
+          { plainPassword: newPasswordVal.trim() },
+          { merge: true }
+        );
+      } catch (firestoreErr: any) {
+        console.warn('Firestore parent password update warning:', firestoreErr);
+      }
+
+      // 2. Local update
       const res = await fetchWithAuth(`/api/users/${passwordTargetParent.id}/password`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -214,7 +308,7 @@ export const ParentManagement: React.FC = () => {
       }
       setPasswordTargetParent(null);
       setNewPasswordVal('');
-      loadData();
+      await loadData();
       alert(`Password for parent ${passwordTargetParent.name} updated successfully!`);
     } catch (err: any) {
       alert(err.message);

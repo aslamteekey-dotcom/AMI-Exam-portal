@@ -32,25 +32,50 @@ export class FirestoreSyncService {
     return FirestoreSyncService.instance;
   }
 
-  // Setup real-time listeners for the 5 collections
+  // Setup real-time listeners for all 6 collections
   public subscribeToCollections(callbacks: {
     onStudents?: (students: Student[]) => void;
     onTeachers?: (teachers: User[]) => void;
+    onParents?: (parents: User[]) => void;
     onClasses?: (classes: ClassItem[]) => void;
     onSubjects?: (subjects: SubjectItem[]) => void;
     onMarks?: (marks: MarkSheet[]) => void;
+    getInitialStudents?: () => Student[];
+    getInitialTeachers?: () => User[];
+    getInitialParents?: () => User[];
+    getInitialClasses?: () => ClassItem[];
+    getInitialSubjects?: () => SubjectItem[];
+    getInitialMarks?: () => MarkSheet[];
   }): () => void {
     this.stopSubscriptions();
 
     // 1. Students
     if (callbacks.onStudents) {
       try {
+        let hasSeededStudents = false;
         const unsub = onSnapshot(
           collection(db, 'students'),
-          snapshot => {
+          async snapshot => {
             if (!snapshot.empty) {
-              const students = snapshot.docs.map(doc => doc.data() as Student);
+              const students = snapshot.docs.map(doc => ({
+                ...doc.data(),
+                id: doc.id,
+              } as Student));
               callbacks.onStudents?.(students);
+            } else if (!hasSeededStudents) {
+              hasSeededStudents = true;
+              try {
+                if (callbacks.getInitialStudents) {
+                  const initialList = callbacks.getInitialStudents();
+                  if (Array.isArray(initialList) && initialList.length > 0) {
+                    for (const st of initialList) {
+                      await setDoc(doc(db, 'students', st.id), st);
+                    }
+                  }
+                }
+              } catch (seedErr) {
+                console.warn('Initial student seed error:', seedErr);
+              }
             }
           },
           err => {
@@ -66,12 +91,32 @@ export class FirestoreSyncService {
     // 2. Teachers
     if (callbacks.onTeachers) {
       try {
+        let hasSeededInitialTeachers = false;
         const unsub = onSnapshot(
           collection(db, 'teachers'),
-          snapshot => {
+          async snapshot => {
             if (!snapshot.empty) {
-              const teachers = snapshot.docs.map(doc => doc.data() as User);
+              // If Firestore collection has data, NEVER re-inject the hardcoded initial 2 teachers
+              const teachers = snapshot.docs.map(doc => ({
+                ...doc.data(),
+                id: doc.id,
+              } as User));
               callbacks.onTeachers?.(teachers);
+            } else if (!hasSeededInitialTeachers) {
+              hasSeededInitialTeachers = true;
+              // If Firestore is empty initially, seed it once, but do not keep overwriting user changes with mock arrays
+              try {
+                if (callbacks.getInitialTeachers) {
+                  const initialList = callbacks.getInitialTeachers();
+                  if (Array.isArray(initialList) && initialList.length > 0) {
+                    for (const t of initialList) {
+                      await setDoc(doc(db, 'teachers', t.id), t);
+                    }
+                  }
+                }
+              } catch (seedErr) {
+                console.warn('Initial teacher seed error:', seedErr);
+              }
             }
           },
           err => {
@@ -84,15 +129,72 @@ export class FirestoreSyncService {
       }
     }
 
-    // 3. Classes
+    // 3. Parents
+    if (callbacks.onParents) {
+      try {
+        let hasSeededInitialParents = false;
+        const unsub = onSnapshot(
+          collection(db, 'parents'),
+          async snapshot => {
+            if (!snapshot.empty) {
+              const parents = snapshot.docs.map(doc => ({
+                ...doc.data(),
+                id: doc.id,
+              } as User));
+              callbacks.onParents?.(parents);
+            } else if (!hasSeededInitialParents) {
+              hasSeededInitialParents = true;
+              try {
+                if (callbacks.getInitialParents) {
+                  const initialList = callbacks.getInitialParents();
+                  if (Array.isArray(initialList) && initialList.length > 0) {
+                    for (const p of initialList) {
+                      await setDoc(doc(db, 'parents', p.id), p);
+                    }
+                  }
+                }
+              } catch (seedErr) {
+                console.warn('Initial parent seed error:', seedErr);
+              }
+            }
+          },
+          err => {
+            handleFirestoreError(err, OperationType.GET, 'parents');
+          }
+        );
+        this.unsubscribers.push(unsub);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.GET, 'parents');
+      }
+    }
+
+    // 4. Classes
     if (callbacks.onClasses) {
       try {
+        let hasSeededClasses = false;
         const unsub = onSnapshot(
           collection(db, 'classes'),
-          snapshot => {
+          async snapshot => {
             if (!snapshot.empty) {
-              const classes = snapshot.docs.map(doc => doc.data() as ClassItem);
+              const classes = snapshot.docs.map(doc => ({
+                ...doc.data(),
+                id: doc.id,
+              } as ClassItem));
               callbacks.onClasses?.(classes);
+            } else if (!hasSeededClasses) {
+              hasSeededClasses = true;
+              try {
+                if (callbacks.getInitialClasses) {
+                  const initialList = callbacks.getInitialClasses();
+                  if (Array.isArray(initialList) && initialList.length > 0) {
+                    for (const c of initialList) {
+                      await setDoc(doc(db, 'classes', c.id), c);
+                    }
+                  }
+                }
+              } catch (seedErr) {
+                console.warn('Initial class seed error:', seedErr);
+              }
             }
           },
           err => {
@@ -105,15 +207,33 @@ export class FirestoreSyncService {
       }
     }
 
-    // 4. Subjects
+    // 5. Subjects
     if (callbacks.onSubjects) {
       try {
+        let hasSeededSubjects = false;
         const unsub = onSnapshot(
           collection(db, 'subjects'),
-          snapshot => {
+          async snapshot => {
             if (!snapshot.empty) {
-              const subjects = snapshot.docs.map(doc => doc.data() as SubjectItem);
+              const subjects = snapshot.docs.map(doc => ({
+                ...doc.data(),
+                id: doc.id,
+              } as SubjectItem));
               callbacks.onSubjects?.(subjects);
+            } else if (!hasSeededSubjects) {
+              hasSeededSubjects = true;
+              try {
+                if (callbacks.getInitialSubjects) {
+                  const initialList = callbacks.getInitialSubjects();
+                  if (Array.isArray(initialList) && initialList.length > 0) {
+                    for (const s of initialList) {
+                      await setDoc(doc(db, 'subjects', s.id), s);
+                    }
+                  }
+                }
+              } catch (seedErr) {
+                console.warn('Initial subject seed error:', seedErr);
+              }
             }
           },
           err => {
@@ -126,15 +246,33 @@ export class FirestoreSyncService {
       }
     }
 
-    // 5. Marks
+    // 6. Marks
     if (callbacks.onMarks) {
       try {
+        let hasSeededMarks = false;
         const unsub = onSnapshot(
           collection(db, 'marks'),
-          snapshot => {
+          async snapshot => {
             if (!snapshot.empty) {
-              const marks = snapshot.docs.map(doc => doc.data() as MarkSheet);
+              const marks = snapshot.docs.map(doc => ({
+                ...doc.data(),
+                id: doc.id,
+              } as MarkSheet));
               callbacks.onMarks?.(marks);
+            } else if (!hasSeededMarks) {
+              hasSeededMarks = true;
+              try {
+                if (callbacks.getInitialMarks) {
+                  const initialList = callbacks.getInitialMarks();
+                  if (Array.isArray(initialList) && initialList.length > 0) {
+                    for (const m of initialList) {
+                      await setDoc(doc(db, 'marks', m.id), m);
+                    }
+                  }
+                }
+              } catch (seedErr) {
+                console.warn('Initial marks seed error:', seedErr);
+              }
             }
           },
           err => {
@@ -165,6 +303,7 @@ export class FirestoreSyncService {
       await setDoc(doc(db, 'students', student.id), student);
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `students/${student.id}`);
+      throw e;
     }
   }
 
@@ -174,6 +313,7 @@ export class FirestoreSyncService {
       await deleteDoc(doc(db, 'students', studentId));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `students/${studentId}`);
+      throw e;
     }
   }
 
@@ -183,6 +323,7 @@ export class FirestoreSyncService {
       await setDoc(doc(db, 'teachers', teacher.id), teacher);
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `teachers/${teacher.id}`);
+      throw e;
     }
   }
 
@@ -192,6 +333,27 @@ export class FirestoreSyncService {
       await deleteDoc(doc(db, 'teachers', teacherId));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `teachers/${teacherId}`);
+      throw e;
+    }
+  }
+
+  // Sync parent
+  public async syncParent(parent: User): Promise<void> {
+    try {
+      await setDoc(doc(db, 'parents', parent.id), parent);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `parents/${parent.id}`);
+      throw e;
+    }
+  }
+
+  // Delete parent
+  public async deleteParent(parentId: string): Promise<void> {
+    try {
+      await deleteDoc(doc(db, 'parents', parentId));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `parents/${parentId}`);
+      throw e;
     }
   }
 
@@ -201,6 +363,7 @@ export class FirestoreSyncService {
       await setDoc(doc(db, 'classes', classItem.id), classItem);
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `classes/${classItem.id}`);
+      throw e;
     }
   }
 
@@ -210,6 +373,7 @@ export class FirestoreSyncService {
       await setDoc(doc(db, 'subjects', subject.id), subject);
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `subjects/${subject.id}`);
+      throw e;
     }
   }
 
@@ -219,6 +383,7 @@ export class FirestoreSyncService {
       await setDoc(doc(db, 'marks', markSheet.id), markSheet);
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `marks/${markSheet.id}`);
+      throw e;
     }
   }
 
@@ -226,6 +391,7 @@ export class FirestoreSyncService {
   public async pushFullStateToFirestore(data: {
     students: Student[];
     teachers: User[];
+    parents?: User[];
     classes: ClassItem[];
     subjects: SubjectItem[];
     marks: MarkSheet[];
@@ -238,6 +404,12 @@ export class FirestoreSyncService {
       // Teachers
       for (const t of data.teachers) {
         await setDoc(doc(db, 'teachers', t.id), t);
+      }
+      // Parents
+      if (data.parents) {
+        for (const p of data.parents) {
+          await setDoc(doc(db, 'parents', p.id), p);
+        }
       }
       // Classes
       for (const c of data.classes) {
@@ -278,6 +450,12 @@ export class FirestoreSyncService {
         if (data.role !== 'admin' && data.username !== 'principal') {
           await deleteDoc(d.ref);
         }
+      }
+
+      // 4. Purge parents
+      const parentsSnap = await getDocs(collection(db, 'parents'));
+      for (const d of parentsSnap.docs) {
+        await deleteDoc(d.ref);
       }
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, 'purgeDemoData');

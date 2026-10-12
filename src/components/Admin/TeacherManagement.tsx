@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { User, ClassItem, SubjectItem, TeacherAssignment } from '../../types';
+import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import {
   Users,
   Plus,
@@ -81,6 +83,43 @@ export const TeacherManagement: React.FC = () => {
 
   useEffect(() => {
     loadData();
+
+    // Real-time listener for Firestore 'teachers' collection
+    let unsub: (() => void) | undefined;
+    try {
+      unsub = onSnapshot(
+        collection(db, 'teachers'),
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const remoteTeachers = snapshot.docs.map((docSnap) => ({
+              ...docSnap.data(),
+              id: docSnap.id,
+            } as User));
+
+            // Sync state strictly with Firestore snapshot docs (never re-injecting 2 default teachers)
+            setTeachers((prevTeachers) => {
+              return remoteTeachers.map((rt) => {
+                const prev = prevTeachers.find((p) => p.id === rt.id);
+                return {
+                  ...rt,
+                  assignments: prev?.assignments || [],
+                };
+              });
+            });
+          }
+        },
+        (error) => {
+          console.error('Firestore teachers onSnapshot error:', error);
+          handleFirestoreError(error, OperationType.GET, 'teachers');
+        }
+      );
+    } catch (err) {
+      console.warn('Failed to attach teacher onSnapshot listener:', err);
+    }
+
+    return () => {
+      if (unsub) unsub();
+    };
   }, []);
 
   const toggleShowPassword = (teacherId: string) => {
@@ -90,34 +129,71 @@ export const TeacherManagement: React.FC = () => {
     }));
   };
 
-  const handleCreateTeacher = async (e: React.FormEvent) => {
+  const handleAddTeacher = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!tName.trim() || !tUsername.trim()) {
+      alert('Teacher Name and Username are required');
+      return;
+    }
+
+    const teacherId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const newTeacherData: User = {
+      id: teacherId,
+      username: tUsername.trim(),
+      name: tName.trim(),
+      nameMl: tNameMl.trim() || tName.trim(),
+      role: 'teacher',
+      plainPassword: tPassword.trim() || 'teacher123',
+      phone: tPhone.trim(),
+      active: true,
+      createdAt: new Date().toISOString(),
+    };
+
     try {
+      // 1. Persistent Firestore write directly to 'teachers' collection
+      try {
+        await setDoc(doc(db, 'teachers', teacherId), newTeacherData);
+      } catch (firestoreErr: any) {
+        console.error('Firestore write error when adding teacher:', firestoreErr);
+        handleFirestoreError(firestoreErr, OperationType.WRITE, `teachers/${teacherId}`);
+        alert(`Firestore error: ${firestoreErr.message || 'Failed to save teacher to cloud database'}`);
+        return;
+      }
+
+      // 2. Also register in local/client storage with the exact same ID
       const res = await fetchWithAuth('/api/teachers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          id: teacherId,
           name: tName.trim(),
           nameMl: tNameMl.trim() || tName.trim(),
           username: tUsername.trim(),
-          password: tPassword.trim(),
+          plainPassword: tPassword.trim() || 'teacher123',
+          password: tPassword.trim() || 'teacher123',
           phone: tPhone.trim(),
         }),
       });
+
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || 'Failed to create teacher account');
       }
+
       setShowAddModal(false);
       setTName('');
       setTNameMl('');
       setTUsername('');
+      setTPassword('teacher123');
       setTPhone('');
-      loadData();
+      await loadData();
     } catch (err: any) {
-      alert(err.message);
+      console.error('Error in handleAddTeacher:', err);
+      alert(err.message || 'Failed to add teacher');
     }
   };
+
+  const handleCreateTeacher = handleAddTeacher;
 
   const handleOpenEdit = (teacher: any) => {
     setEditingTeacher(teacher);
@@ -131,22 +207,32 @@ export const TeacherManagement: React.FC = () => {
     e.preventDefault();
     if (!editingTeacher) return;
     try {
+      const updateData = {
+        name: editName.trim(),
+        nameMl: editNameMl.trim() || editName.trim(),
+        username: editUsername.trim(),
+        phone: editPhone.trim(),
+      };
+
+      // 1. Update in Firestore
+      try {
+        await setDoc(doc(db, 'teachers', editingTeacher.id), updateData, { merge: true });
+      } catch (firestoreErr: any) {
+        console.warn('Firestore teacher edit error:', firestoreErr);
+      }
+
+      // 2. Update local state
       const res = await fetchWithAuth(`/api/teachers/${editingTeacher.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: editName.trim(),
-          nameMl: editNameMl.trim() || editName.trim(),
-          username: editUsername.trim(),
-          phone: editPhone.trim(),
-        }),
+        body: JSON.stringify(updateData),
       });
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || 'Failed to update teacher account');
       }
       setEditingTeacher(null);
-      loadData();
+      await loadData();
     } catch (err: any) {
       alert(err.message);
     }
@@ -159,6 +245,14 @@ export const TeacherManagement: React.FC = () => {
     if (!confirm) return;
 
     try {
+      // 1. Delete from Firestore
+      try {
+        await deleteDoc(doc(db, 'teachers', teacher.id));
+      } catch (firestoreErr: any) {
+        console.warn('Firestore teacher delete error:', firestoreErr);
+      }
+
+      // 2. Delete from local state
       const res = await fetchWithAuth(`/api/teachers/${teacher.id}`, {
         method: 'DELETE',
       });
@@ -166,7 +260,7 @@ export const TeacherManagement: React.FC = () => {
         const err = await res.json();
         throw new Error(err.error || 'Failed to delete teacher account');
       }
-      loadData();
+      await loadData();
     } catch (err: any) {
       alert(err.message);
     }
@@ -185,6 +279,18 @@ export const TeacherManagement: React.FC = () => {
     }
 
     try {
+      // 1. Update password in Firestore
+      try {
+        await setDoc(
+          doc(db, 'teachers', passwordTargetTeacher.id),
+          { plainPassword: newPassword.trim() },
+          { merge: true }
+        );
+      } catch (firestoreErr: any) {
+        console.warn('Firestore teacher password update error:', firestoreErr);
+      }
+
+      // 2. Update in local state
       const res = await fetchWithAuth(`/api/users/${passwordTargetTeacher.id}/password`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -199,7 +305,7 @@ export const TeacherManagement: React.FC = () => {
       }
       setPasswordTargetTeacher(null);
       setNewPassword('');
-      loadData();
+      await loadData();
       alert(`Password for ${passwordTargetTeacher.name} updated successfully!`);
     } catch (err: any) {
       alert(err.message);
@@ -425,7 +531,7 @@ export const TeacherManagement: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleCreateTeacher} className="space-y-3 text-xs">
+            <form onSubmit={handleAddTeacher} className="space-y-3 text-xs">
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Teacher Name (English)</label>
                 <input

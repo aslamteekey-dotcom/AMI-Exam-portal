@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import {
   ClassItem,
   SubjectItem,
@@ -213,6 +215,16 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
 
       const data = await res.json();
       setMarkSheet(data.markSheet);
+
+      // Direct persistent Firestore write
+      if (data.markSheet?.id) {
+        try {
+          await setDoc(doc(db, 'marks', data.markSheet.id), data.markSheet, { merge: true });
+        } catch (firestoreErr: any) {
+          console.warn('Firestore mark draft write warning:', firestoreErr);
+        }
+      }
+
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err: any) {
@@ -228,6 +240,20 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
     if (!markSheet?.id) return;
 
     try {
+      // Direct persistent Firestore write
+      try {
+        await setDoc(
+          doc(db, 'marks', markSheet.id),
+          {
+            status: 'submitted',
+            submittedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (firestoreErr: any) {
+        console.warn('Firestore mark submit write warning:', firestoreErr);
+      }
+
       const res = await fetchWithAuth(`/api/mark-sheets/${markSheet.id}/submit`, {
         method: 'POST',
       });

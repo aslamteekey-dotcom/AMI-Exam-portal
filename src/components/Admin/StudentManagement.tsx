@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Student, ClassItem } from '../../types';
+import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import {
   Users,
   Search,
@@ -69,6 +71,34 @@ export const StudentManagement: React.FC = () => {
 
   useEffect(() => {
     loadData();
+
+    // Real-time listener for Firestore 'students' collection
+    let unsub: (() => void) | undefined;
+    try {
+      unsub = onSnapshot(
+        collection(db, 'students'),
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const remoteStudents = snapshot.docs.map((d) => ({
+              ...d.data(),
+              id: d.id,
+            } as Student));
+            // Update React state strictly with Firestore documents
+            setStudents(remoteStudents);
+          }
+        },
+        (error) => {
+          console.error('Firestore students onSnapshot error:', error);
+          handleFirestoreError(error, OperationType.GET, 'students');
+        }
+      );
+    } catch (err) {
+      console.warn('Failed to attach student onSnapshot listener:', err);
+    }
+
+    return () => {
+      if (unsub) unsub();
+    };
   }, []);
 
   const handleOpenAdd = () => {
@@ -105,26 +135,67 @@ export const StudentManagement: React.FC = () => {
     e.preventDefault();
     try {
       if (editingStudent) {
+        const updateData: Partial<Student> = {
+          admissionNo: formData.admissionNo.trim(),
+          rollNo: Number(formData.rollNo),
+          nameEn: formData.nameEn.trim(),
+          nameMl: formData.nameMl.trim() || formData.nameEn.trim(),
+          classId: formData.classId,
+          parentNameEn: formData.parentNameEn.trim(),
+          parentPhone: formData.parentPhone.trim(),
+          gender: formData.gender,
+        };
+
+        // 1. Persistent Firestore write
+        try {
+          await setDoc(doc(db, 'students', editingStudent.id), updateData, { merge: true });
+        } catch (firestoreErr: any) {
+          console.error('Firestore write error when updating student:', firestoreErr);
+          handleFirestoreError(firestoreErr, OperationType.WRITE, `students/${editingStudent.id}`);
+          alert(`Firestore error: ${firestoreErr.message || 'Failed to update student in cloud database'}`);
+          return;
+        }
+
         const res = await fetchWithAuth(`/api/students/${editingStudent.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...formData,
-            rollNo: Number(formData.rollNo),
-          }),
+          body: JSON.stringify(updateData),
         });
         if (!res.ok) {
           const err = await res.json();
           throw new Error(err.error || 'Failed to update student');
         }
       } else {
+        const studentId = `stu_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const newStudentData: Student = {
+          id: studentId,
+          admissionNo: formData.admissionNo.trim(),
+          rollNo: Number(formData.rollNo) || 1,
+          nameEn: formData.nameEn.trim(),
+          nameMl: formData.nameMl.trim() || formData.nameEn.trim(),
+          classId: formData.classId,
+          academicYearId: 'ay_2026_2027',
+          parentNameEn: formData.parentNameEn.trim(),
+          parentNameMl: formData.nameMl.trim() || formData.parentNameEn.trim(),
+          parentPhone: formData.parentPhone.trim(),
+          status: 'active',
+          gender: formData.gender || 'M',
+        };
+
+        // 1. Persistent Firestore write
+        try {
+          await setDoc(doc(db, 'students', studentId), newStudentData);
+        } catch (firestoreErr: any) {
+          console.error('Firestore write error when adding student:', firestoreErr);
+          handleFirestoreError(firestoreErr, OperationType.WRITE, `students/${studentId}`);
+          alert(`Firestore error: ${firestoreErr.message || 'Failed to save student to cloud database'}`);
+          return;
+        }
+
         const res = await fetchWithAuth('/api/students', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...formData,
-            rollNo: Number(formData.rollNo),
-          }),
+          body: JSON.stringify(newStudentData),
         });
         if (!res.ok) {
           const err = await res.json();
@@ -133,7 +204,35 @@ export const StudentManagement: React.FC = () => {
       }
 
       setShowAddModal(false);
-      loadData();
+      await loadData();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleDeleteStudent = async (student: Student) => {
+    const confirm = window.confirm(
+      `Are you sure you want to delete student "${student.nameEn}" (${student.admissionNo})?`
+    );
+    if (!confirm) return;
+
+    try {
+      // 1. Delete from Firestore
+      try {
+        await deleteDoc(doc(db, 'students', student.id));
+      } catch (firestoreErr: any) {
+        console.warn('Firestore student delete error:', firestoreErr);
+      }
+
+      // 2. Delete from local state
+      const res = await fetchWithAuth(`/api/students/${student.id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to delete student');
+      }
+      await loadData();
     } catch (err: any) {
       alert(err.message);
     }
@@ -335,13 +434,22 @@ export const StudentManagement: React.FC = () => {
                     <div className="text-[10px] text-slate-400 font-mono">{student.parentPhone}</div>
                   </td>
                   <td className="p-3 text-center">
-                    <button
-                      onClick={() => handleOpenEdit(student)}
-                      className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition"
-                      title="Edit student"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center justify-center gap-1">
+                      <button
+                        onClick={() => handleOpenEdit(student)}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition"
+                        title="Edit student"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteStudent(student)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                        title="Delete student"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

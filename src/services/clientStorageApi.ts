@@ -655,15 +655,34 @@ export class ClientStorageApi {
             } catch {}
           }
         },
+        getInitialStudents: () => {
+          return this.db.students;
+        },
         onTeachers: (remoteTeachers) => {
           if (Array.isArray(remoteTeachers) && remoteTeachers.length > 0) {
-            // Merge teachers into users keeping admin
+            // Merge teachers into users keeping admin and parents
             const nonTeachers = this.db.users.filter(u => u.role !== 'teacher');
             this.db.users = [...nonTeachers, ...remoteTeachers];
             try {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
             } catch {}
           }
+        },
+        getInitialTeachers: () => {
+          return this.db.users.filter(u => u.role === 'teacher');
+        },
+        onParents: (remoteParents) => {
+          if (Array.isArray(remoteParents) && remoteParents.length > 0) {
+            // Merge parents into users keeping admin and teachers
+            const nonParents = this.db.users.filter(u => u.role !== 'parent');
+            this.db.users = [...nonParents, ...remoteParents];
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
+            } catch {}
+          }
+        },
+        getInitialParents: () => {
+          return this.db.users.filter(u => u.role === 'parent');
         },
         onClasses: (remoteClasses) => {
           if (Array.isArray(remoteClasses) && remoteClasses.length > 0) {
@@ -673,6 +692,9 @@ export class ClientStorageApi {
             } catch {}
           }
         },
+        getInitialClasses: () => {
+          return this.db.classes;
+        },
         onSubjects: (remoteSubjects) => {
           if (Array.isArray(remoteSubjects) && remoteSubjects.length > 0) {
             this.db.subjects = remoteSubjects;
@@ -681,6 +703,9 @@ export class ClientStorageApi {
             } catch {}
           }
         },
+        getInitialSubjects: () => {
+          return this.db.subjects;
+        },
         onMarks: (remoteMarks) => {
           if (Array.isArray(remoteMarks) && remoteMarks.length > 0) {
             this.db.markSheets = remoteMarks;
@@ -688,6 +713,9 @@ export class ClientStorageApi {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
             } catch {}
           }
+        },
+        getInitialMarks: () => {
+          return this.db.markSheets;
         },
       });
     } catch (e) {
@@ -742,49 +770,51 @@ export class ClientStorageApi {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        // If stored data is empty or lacks students, exams, or teachers, reseed with complete mock data
-        if (
-          !parsed ||
-          !Array.isArray(parsed.students) ||
-          parsed.students.length === 0 ||
-          !Array.isArray(parsed.examinations) ||
-          parsed.examinations.length === 0 ||
-          !Array.isArray(parsed.users) ||
-          parsed.users.length === 0 ||
-          parsed?.settings?.principalNameEn !== 'ASLAM TK'
-        ) {
-          const fresh = getInitialClientSeedData();
-          this.saveDBSync(fresh);
-          return fresh;
-        }
+        if (parsed && typeof parsed === 'object') {
+          // Ensure all collections are non-null arrays/objects
+          parsed.users = Array.isArray(parsed.users) ? parsed.users : [];
+          parsed.classes = Array.isArray(parsed.classes) ? parsed.classes : [];
+          parsed.subjects = Array.isArray(parsed.subjects) ? parsed.subjects : [];
+          parsed.academicYears = Array.isArray(parsed.academicYears) ? parsed.academicYears : [];
+          parsed.examinations = Array.isArray(parsed.examinations) ? parsed.examinations : [];
+          parsed.students = Array.isArray(parsed.students) ? parsed.students : [];
+          parsed.teacherAssignments = Array.isArray(parsed.teacherAssignments) ? parsed.teacherAssignments : [];
+          parsed.markSheets = Array.isArray(parsed.markSheets) ? parsed.markSheets : [];
+          parsed.auditLogs = Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [];
+          parsed.settings = parsed.settings || {};
 
-        // Ensure all collections are non-null arrays/objects
-        parsed.users = Array.isArray(parsed.users) ? parsed.users : [];
-        parsed.classes = Array.isArray(parsed.classes) ? parsed.classes : [];
-        parsed.subjects = Array.isArray(parsed.subjects) ? parsed.subjects : [];
-        parsed.academicYears = Array.isArray(parsed.academicYears) ? parsed.academicYears : [];
-        parsed.examinations = Array.isArray(parsed.examinations) ? parsed.examinations : [];
-        parsed.students = Array.isArray(parsed.students) ? parsed.students : [];
-        parsed.teacherAssignments = Array.isArray(parsed.teacherAssignments) ? parsed.teacherAssignments : [];
-        parsed.markSheets = Array.isArray(parsed.markSheets) ? parsed.markSheets : [];
-        parsed.auditLogs = Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [];
-        parsed.settings = parsed.settings || {};
+          // Ensure admin user exists
+          if (!parsed.users.some((u: any) => u.role === 'admin' || u.username === 'principal')) {
+            parsed.users.unshift({
+              id: 'usr_admin',
+              username: 'principal',
+              name: 'ASLAM TK',
+              nameMl: 'അസ്‌ലം ടി.കെ.',
+              role: 'admin',
+              plainPassword: 'admin123',
+              active: true,
+              email: 'aslamteekey@gmail.com',
+              phone: '+91 9447123456',
+              createdAt: '2026-06-01T08:00:00Z',
+            });
+          }
 
-        // Migrate and enforce assessment components strictly in English
-        const defaultSubs = getDefaultSubjects();
-        if (Array.isArray(parsed?.subjects)) {
-          parsed.subjects.forEach((s: any) => {
-            const def = defaultSubs.find(d => d.id === s.id);
-            if (def) {
-              s.defaultComponents = def.defaultComponents;
-              if (def.classComponentOverrides) {
-                s.classComponentOverrides = def.classComponentOverrides;
+          // Migrate and enforce assessment components strictly in English
+          const defaultSubs = getDefaultSubjects();
+          if (Array.isArray(parsed?.subjects)) {
+            parsed.subjects.forEach((s: any) => {
+              const def = defaultSubs.find(d => d.id === s.id);
+              if (def) {
+                s.defaultComponents = def.defaultComponents;
+                if (def.classComponentOverrides) {
+                  s.classComponentOverrides = def.classComponentOverrides;
+                }
               }
-            }
-          });
-        }
+            });
+          }
 
-        return parsed;
+          return parsed;
+        }
       }
     } catch (e) {
       console.warn('Failed to load DB from localStorage, creating fresh seed:', e);
@@ -807,6 +837,7 @@ export class ClientStorageApi {
         .pushFullStateToFirestore({
           students: this.db.students || [],
           teachers: (this.db.users || []).filter(u => u.role === 'teacher'),
+          parents: (this.db.users || []).filter(u => u.role === 'parent'),
           classes: this.db.classes || [],
           subjects: this.db.subjects || [],
           marks: this.db.markSheets || [],
@@ -1417,7 +1448,7 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/teachers' && method === 'POST') {
-        const { username, name, nameMl, plainPassword, email, phone, assignments } = bodyData;
+        const { id, username, name, nameMl, plainPassword, password, email, phone, assignments } = bodyData;
         if (!username || !name) {
           return this.jsonResponse({ error: 'Username and Name are required' }, 400);
         }
@@ -1425,13 +1456,14 @@ export class ClientStorageApi {
           return this.jsonResponse({ error: 'Username already taken' }, 400);
         }
 
+        const teacherId = id || `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
         const newTeacher: User = {
-          id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          id: teacherId,
           username: username.trim(),
           name: name.trim(),
-          nameMl: nameMl?.trim(),
+          nameMl: nameMl?.trim() || name.trim(),
           role: 'teacher',
-          plainPassword: plainPassword?.trim() || 'teacher123',
+          plainPassword: (plainPassword || password || 'teacher123').trim(),
           active: true,
           email: email?.trim(),
           phone: phone?.trim(),
@@ -1452,6 +1484,10 @@ export class ClientStorageApi {
         }
 
         this.saveDB();
+        // Immediately sync to Firestore collection 'teachers'
+        firestoreSync.syncTeacher(newTeacher).catch(e => {
+          console.warn('Firestore syncTeacher error:', e);
+        });
         return this.jsonResponse(newTeacher);
       }
 
@@ -1469,6 +1505,9 @@ export class ClientStorageApi {
         if (bodyData.active !== undefined) teacher.active = Boolean(bodyData.active);
 
         this.saveDB();
+        firestoreSync.syncTeacher(teacher).catch(e => {
+          console.warn('Firestore syncTeacher error on PUT:', e);
+        });
         return this.jsonResponse(teacher);
       }
 
@@ -1477,6 +1516,9 @@ export class ClientStorageApi {
         this.db.users = this.db.users.filter(u => u.id !== tId);
         this.db.teacherAssignments = this.db.teacherAssignments.filter(a => a.teacherId !== tId);
         this.saveDB();
+        firestoreSync.deleteTeacher(tId).catch(e => {
+          console.warn('Firestore deleteTeacher error on DELETE:', e);
+        });
         return this.jsonResponse({ success: true });
       }
 
@@ -1494,6 +1536,11 @@ export class ClientStorageApi {
         user.plainPassword = trimmed;
         user.passwordHash = clientHashPassword(trimmed);
         this.saveDB();
+        if (user.role === 'teacher') {
+          firestoreSync.syncTeacher(user).catch(e => console.warn('Firestore sync user password error:', e));
+        } else if (user.role === 'parent') {
+          firestoreSync.syncParent(user).catch(e => console.warn('Firestore sync parent password error:', e));
+        }
         return this.jsonResponse({ success: true, message: 'Password updated successfully' });
       }
 
@@ -1540,8 +1587,9 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/students' && method === 'POST') {
+        const studentId = bodyData.id || `stu_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
         const newStudent: Student = {
-          id: `stu_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          id: studentId,
           admissionNo: bodyData.admissionNo.trim(),
           rollNo: Number(bodyData.rollNo) || 1,
           nameEn: bodyData.nameEn.trim(),
@@ -1557,6 +1605,7 @@ export class ClientStorageApi {
         };
 
         // Auto create/update parent account
+        let createdParent: User | null = null;
         if (newStudent.parentNameEn) {
           let parentUser = this.db.users.find(
             u => u.role === 'parent' && u.name.toLowerCase() === newStudent.parentNameEn.toLowerCase()
@@ -1574,12 +1623,23 @@ export class ClientStorageApi {
               createdAt: new Date().toISOString(),
             };
             this.db.users.push(parentUser);
+            createdParent = parentUser;
           }
           newStudent.parentUserId = parentUser.id;
         }
 
         this.db.students.push(newStudent);
         this.saveDB();
+
+        firestoreSync.syncStudent(newStudent).catch(e => {
+          console.warn('Firestore syncStudent error:', e);
+        });
+        if (createdParent) {
+          firestoreSync.syncParent(createdParent).catch(e => {
+            console.warn('Firestore syncParent error:', e);
+          });
+        }
+
         return this.jsonResponse(newStudent);
       }
 
@@ -1591,6 +1651,11 @@ export class ClientStorageApi {
 
         Object.assign(student, bodyData);
         this.saveDB();
+
+        firestoreSync.syncStudent(student).catch(e => {
+          console.warn('Firestore syncStudent PUT error:', e);
+        });
+
         return this.jsonResponse(student);
       }
 
@@ -1598,6 +1663,11 @@ export class ClientStorageApi {
         const sId = studentIdMatch[1];
         this.db.students = this.db.students.filter(s => s.id !== sId);
         this.saveDB();
+
+        firestoreSync.deleteStudent(sId).catch(e => {
+          console.warn('Firestore deleteStudent error:', e);
+        });
+
         return this.jsonResponse({ success: true });
       }
 
@@ -1791,6 +1861,13 @@ export class ClientStorageApi {
         });
 
         this.saveDB();
+        // Sync imported students and parents to Firestore
+        this.db.students.forEach(st => {
+          firestoreSync.syncStudent(st).catch(e => console.warn('Firestore syncStudent on import error:', e));
+        });
+        this.db.users.filter(u => u.role === 'parent').forEach(p => {
+          firestoreSync.syncParent(p).catch(e => console.warn('Firestore syncParent on import error:', e));
+        });
         return this.jsonResponse({
           success: true,
           importedCount,
@@ -1816,16 +1893,17 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/parents' && method === 'POST') {
-        const { username, name, nameMl, phone, studentIds } = bodyData;
+        const { id, username, name, nameMl, phone, studentIds, password } = bodyData;
         if (!name) return this.jsonResponse({ error: 'Parent Name is required' }, 400);
 
+        const parentId = id || `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
         const newParent: User = {
-          id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          id: parentId,
           username: username?.trim() || name.trim(),
           name: name.trim(),
           nameMl: nameMl?.trim(),
           role: 'parent',
-          plainPassword: 'password123',
+          plainPassword: (password || 'password123').trim(),
           active: true,
           phone: phone?.trim(),
           createdAt: new Date().toISOString(),
@@ -1837,13 +1915,18 @@ export class ClientStorageApi {
             s.parentUserId = newParent.id;
           });
           const elder = getElderChild(linked, this.db.classes);
-          if (elder) {
+          if (elder && !password) {
             newParent.plainPassword = elder.admissionNo;
           }
         }
 
         this.db.users.push(newParent);
         this.saveDB();
+
+        firestoreSync.syncParent(newParent).catch(e => {
+          console.warn('Firestore syncParent error:', e);
+        });
+
         return this.jsonResponse(newParent);
       }
 
@@ -1860,6 +1943,11 @@ export class ClientStorageApi {
         if (bodyData.active !== undefined) parent.active = Boolean(bodyData.active);
 
         this.saveDB();
+
+        firestoreSync.syncParent(parent).catch(e => {
+          console.warn('Firestore syncParent PUT error:', e);
+        });
+
         return this.jsonResponse(parent);
       }
 
@@ -1870,6 +1958,11 @@ export class ClientStorageApi {
           if (s.parentUserId === pId) s.parentUserId = undefined;
         });
         this.saveDB();
+
+        firestoreSync.deleteParent(pId).catch(e => {
+          console.warn('Firestore deleteParent error:', e);
+        });
+
         return this.jsonResponse({ success: true });
       }
 
@@ -2083,6 +2176,11 @@ export class ClientStorageApi {
         sheet.status = 'draft';
         sheet.lastUpdated = new Date().toISOString();
         this.saveDB();
+
+        firestoreSync.syncMarkSheet(sheet).catch(e => {
+          console.warn('Firestore syncMarkSheet save-draft error:', e);
+        });
+
         return this.jsonResponse({ success: true, markSheet: sheet });
       }
 
@@ -2113,6 +2211,11 @@ export class ClientStorageApi {
         }
 
         this.saveDB();
+
+        firestoreSync.syncMarkSheet(sheet).catch(e => {
+          console.warn('Firestore syncMarkSheet action error:', e);
+        });
+
         return this.jsonResponse({ success: true, markSheet: sheet });
       }
 

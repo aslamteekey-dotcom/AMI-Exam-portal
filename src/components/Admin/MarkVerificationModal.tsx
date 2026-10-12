@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { doc, setDoc } from 'firebase/firestore';
 import { MarkSheet, SubjectAssessmentRule, Student, StudentMarkEntry } from '../../types';
 import {
   CheckCircle,
@@ -68,6 +70,20 @@ export const MarkVerificationModal: React.FC<Props> = ({
   const handleApprove = async () => {
     if (!sheetData?.markSheet?.id) return;
     try {
+      // Direct persistent Firestore write
+      try {
+        await setDoc(
+          doc(db, 'marks', sheetData.markSheet.id),
+          {
+            status: 'approved',
+            verifiedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (firestoreErr: any) {
+        console.warn('Firestore approve mark sheet warning:', firestoreErr);
+      }
+
       const res = await fetchWithAuth(`/api/mark-sheets/${sheetData.markSheet.id}/approve`, {
         method: 'POST',
       });
@@ -84,6 +100,20 @@ export const MarkVerificationModal: React.FC<Props> = ({
   const handleLock = async () => {
     if (!sheetData?.markSheet?.id) return;
     try {
+      // Direct persistent Firestore write
+      try {
+        await setDoc(
+          doc(db, 'marks', sheetData.markSheet.id),
+          {
+            status: 'locked',
+            lockedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (firestoreErr: any) {
+        console.warn('Firestore lock mark sheet warning:', firestoreErr);
+      }
+
       const res = await fetchWithAuth(`/api/mark-sheets/${sheetData.markSheet.id}/lock`, {
         method: 'POST',
       });
@@ -100,6 +130,19 @@ export const MarkVerificationModal: React.FC<Props> = ({
   const handleUnlock = async () => {
     if (!sheetData?.markSheet?.id) return;
     try {
+      // Direct persistent Firestore write
+      try {
+        await setDoc(
+          doc(db, 'marks', sheetData.markSheet.id),
+          {
+            status: 'approved',
+          },
+          { merge: true }
+        );
+      } catch (firestoreErr: any) {
+        console.warn('Firestore unlock mark sheet warning:', firestoreErr);
+      }
+
       const res = await fetchWithAuth(`/api/mark-sheets/${sheetData.markSheet.id}/unlock`, {
         method: 'POST',
       });
@@ -120,6 +163,20 @@ export const MarkVerificationModal: React.FC<Props> = ({
     }
     if (!sheetData?.markSheet?.id) return;
     try {
+      // Direct persistent Firestore write
+      try {
+        await setDoc(
+          doc(db, 'marks', sheetData.markSheet.id),
+          {
+            status: 'returned_for_correction',
+            returnedReason: returnReason.trim(),
+          },
+          { merge: true }
+        );
+      } catch (firestoreErr: any) {
+        console.warn('Firestore return correction warning:', firestoreErr);
+      }
+
       const res = await fetchWithAuth(`/api/mark-sheets/${sheetData.markSheet.id}/return-correction`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -143,6 +200,27 @@ export const MarkVerificationModal: React.FC<Props> = ({
 
     setIsSavingCorrection(true);
     try {
+      // Direct persistent Firestore write
+      try {
+        const studentId = correctingStudent.id;
+        const studentMarksCopy = { ...(sheetData.markSheet.studentMarks || {}) };
+        const entry = studentMarksCopy[studentId] || { studentId, isAbsent: false, componentMarks: {} };
+        const compMarks = { ...(entry.componentMarks || {}) };
+        compMarks[selectedCompKey] = Number(newMarkVal);
+        studentMarksCopy[studentId] = { ...entry, componentMarks: compMarks };
+
+        await setDoc(
+          doc(db, 'marks', sheetData.markSheet.id),
+          {
+            studentMarks: studentMarksCopy,
+            lastUpdated: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (firestoreErr: any) {
+        console.warn('Firestore admin correct warning:', firestoreErr);
+      }
+
       const res = await fetchWithAuth(`/api/mark-sheets/${sheetData.markSheet.id}/admin-correct`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
