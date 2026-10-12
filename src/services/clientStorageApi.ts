@@ -648,7 +648,7 @@ export class ClientStorageApi {
     try {
       firestoreSync.subscribeToCollections({
         onStudents: (remoteStudents) => {
-          if (Array.isArray(remoteStudents) && remoteStudents.length > 0) {
+          if (Array.isArray(remoteStudents)) {
             this.db.students = remoteStudents;
             try {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
@@ -659,7 +659,7 @@ export class ClientStorageApi {
           return this.db.students;
         },
         onTeachers: (remoteTeachers) => {
-          if (Array.isArray(remoteTeachers) && remoteTeachers.length > 0) {
+          if (Array.isArray(remoteTeachers)) {
             // Merge teachers into users keeping admin and parents
             const nonTeachers = this.db.users.filter(u => u.role !== 'teacher');
             this.db.users = [...nonTeachers, ...remoteTeachers];
@@ -672,7 +672,7 @@ export class ClientStorageApi {
           return this.db.users.filter(u => u.role === 'teacher');
         },
         onParents: (remoteParents) => {
-          if (Array.isArray(remoteParents) && remoteParents.length > 0) {
+          if (Array.isArray(remoteParents)) {
             // Merge parents into users keeping admin and teachers
             const nonParents = this.db.users.filter(u => u.role !== 'parent');
             this.db.users = [...nonParents, ...remoteParents];
@@ -707,7 +707,7 @@ export class ClientStorageApi {
           return this.db.subjects;
         },
         onMarks: (remoteMarks) => {
-          if (Array.isArray(remoteMarks) && remoteMarks.length > 0) {
+          if (Array.isArray(remoteMarks)) {
             this.db.markSheets = remoteMarks;
             try {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
@@ -716,6 +716,17 @@ export class ClientStorageApi {
         },
         getInitialMarks: () => {
           return this.db.markSheets;
+        },
+        onExams: (remoteExams) => {
+          if (Array.isArray(remoteExams) && remoteExams.length > 0) {
+            this.db.examinations = remoteExams;
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
+            } catch {}
+          }
+        },
+        getInitialExams: () => {
+          return this.db.examinations;
         },
       });
     } catch (e) {
@@ -829,22 +840,6 @@ export class ClientStorageApi {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
     } catch (e) {
       console.error('Failed to save DB to localStorage:', e);
-    }
-
-    // Opportunistically sync collections to Firestore
-    if (this.db) {
-      firestoreSync
-        .pushFullStateToFirestore({
-          students: this.db.students || [],
-          teachers: (this.db.users || []).filter(u => u.role === 'teacher'),
-          parents: (this.db.users || []).filter(u => u.role === 'parent'),
-          classes: this.db.classes || [],
-          subjects: this.db.subjects || [],
-          marks: this.db.markSheets || [],
-        })
-        .catch(err => {
-          console.warn('Background Firestore sync info:', err);
-        });
     }
   }
 
@@ -1387,7 +1382,9 @@ export class ClientStorageApi {
         if (!current) {
           return this.jsonResponse({ error: 'Unauthorized' }, 401);
         }
-        return this.jsonResponse({ user: current });
+        const freshUser = this.db.users.find(u => u.id === current.id) || current;
+        const assignments = this.db.teacherAssignments.filter(a => a.teacherId === freshUser.id);
+        return this.jsonResponse({ user: freshUser, assignments });
       }
 
       if (path === '/api/auth/logout' && method === 'POST') {
@@ -1432,8 +1429,69 @@ export class ClientStorageApi {
         return this.jsonResponse(this.db.classes);
       }
 
+      if (path === '/api/classes' && method === 'POST') {
+        const { id, name, nameMl, numericGrade } = bodyData;
+        const newClass: ClassItem = {
+          id: id || `cls_${numericGrade || Date.now()}`,
+          name: name?.trim() || `Class ${numericGrade}`,
+          nameMl: nameMl?.trim() || `ക്ലാസ് ${numericGrade}`,
+          numericGrade: Number(numericGrade) || 1,
+          active: true,
+        };
+        const existingIdx = this.db.classes.findIndex(c => c.id === newClass.id || c.numericGrade === newClass.numericGrade);
+        if (existingIdx >= 0) {
+          this.db.classes[existingIdx] = newClass;
+        } else {
+          this.db.classes.push(newClass);
+        }
+        this.db.classes.sort((a, b) => a.numericGrade - b.numericGrade);
+        this.saveDB();
+        firestoreSync.syncClass(newClass).catch(e => console.warn('Firestore syncClass error:', e));
+        return this.jsonResponse(newClass);
+      }
+
+      const classIdMatch = path.match(/^\/api\/classes\/([^/]+)$/);
+      if (classIdMatch && method === 'DELETE') {
+        const cId = classIdMatch[1];
+        this.db.classes = this.db.classes.filter(c => c.id !== cId);
+        this.saveDB();
+        firestoreSync.deleteClass(cId).catch(e => console.warn('Firestore deleteClass error:', e));
+        return this.jsonResponse({ success: true });
+      }
+
       if (path === '/api/subjects' && method === 'GET') {
         return this.jsonResponse(this.db.subjects);
+      }
+
+      if (path === '/api/subjects' && method === 'POST') {
+        const { id, code, nameMl, nameEn, applicableClasses, defaultComponents } = bodyData;
+        const subId = id || `sub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const newSubject: SubjectItem = {
+          id: subId,
+          code: (code || nameEn || 'SUB').toUpperCase().trim(),
+          nameEn: (nameEn || nameMl).trim(),
+          nameMl: nameMl.trim(),
+          displayNameMl: nameMl.trim(),
+          applicableClasses: Array.isArray(applicableClasses) && applicableClasses.length > 0 ? applicableClasses : [1, 2, 3, 4, 5],
+          defaultComponents: Array.isArray(defaultComponents) && defaultComponents.length > 0 ? defaultComponents : [
+            { componentKey: 'written', labelEn: 'Written', labelMl: 'എഴുത്ത് പരീക്ഷ', maxMarks: 35 },
+            { componentKey: 'oral', labelEn: 'Oral', labelMl: 'വാചിക പരീക്ഷ', maxMarks: 10 },
+            { componentKey: 'ce', labelEn: 'CE', labelMl: 'തുടർമൂല്യനിർണ്ണയം', maxMarks: 5 },
+          ],
+        };
+        this.db.subjects.push(newSubject);
+        this.saveDB();
+        firestoreSync.syncSubject(newSubject).catch(e => console.warn('Firestore syncSubject error:', e));
+        return this.jsonResponse(newSubject);
+      }
+
+      const subIdMatch = path.match(/^\/api\/subjects\/([^/]+)$/);
+      if (subIdMatch && method === 'DELETE') {
+        const sId = subIdMatch[1];
+        this.db.subjects = this.db.subjects.filter(s => s.id !== sId);
+        this.saveDB();
+        firestoreSync.deleteSubject(sId).catch(e => console.warn('Firestore deleteSubject error:', e));
+        return this.jsonResponse({ success: true });
       }
 
       // 3. Teachers
@@ -1448,7 +1506,7 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/teachers' && method === 'POST') {
-        const { id, username, name, nameMl, plainPassword, password, email, phone, assignments } = bodyData;
+        const { id, username, name, nameMl, plainPassword, password, email, phone, inChargeClassId, assignments } = bodyData;
         if (!username || !name) {
           return this.jsonResponse({ error: 'Username and Name are required' }, 400);
         }
@@ -1467,6 +1525,7 @@ export class ClientStorageApi {
           active: true,
           email: email?.trim(),
           phone: phone?.trim(),
+          inChargeClassId: inChargeClassId || undefined,
           createdAt: new Date().toISOString(),
         };
 
@@ -1503,6 +1562,7 @@ export class ClientStorageApi {
         if (bodyData.email !== undefined) teacher.email = bodyData.email.trim();
         if (bodyData.phone !== undefined) teacher.phone = bodyData.phone.trim();
         if (bodyData.active !== undefined) teacher.active = Boolean(bodyData.active);
+        if (bodyData.inChargeClassId !== undefined) teacher.inChargeClassId = bodyData.inChargeClassId || undefined;
 
         this.saveDB();
         firestoreSync.syncTeacher(teacher).catch(e => {
@@ -1671,7 +1731,58 @@ export class ClientStorageApi {
         return this.jsonResponse({ success: true });
       }
 
-      // Student Import Preview
+      // Bulk & Filtered Student Deletion
+      if (path === '/api/students' && method === 'DELETE') {
+        const targetClassId = params.get('classId');
+        if (targetClassId) {
+          const toDelete = this.db.students.filter(s => s.classId === targetClassId);
+          this.db.students = this.db.students.filter(s => s.classId !== targetClassId);
+          this.saveDB();
+          for (const s of toDelete) {
+            firestoreSync.deleteStudent(s.id).catch(() => {});
+          }
+          return this.jsonResponse({ success: true, deletedCount: toDelete.length });
+        } else {
+          const count = this.db.students.length;
+          const ids = this.db.students.map(s => s.id);
+          this.db.students = [];
+          this.saveDB();
+          for (const id of ids) {
+            firestoreSync.deleteStudent(id).catch(() => {});
+          }
+          return this.jsonResponse({ success: true, deletedCount: count });
+        }
+      }
+
+      // Contextual Clear Demo Endpoints
+      if (path === '/api/students/clear-demo' && method === 'POST') {
+        const count = this.db.students.length;
+        this.db.students = [];
+        this.db.markSheets = [];
+        this.saveDB();
+        await firestoreSync.purgeDemoStudentsFromFirestore();
+        return this.jsonResponse({ success: true, clearedCount: count });
+      }
+
+      if (path === '/api/teachers/clear-demo' && method === 'POST') {
+        const count = this.db.users.filter(u => u.role === 'teacher').length;
+        this.db.users = this.db.users.filter(u => u.role !== 'teacher');
+        this.db.teacherAssignments = [];
+        this.saveDB();
+        await firestoreSync.purgeDemoTeachersFromFirestore();
+        return this.jsonResponse({ success: true, clearedCount: count });
+      }
+
+      if (path === '/api/parents/clear-demo' && method === 'POST') {
+        const count = this.db.users.filter(u => u.role === 'parent').length;
+        this.db.users = this.db.users.filter(u => u.role !== 'parent');
+        this.db.students.forEach(s => s.parentUserId = undefined);
+        this.saveDB();
+        await firestoreSync.purgeDemoParentsFromFirestore();
+        return this.jsonResponse({ success: true, clearedCount: count });
+      }
+
+      // Student Import Preview (Supports Multi-Class Global CSV)
       if (path === '/api/students/import-preview' && method === 'POST') {
         const { csvText, targetClassId, rows } = bodyData;
         const validRows: any[] = [];
@@ -1692,12 +1803,32 @@ export class ClientStorageApi {
                 rowObj[h] = rawCols[idx] || '';
               });
 
-              const admissionNo = rowObj['admission_no'] || rowObj['admissionno'] || rowObj['adm_no'] || rowObj['admission'] || rawCols[0];
-              const nameEn = rowObj['student_name'] || rowObj['name'] || rowObj['name_en'] || rowObj['student'] || rawCols[1];
+              const admissionNo = rowObj['admission no'] || rowObj['admission_no'] || rowObj['admissionno'] || rowObj['adm_no'] || rowObj['admission'] || rawCols[0];
+              const nameEn = rowObj['name'] || rowObj['student name'] || rowObj['student_name'] || rowObj['name_en'] || rowObj['student'] || rawCols[1];
               const nameMl = rowObj['name_ml'] || rowObj['malayalam_name'] || nameEn;
               const rollNo = parseInt(rowObj['roll_no'] || rowObj['rollno'] || rowObj['roll']) || i;
-              const parentName = rowObj['parent_name'] || rowObj['guardian_name'] || rowObj['parent'] || rawCols[3] || '';
-              const parentPhone = rowObj['phone'] || rowObj['mobile'] || rowObj['contact'] || rawCols[4] || '';
+
+              // Parse Class automatically across multiple classes
+              const rawClassStr = rowObj['class'] || rowObj['classname'] || rowObj['grade'] || rawCols[2] || '';
+              let resolvedClass = this.db.classes.find(
+                c => c.name.toLowerCase() === rawClassStr.toLowerCase() || c.nameMl === rawClassStr
+              );
+              if (!resolvedClass && rawClassStr) {
+                const digit = rawClassStr.replace(/\D/g, '');
+                if (digit) resolvedClass = this.db.classes.find(c => c.numericGrade === parseInt(digit, 10));
+              }
+              if (!resolvedClass && targetClassId) {
+                resolvedClass = this.db.classes.find(c => c.id === targetClassId);
+              }
+              const finalClass = resolvedClass || this.db.classes[0] || { id: 'cls_1', name: 'Class 1' };
+
+              // Gender
+              const rawGender = rowObj['gender'] || rowObj['sex'] || rawCols[3] || 'M';
+              const gender = String(rawGender).trim().toUpperCase().startsWith('F') ? 'F' : 'M';
+
+              // Parent name & phone
+              const parentName = rowObj['parent name'] || rowObj['parent_name'] || rowObj['guardian_name'] || rowObj['parent'] || rawCols[4] || '';
+              const parentPhone = rowObj['phone'] || rowObj['mobile'] || rowObj['parent phone'] || rowObj['contact'] || rawCols[5] || '';
 
               const rowErrors: string[] = [];
               if (!admissionNo) rowErrors.push('Missing Admission Number');
@@ -1711,7 +1842,9 @@ export class ClientStorageApi {
                 nameMl: nameMl || '',
                 parentNameEn: parentName,
                 parentPhone,
-                classId: targetClassId || 'cls_1',
+                classId: finalClass.id,
+                className: finalClass.name,
+                gender,
                 isValid: rowErrors.length === 0,
                 errors: rowErrors,
               };
@@ -1741,9 +1874,12 @@ export class ClientStorageApi {
             if (!targetClass && targetClassId) {
               targetClass = this.db.classes.find(c => c.id === targetClassId);
             }
+            if (!targetClass) {
+              targetClass = this.db.classes[0] || { id: 'cls_1', name: 'Class 1' };
+            }
 
-            if (!adm || !nameEn || !targetClass) {
-              invalidRows.push({ row, reason: `Row #${idx + 1}: Missing Admission No, Name, or Valid Class` });
+            if (!adm || !nameEn) {
+              invalidRows.push({ row, reason: `Row #${idx + 1}: Missing Admission No or Name` });
               errors.push(`Row #${idx + 1}: Incomplete information`);
             } else {
               const rec = {
@@ -2035,12 +2171,43 @@ export class ClientStorageApi {
           isPublished: false,
           status: 'draft',
           classesParticipating: bodyData.classesParticipating || this.db.classes.map(c => c.id),
-          passMarkPercentage: 35,
+          passMarkPercentage: Number(bodyData.passMarkPercentage) || 35,
         };
         this.db.examinations.push(newExam);
         this.db.settings.activeExamId = newExam.id;
         this.saveDB();
+        firestoreSync.syncExam(newExam).catch(e => console.warn('Firestore syncExam error on POST:', e));
         return this.jsonResponse(newExam);
+      }
+
+      const examActionMatch = path.match(/^\/api\/examinations\/([^/]+)$/);
+      if (examActionMatch && method === 'PUT') {
+        const examId = examActionMatch[1];
+        const exam = this.db.examinations.find(e => e.id === examId);
+        if (!exam) return this.jsonResponse({ error: 'Exam not found' }, 404);
+
+        if (bodyData.nameEn !== undefined) exam.nameEn = bodyData.nameEn.trim();
+        if (bodyData.nameMl !== undefined) exam.nameMl = bodyData.nameMl.trim();
+        if (bodyData.startDate !== undefined) exam.startDate = bodyData.startDate;
+        if (bodyData.endDate !== undefined) exam.endDate = bodyData.endDate;
+        if (bodyData.passMarkPercentage !== undefined) exam.passMarkPercentage = Number(bodyData.passMarkPercentage);
+        if (bodyData.classesParticipating !== undefined) exam.classesParticipating = bodyData.classesParticipating;
+
+        this.saveDB();
+        firestoreSync.syncExam(exam).catch(e => console.warn('Firestore syncExam error on PUT:', e));
+        return this.jsonResponse(exam);
+      }
+
+      if (examActionMatch && method === 'DELETE') {
+        const examId = examActionMatch[1];
+        this.db.examinations = this.db.examinations.filter(e => e.id !== examId);
+        this.db.markSheets = this.db.markSheets.filter(m => m.examinationId !== examId);
+        if (this.db.settings.activeExamId === examId) {
+          this.db.settings.activeExamId = this.db.examinations[0]?.id || '';
+        }
+        this.saveDB();
+        firestoreSync.deleteExam(examId).catch(e => console.warn('Firestore deleteExam error:', e));
+        return this.jsonResponse({ success: true });
       }
 
       const examReadinessMatch = path.match(/^\/api\/examinations\/([^/]+)\/readiness$/);
@@ -2168,11 +2335,31 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/mark-sheets/save-draft' && method === 'POST') {
-        const { markSheetId, studentMarks } = bodyData;
-        const sheet = this.db.markSheets.find(s => s.id === markSheetId);
-        if (!sheet) return this.jsonResponse({ error: 'Mark sheet not found' }, 404);
+        const { markSheetId, examinationId, classId, subjectId, studentMarks } = bodyData;
+        let sheet = this.db.markSheets.find(s =>
+          (markSheetId && s.id === markSheetId) ||
+          (examinationId && classId && subjectId && s.examinationId === examinationId && s.classId === classId && s.subjectId === subjectId)
+        );
+        if (!sheet) {
+          if (examinationId && classId && subjectId) {
+            sheet = {
+              id: markSheetId || `ms_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              examinationId,
+              academicYearId: 'ay_2026_2027',
+              classId,
+              subjectId,
+              assignedTeacherId: '',
+              status: 'draft',
+              studentMarks: studentMarks || {},
+              lastUpdated: new Date().toISOString(),
+            };
+            this.db.markSheets.push(sheet);
+          } else {
+            return this.jsonResponse({ error: 'Mark sheet not found' }, 404);
+          }
+        }
 
-        sheet.studentMarks = studentMarks;
+        sheet.studentMarks = studentMarks || {};
         sheet.status = 'draft';
         sheet.lastUpdated = new Date().toISOString();
         this.saveDB();

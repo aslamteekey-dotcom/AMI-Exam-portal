@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { User, Student, ClassItem } from '../../types';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import {
   Users,
@@ -165,7 +166,7 @@ export const ParentManagement: React.FC = () => {
 
       // 1. Persistent Firestore write
       try {
-        await setDoc(doc(db, 'parents', parentId), newParentData);
+        await setDoc(doc(db, 'parents', parentId), cleanForFirestore(newParentData));
       } catch (firestoreErr: any) {
         console.error('Firestore write error when adding parent:', firestoreErr);
         handleFirestoreError(firestoreErr, OperationType.WRITE, `parents/${parentId}`);
@@ -225,7 +226,7 @@ export const ParentManagement: React.FC = () => {
 
       // 1. Persistent Firestore write
       try {
-        await setDoc(doc(db, 'parents', editingParent.id), updateData, { merge: true });
+        await setDoc(doc(db, 'parents', editingParent.id), cleanForFirestore(updateData), { merge: true });
       } catch (firestoreErr: any) {
         console.warn('Firestore parent edit warning:', firestoreErr);
       }
@@ -289,7 +290,7 @@ export const ParentManagement: React.FC = () => {
       try {
         await setDoc(
           doc(db, 'parents', passwordTargetParent.id),
-          { plainPassword: newPasswordVal.trim() },
+          cleanForFirestore({ plainPassword: newPasswordVal.trim() }),
           { merge: true }
         );
       } catch (firestoreErr: any) {
@@ -312,6 +313,29 @@ export const ParentManagement: React.FC = () => {
       alert(`Password for parent ${passwordTargetParent.name} updated successfully!`);
     } catch (err: any) {
       alert(err.message);
+    }
+  };
+
+  const handleClearDemoParents = async () => {
+    const confirm = window.confirm(
+      'Clear all demo parent accounts from Firestore and local storage? Any real parent accounts and Admin will remain intact.'
+    );
+    if (!confirm) return;
+
+    try {
+      setLoading(true);
+      await firestoreSync.purgeDemoParentsFromFirestore();
+      const res = await fetchWithAuth('/api/parents/clear-demo', { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to clear demo parents');
+      }
+      await loadData();
+      alert('Demo parent accounts cleared successfully.');
+    } catch (err: any) {
+      alert(err.message || 'Error clearing demo parents');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -375,13 +399,24 @@ export const ParentManagement: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
-        >
-          <Plus className="w-4 h-4" />
-          Create Parent Account
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleClearDemoParents}
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-xl transition cursor-pointer"
+            title="Purge only mock parent accounts from database"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-amber-700" />
+            Clear Demo Parents
+          </button>
+
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            Create Parent Account
+          </button>
+        </div>
       </div>
 
       {parents.length === 0 ? (

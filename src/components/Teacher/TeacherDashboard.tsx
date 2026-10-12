@@ -1,18 +1,33 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { TeacherAssignment, ClassItem, SubjectItem, Examination, MarkSheet } from '../../types';
+import { TeacherAssignment, ClassItem, SubjectItem, Examination, MarkSheet, Student } from '../../types';
 import { MarkEntryScreen } from './MarkEntryScreen';
-import { BookOpen, Users, Clock, CheckCircle, AlertCircle, Lock, Edit3 } from 'lucide-react';
+import {
+  BookOpen,
+  Users,
+  Clock,
+  CheckCircle,
+  AlertCircle,
+  Lock,
+  Edit3,
+  Shield,
+  Layers,
+  GraduationCap,
+  Calendar,
+  Sparkles,
+} from 'lucide-react';
 
 export const TeacherDashboard: React.FC = () => {
   const { user, fetchWithAuth, lang, t } = useAuth();
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'my_assignments' | 'my_class'>('my_assignments');
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [examinations, setExaminations] = useState<Examination[]>([]);
   const [selectedExamId, setSelectedExamId] = useState<string>('');
   const [markSheets, setMarkSheets] = useState<MarkSheet[]>([]);
+  const [allStudents, setAllStudents] = useState<Student[]>([]);
 
   // Active Mark Entry Selection
   const [activeEntry, setActiveEntry] = useState<{
@@ -26,22 +41,25 @@ export const TeacherDashboard: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [resAuth, resClasses, resSubjects, resExams] = await Promise.all([
+      const [resAuth, resClasses, resSubjects, resExams, resStudents] = await Promise.all([
         fetchWithAuth('/api/auth/me'),
         fetchWithAuth('/api/classes'),
         fetchWithAuth('/api/subjects'),
         fetchWithAuth('/api/examinations'),
+        fetchWithAuth('/api/students'),
       ]);
 
       const authData = await resAuth.json();
-      const clsData = await resClasses.json();
-      const subData = await resSubjects.json();
-      const examData = await resExams.json();
+      const clsData: ClassItem[] = await resClasses.json();
+      const subData: SubjectItem[] = await resSubjects.json();
+      const examData: Examination[] = await resExams.json();
+      const stuData: Student[] = await resStudents.json();
 
       setAssignments(authData.assignments || []);
       setClasses(clsData);
       setSubjects(subData);
       setExaminations(examData);
+      setAllStudents(stuData);
 
       const activeExam = examData[0];
       if (activeExam) {
@@ -90,12 +108,22 @@ export const TeacherDashboard: React.FC = () => {
     return (
       <div className="flex justify-center items-center py-20 text-slate-500">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-700"></div>
-        <span className="ml-3 font-medium">Loading assigned classes...</span>
+        <span className="ml-3 font-medium">Loading teacher portal...</span>
       </div>
     );
   }
 
   const selectedExam = examinations.find(e => e.id === selectedExamId);
+
+  // In-charge class information
+  const inChargeClassId = user?.inChargeClassId;
+  const inChargeClass = inChargeClassId ? classes.find(c => c.id === inChargeClassId) : null;
+  const inChargeStudents = inChargeClass
+    ? allStudents.filter(s => s.classId === inChargeClass.id && s.status === 'active')
+    : [];
+  const inChargeSubjects = inChargeClass
+    ? subjects.filter(s => s.applicableClasses.includes(inChargeClass.numericGrade))
+    : [];
 
   return (
     <div className="space-y-6">
@@ -106,9 +134,17 @@ export const TeacherDashboard: React.FC = () => {
             <div className="font-serif text-emerald-300 text-sm mb-1" dir="rtl">
               أهلاً وسهلاً
             </div>
-            <h1 className="text-xl md:text-2xl font-bold font-serif">
-              {isMl && user?.nameMl ? user.nameMl : user?.name}
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl md:text-2xl font-bold font-serif">
+                {isMl && user?.nameMl ? user.nameMl : user?.name}
+              </h1>
+              {inChargeClass && (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-400 text-amber-950 flex items-center gap-1">
+                  <Shield className="w-3.5 h-3.5" />
+                  {inChargeClass.name} In-Charge
+                </span>
+              )}
+            </div>
             <p className="text-xs text-emerald-200 mt-1">
               Usthad Teacher Portal • Al-Madrasathul Islamiya Pallikkuth
             </p>
@@ -134,129 +170,411 @@ export const TeacherDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Assigned Classes & Subjects Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">
-            {t.navMyAssignments} ({assignments.length})
-          </h2>
-          <p className="text-xs text-slate-500">
-            Select an assigned class and subject to enter, review, or submit examination marks.
-          </p>
-        </div>
+      {/* Primary Tabs */}
+      <div className="flex border-b border-slate-200 gap-4 text-xs font-bold">
+        <button
+          onClick={() => setActiveTab('my_assignments')}
+          className={`pb-3 transition flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'my_assignments'
+              ? 'border-b-2 border-emerald-800 text-emerald-800'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <BookOpen className="w-4 h-4" />
+          <span>My Assigned Subjects</span>
+          <span className="px-2 py-0.2 rounded-full text-[10px] bg-slate-100 text-slate-700">
+            {assignments.length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('my_class')}
+          className={`pb-3 transition flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'my_class'
+              ? 'border-b-2 border-emerald-800 text-emerald-800'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Shield className="w-4 h-4" />
+          <span>My Class</span>
+          {inChargeClass ? (
+            <span className="px-2 py-0.2 rounded-full text-[10px] bg-emerald-100 text-emerald-800 font-bold">
+              {inChargeClass.name}
+            </span>
+          ) : (
+            <span className="px-2 py-0.2 rounded-full text-[10px] bg-slate-100 text-slate-500">
+              Not Assigned
+            </span>
+          )}
+        </button>
       </div>
 
-      {assignments.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
-          <BookOpen className="w-10 h-10 mx-auto text-slate-400 mb-2" />
-          <h3 className="font-bold text-slate-800 text-sm">No Subjects Assigned</h3>
-          <p className="text-xs text-slate-500 mt-1">
-            The administrator has not assigned you any classes or subjects yet. Please contact the Principal.
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {assignments.map(a => {
-            const cls = classes.find(c => c.id === a.classId);
-            const sub = subjects.find(s => s.id === a.subjectId);
-            const ms = markSheets.find(
-              m => m.examinationId === selectedExamId && m.classId === a.classId && m.subjectId === a.subjectId
-            );
+      {/* Tab 1: My Assigned Subjects */}
+      {activeTab === 'my_assignments' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">
+                {t.navMyAssignments} ({assignments.length})
+              </h2>
+              <p className="text-xs text-slate-500">
+                Select an assigned class and subject to enter, review, or submit examination marks.
+              </p>
+            </div>
+          </div>
 
-            // Strictly Malayalam subject display
-            const subDisplayName =
-              cls?.numericGrade === 9 && (sub?.id === 'sub_history_buhuth' || sub?.code === 'HST')
-                ? 'ബുഹൂസ്'
-                : sub?.nameMl || sub?.nameEn || '—';
+          {assignments.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
+              <BookOpen className="w-10 h-10 mx-auto text-slate-400 mb-2" />
+              <h3 className="font-bold text-slate-800 text-sm">No Subjects Assigned</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                The administrator has not assigned you any individual subject slots yet. If you are a Class In-charge, switch to the "My Class" tab to manage all subjects for your class.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {assignments.map(a => {
+                const cls = classes.find(c => c.id === a.classId);
+                const sub = subjects.find(s => s.id === a.subjectId);
+                const ms = markSheets.find(
+                  m => m.examinationId === selectedExamId && m.classId === a.classId && m.subjectId === a.subjectId
+                );
 
-            const status = ms?.status || 'not_started';
+                // Strictly Malayalam subject display
+                const subDisplayName =
+                  cls?.numericGrade === 9 && (sub?.id === 'sub_history_buhuth' || sub?.code === 'HST')
+                    ? 'ബുഹൂസ്'
+                    : sub?.nameMl || sub?.nameEn || '—';
 
-            return (
-              <div
-                key={a.id}
-                className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:shadow-md transition flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900">
-                      {isMl ? cls?.nameMl : cls?.name}
-                    </span>
+                const status = ms?.status || 'not_started';
 
-                    {/* Status Badge */}
-                    {status === 'not_started' && (
-                      <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                        {t.not_started}
-                      </span>
-                    )}
-                    {status === 'draft' && (
-                      <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {t.draft}
-                      </span>
-                    )}
-                    {status === 'submitted' && (
-                      <span className="text-[11px] font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        Awaiting Approval
-                      </span>
-                    )}
-                    {status === 'approved' && (
-                      <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <CheckCircle className="w-3 h-3" />
-                        {t.approved}
-                      </span>
-                    )}
-                    {status === 'locked' && (
-                      <span className="text-[11px] font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <Lock className="w-3 h-3" />
-                        {t.locked}
-                      </span>
-                    )}
-                    {status === 'returned_for_correction' && (
-                      <span className="text-[11px] font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <AlertCircle className="w-3 h-3" />
-                        Returned
-                      </span>
-                    )}
-                  </div>
+                return (
+                  <div
+                    key={a.id}
+                    className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:shadow-md transition flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900">
+                          {isMl ? cls?.nameMl : cls?.name}
+                        </span>
 
-                  <h3 className="font-bold text-slate-900 text-base mb-1">
-                    {subDisplayName}
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Maximum Marks: 50
-                  </p>
+                        {/* Status Badge */}
+                        {status === 'not_started' && (
+                          <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                            {t.not_started}
+                          </span>
+                        )}
+                        {status === 'draft' && (
+                          <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {t.draft}
+                          </span>
+                        )}
+                        {status === 'submitted' && (
+                          <span className="text-[11px] font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            Awaiting Approval
+                          </span>
+                        )}
+                        {status === 'approved' && (
+                          <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <CheckCircle className="w-3 h-3" />
+                            {t.approved}
+                          </span>
+                        )}
+                        {status === 'locked' && (
+                          <span className="text-[11px] font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Lock className="w-3 h-3" />
+                            {t.locked}
+                          </span>
+                        )}
+                        {status === 'returned_for_correction' && (
+                          <span className="text-[11px] font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" />
+                            Returned
+                          </span>
+                        )}
+                      </div>
 
-                  {status === 'returned_for_correction' && ms?.returnedReason && (
-                    <div className="mt-3 p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800">
-                      <strong>Principal note:</strong> {ms.returnedReason}
+                      <h3 className="font-bold text-slate-900 text-base mb-1">
+                        {subDisplayName}
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Maximum Marks: 50
+                      </p>
+
+                      {status === 'returned_for_correction' && ms?.returnedReason && (
+                        <div className="mt-3 p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800">
+                          <strong>Principal note:</strong> {ms.returnedReason}
+                        </div>
+                      )}
                     </div>
-                  )}
+
+                    <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
+                      <span className="text-[11px] text-slate-400">
+                        {ms?.studentMarks ? `${Object.keys(ms.studentMarks).length} entered` : '0 entered'}
+                      </span>
+                      <button
+                        onClick={() =>
+                          setActiveEntry({
+                            classId: a.classId,
+                            subjectId: a.subjectId,
+                            examinationId: selectedExamId,
+                          })
+                        }
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs cursor-pointer"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        {status === 'submitted' || status === 'approved' || status === 'locked'
+                          ? 'View Sheet'
+                          : t.navEnterMarks}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab 2: My Class (Dedicated Class In-Charge View) */}
+      {activeTab === 'my_class' && (
+        <div className="space-y-6">
+          {!inChargeClass ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 space-y-2">
+              <Shield className="w-12 h-12 mx-auto text-slate-400" />
+              <h3 className="font-bold text-slate-800 text-base">No Class In-Charge Role Assigned</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                You are currently not designated as the official Class Teacher / In-charge for any class. Please contact the Principal to assign you as In-charge for your respective class (e.g. Class 1 through Class 10).
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Class In-Charge Overview Banner */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1">
+                      <Shield className="w-3.5 h-3.5 text-emerald-700" />
+                      Class In-Charge Authority
+                    </span>
+                    <span className="text-xs text-slate-400">• Full View & Edit Permissions</span>
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-900 mt-1">
+                    {inChargeClass.name} ({inChargeClass.nameMl}) Overview
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    As Class In-charge, you have full authority to view all student profiles and enter/edit marks across ALL subjects for {inChargeClass.name}.
+                  </p>
                 </div>
 
-                <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
-                  <span className="text-[11px] text-slate-400">
-                    {ms?.studentMarks ? `${Object.keys(ms.studentMarks).length} entered` : '0 entered'}
-                  </span>
-                  <button
-                    onClick={() =>
-                      setActiveEntry({
-                        classId: a.classId,
-                        subjectId: a.subjectId,
-                        examinationId: selectedExamId,
-                      })
-                    }
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs"
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                    {status === 'submitted' || status === 'approved' || status === 'locked'
-                      ? 'View Sheet'
-                      : t.navEnterMarks}
-                  </button>
+                <div className="flex items-center gap-3">
+                  <div className="bg-slate-50 px-4 py-2.5 rounded-xl border text-center">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Enrolled Students
+                    </span>
+                    <span className="text-lg font-black font-mono text-slate-800">
+                      {inChargeStudents.length}
+                    </span>
+                  </div>
+                  <div className="bg-emerald-50 px-4 py-2.5 rounded-xl border border-emerald-200 text-center">
+                    <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">
+                      Class Subjects
+                    </span>
+                    <span className="text-lg font-black font-mono text-emerald-900">
+                      {inChargeSubjects.length}
+                    </span>
+                  </div>
                 </div>
               </div>
-            );
-          })}
+
+              {/* Section 1: All Subjects for Assigned Class */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-emerald-800" />
+                      All Subjects for {inChargeClass.name} ({inChargeSubjects.length} subjects)
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Full view & edit access for all subjects in {inChargeClass.name} under {selectedExam?.nameEn || 'Active Exam'}.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {inChargeSubjects.map(sub => {
+                    const ms = markSheets.find(
+                      m =>
+                        m.examinationId === selectedExamId &&
+                        m.classId === inChargeClass.id &&
+                        m.subjectId === sub.id
+                    );
+
+                    // Strictly Malayalam subject display
+                    const subDisplayName =
+                      inChargeClass.numericGrade === 9 &&
+                      (sub.id === 'sub_history_buhuth' || sub.code === 'HST')
+                        ? 'ബുഹൂസ്'
+                        : sub.nameMl || sub.nameEn;
+
+                    const status = ms?.status || 'not_started';
+
+                    return (
+                      <div
+                        key={sub.id}
+                        className="bg-slate-50/60 rounded-xl border border-slate-200 p-4 flex flex-col justify-between hover:bg-slate-50 transition"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] font-mono font-bold bg-white text-slate-600 px-2 py-0.5 rounded-md border border-slate-200">
+                              {sub.code}
+                            </span>
+
+                            {/* Status Badge */}
+                            {status === 'not_started' && (
+                              <span className="text-[10px] font-semibold text-slate-500 bg-slate-200/80 px-2 py-0.5 rounded-full">
+                                Not Started
+                              </span>
+                            )}
+                            {status === 'draft' && (
+                              <span className="text-[10px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
+                                Draft
+                              </span>
+                            )}
+                            {status === 'submitted' && (
+                              <span className="text-[10px] font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full">
+                                Submitted
+                              </span>
+                            )}
+                            {status === 'approved' && (
+                              <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
+                                Approved
+                              </span>
+                            )}
+                            {status === 'locked' && (
+                              <span className="text-[10px] font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full">
+                                Locked
+                              </span>
+                            )}
+                            {status === 'returned_for_correction' && (
+                              <span className="text-[10px] font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full">
+                                Returned
+                              </span>
+                            )}
+                          </div>
+
+                          <h4 className="font-bold text-slate-900 text-base">
+                            {subDisplayName}
+                          </h4>
+                          <span className="text-xs text-slate-500">
+                            Max Marks: 50
+                          </span>
+                        </div>
+
+                        <div className="mt-4 pt-3 border-t border-slate-200/70 flex items-center justify-between">
+                          <span className="text-[11px] text-slate-500">
+                            {ms?.studentMarks
+                              ? `${Object.keys(ms.studentMarks).length} of ${inChargeStudents.length} entered`
+                              : `0 of ${inChargeStudents.length} entered`}
+                          </span>
+
+                          <button
+                            onClick={() =>
+                              setActiveEntry({
+                                classId: inChargeClass.id,
+                                subjectId: sub.id,
+                                examinationId: selectedExamId,
+                              })
+                            }
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs cursor-pointer"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            {status === 'locked' ? 'View Sheet' : 'Enter / Edit Marks'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Section 2: Complete Student List for In-Charge Class */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                      <Users className="w-4 h-4 text-emerald-800" />
+                      Student Roster for {inChargeClass.name} ({inChargeStudents.length} students)
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Roster of students enrolled in your in-charge class.
+                    </p>
+                  </div>
+                </div>
+
+                {inChargeStudents.length === 0 ? (
+                  <div className="text-center py-8 text-xs text-slate-400">
+                    No students currently enrolled in {inChargeClass.name}.
+                  </div>
+                ) : (
+                  <div className="border border-slate-200 rounded-xl overflow-hidden text-xs">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-100 text-slate-700 font-bold border-b">
+                        <tr>
+                          <th className="p-3 font-mono">Admission No</th>
+                          <th className="p-3">Student Name</th>
+                          <th className="p-3 text-center">Gender</th>
+                          <th className="p-3">Parent Name</th>
+                          <th className="p-3">Phone</th>
+                          <th className="p-3 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {inChargeStudents.map(st => (
+                          <tr key={st.id} className="hover:bg-slate-50 transition">
+                            <td className="p-3 font-mono font-semibold text-slate-700">
+                              {st.admissionNo}
+                            </td>
+                            <td className="p-3">
+                              <div className="font-bold text-slate-900">{st.nameEn}</div>
+                              {st.nameMl && (
+                                <div className="text-[11px] text-slate-500">{st.nameMl}</div>
+                              )}
+                            </td>
+                            <td className="p-3 text-center">
+                              <span
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                                  st.gender === 'F'
+                                    ? 'bg-pink-100 text-pink-800'
+                                    : 'bg-blue-100 text-blue-800'
+                                }`}
+                              >
+                                {st.gender || 'M'}
+                              </span>
+                            </td>
+                            <td className="p-3 text-slate-800 font-medium">
+                              {st.parentNameEn || '—'}
+                            </td>
+                            <td className="p-3 font-mono text-slate-600">
+                              {st.parentPhone || '—'}
+                            </td>
+                            <td className="p-3 text-center">
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                Enrolled
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

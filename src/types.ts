@@ -11,6 +11,7 @@ export interface User {
   active: boolean;
   email?: string;
   phone?: string;
+  inChargeClassId?: string;
   createdAt?: string;
 }
 

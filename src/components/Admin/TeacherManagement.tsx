@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { User, ClassItem, SubjectItem, TeacherAssignment } from '../../types';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import {
   Users,
@@ -34,6 +35,7 @@ export const TeacherManagement: React.FC = () => {
   const [tUsername, setTUsername] = useState('');
   const [tPassword, setTPassword] = useState('teacher123');
   const [tPhone, setTPhone] = useState('');
+  const [tInChargeClassId, setTInChargeClassId] = useState('');
 
   // Edit Teacher Modal
   const [editingTeacher, setEditingTeacher] = useState<any | null>(null);
@@ -41,6 +43,11 @@ export const TeacherManagement: React.FC = () => {
   const [editNameMl, setEditNameMl] = useState('');
   const [editUsername, setEditUsername] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  const [editInChargeClassId, setEditInChargeClassId] = useState('');
+
+  // Class In-Charge Modal
+  const [inChargeModalTeacher, setInChargeModalTeacher] = useState<any | null>(null);
+  const [selectedInChargeClassId, setSelectedInChargeClassId] = useState<string>('');
 
   // Password Reset / Edit Modal
   const [passwordTargetTeacher, setPasswordTargetTeacher] = useState<any | null>(null);
@@ -106,6 +113,8 @@ export const TeacherManagement: React.FC = () => {
                 };
               });
             });
+          } else {
+            setTeachers([]);
           }
         },
         (error) => {
@@ -145,6 +154,7 @@ export const TeacherManagement: React.FC = () => {
       role: 'teacher',
       plainPassword: tPassword.trim() || 'teacher123',
       phone: tPhone.trim(),
+      inChargeClassId: tInChargeClassId || undefined,
       active: true,
       createdAt: new Date().toISOString(),
     };
@@ -152,7 +162,7 @@ export const TeacherManagement: React.FC = () => {
     try {
       // 1. Persistent Firestore write directly to 'teachers' collection
       try {
-        await setDoc(doc(db, 'teachers', teacherId), newTeacherData);
+        await setDoc(doc(db, 'teachers', teacherId), cleanForFirestore(newTeacherData));
       } catch (firestoreErr: any) {
         console.error('Firestore write error when adding teacher:', firestoreErr);
         handleFirestoreError(firestoreErr, OperationType.WRITE, `teachers/${teacherId}`);
@@ -172,6 +182,7 @@ export const TeacherManagement: React.FC = () => {
           plainPassword: tPassword.trim() || 'teacher123',
           password: tPassword.trim() || 'teacher123',
           phone: tPhone.trim(),
+          inChargeClassId: tInChargeClassId || undefined,
         }),
       });
 
@@ -186,6 +197,7 @@ export const TeacherManagement: React.FC = () => {
       setTUsername('');
       setTPassword('teacher123');
       setTPhone('');
+      setTInChargeClassId('');
       await loadData();
     } catch (err: any) {
       console.error('Error in handleAddTeacher:', err);
@@ -195,12 +207,70 @@ export const TeacherManagement: React.FC = () => {
 
   const handleCreateTeacher = handleAddTeacher;
 
+  const handleClearDemoTeachers = async () => {
+    const confirm = window.confirm(
+      'Clear all demo teachers from Firestore and local storage? Real teacher entries and Admin will remain intact.'
+    );
+    if (!confirm) return;
+
+    try {
+      setLoading(true);
+      await firestoreSync.purgeDemoTeachersFromFirestore();
+      const res = await fetchWithAuth('/api/teachers/clear-demo', { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to clear demo teachers');
+      }
+      await loadData();
+      alert('Demo teachers cleared successfully.');
+    } catch (err: any) {
+      alert(err.message || 'Error clearing demo teachers');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSaveInCharge = async () => {
+    if (!inChargeModalTeacher) return;
+    try {
+      const classVal = selectedInChargeClassId || '';
+
+      // 1. Persistent Firestore write
+      try {
+        await setDoc(
+          doc(db, 'teachers', inChargeModalTeacher.id),
+          cleanForFirestore({ inChargeClassId: classVal }),
+          { merge: true }
+        );
+      } catch (fErr) {
+        console.warn('Firestore in-charge write error:', fErr);
+      }
+
+      // 2. Local update
+      const res = await fetchWithAuth(`/api/teachers/${inChargeModalTeacher.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inChargeClassId: classVal }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to assign class in-charge');
+      }
+      setInChargeModalTeacher(null);
+      await loadData();
+      alert('Class In-Charge role updated successfully!');
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
   const handleOpenEdit = (teacher: any) => {
     setEditingTeacher(teacher);
     setEditName(teacher.name);
     setEditNameMl(teacher.nameMl || '');
     setEditUsername(teacher.username);
     setEditPhone(teacher.phone || '');
+    setEditInChargeClassId(teacher.inChargeClassId || '');
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
@@ -212,11 +282,12 @@ export const TeacherManagement: React.FC = () => {
         nameMl: editNameMl.trim() || editName.trim(),
         username: editUsername.trim(),
         phone: editPhone.trim(),
+        inChargeClassId: editInChargeClassId || undefined,
       };
 
       // 1. Update in Firestore
       try {
-        await setDoc(doc(db, 'teachers', editingTeacher.id), updateData, { merge: true });
+        await setDoc(doc(db, 'teachers', editingTeacher.id), cleanForFirestore(updateData), { merge: true });
       } catch (firestoreErr: any) {
         console.warn('Firestore teacher edit error:', firestoreErr);
       }
@@ -283,7 +354,7 @@ export const TeacherManagement: React.FC = () => {
       try {
         await setDoc(
           doc(db, 'teachers', passwordTargetTeacher.id),
-          { plainPassword: newPassword.trim() },
+          cleanForFirestore({ plainPassword: newPassword.trim() }),
           { merge: true }
         );
       } catch (firestoreErr: any) {
@@ -435,6 +506,33 @@ export const TeacherManagement: React.FC = () => {
                   {teacher.phone && (
                     <p className="text-xs text-slate-500 mt-0.5">📞 {teacher.phone}</p>
                   )}
+
+                  {/* Class In-Charge (Class Teacher) Role Box */}
+                  {(() => {
+                    const inChargeClass = classes.find(c => c.id === teacher.inChargeClassId);
+                    return (
+                      <div className="mt-2.5 p-2 rounded-xl bg-emerald-50/80 border border-emerald-200 flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Shield className="w-3.5 h-3.5 text-emerald-800 shrink-0" />
+                          <div className="truncate">
+                            <span className="text-[10px] uppercase font-bold text-emerald-800 block">Class In-Charge (Class Teacher)</span>
+                            <span className="font-bold text-slate-900 text-xs">
+                              {inChargeClass ? inChargeClass.name : 'Not Assigned'}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setInChargeModalTeacher(teacher);
+                            setSelectedInChargeClassId(teacher.inChargeClassId || '');
+                          }}
+                          className="px-2 py-1 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100 rounded-lg transition shrink-0 ml-2"
+                        >
+                          {teacher.inChargeClassId ? 'Change' : 'Assign'}
+                        </button>
+                      </div>
+                    );
+                  })()}
 
                   {/* Password & Credentials Management Box */}
                   <div className="mt-3 p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs">
@@ -589,6 +687,27 @@ export const TeacherManagement: React.FC = () => {
                 />
               </div>
 
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Assign Class In-Charge (Class Teacher)
+                </label>
+                <select
+                  value={tInChargeClassId}
+                  onChange={e => setTInChargeClassId(e.target.value)}
+                  className="w-full p-2 border rounded-lg bg-slate-50 font-medium focus:outline-emerald-700"
+                >
+                  <option value="">None (Subject Teacher only)</option>
+                  {classes.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.nameMl})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  A teacher can be assigned as Class In-charge for exactly one class.
+                </p>
+              </div>
+
               <div className="flex justify-end gap-2 pt-3">
                 <button
                   type="button"
@@ -664,6 +783,27 @@ export const TeacherManagement: React.FC = () => {
                   onChange={e => setEditPhone(e.target.value)}
                   className="w-full p-2 border rounded-lg focus:outline-emerald-700"
                 />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Assign Class In-Charge (Class Teacher)
+                </label>
+                <select
+                  value={editInChargeClassId}
+                  onChange={e => setEditInChargeClassId(e.target.value)}
+                  className="w-full p-2 border rounded-lg bg-slate-50 font-medium focus:outline-emerald-700"
+                >
+                  <option value="">None (Subject Teacher only)</option>
+                  {classes.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.nameMl})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  A teacher can be assigned as Class In-charge for exactly one class.
+                </p>
               </div>
 
               <div className="flex justify-end gap-2 pt-3">
@@ -811,6 +951,69 @@ export const TeacherManagement: React.FC = () => {
                   className="px-4 py-2 font-bold text-white bg-emerald-800 rounded-lg hover:bg-emerald-900 cursor-pointer"
                 >
                   Confirm Assignment
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assign Class In-Charge Modal */}
+      {inChargeModalTeacher && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-1.5">
+                <Shield className="w-4 h-4 text-emerald-800" />
+                Assign Class In-Charge (Class Teacher)
+              </h3>
+              <button
+                onClick={() => setInChargeModalTeacher(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-4">
+              Designate <strong>{inChargeModalTeacher.name}</strong> as the official Class Teacher / In-charge for a single class. As Class In-charge, they will have comprehensive permissions to oversee students and edit marks across all subjects for their class.
+            </p>
+
+            <div className="space-y-4 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Select In-Charge Class:</label>
+                <select
+                  value={selectedInChargeClassId}
+                  onChange={e => setSelectedInChargeClassId(e.target.value)}
+                  className="w-full p-2.5 border rounded-lg bg-slate-50 font-semibold focus:outline-emerald-700 text-xs"
+                >
+                  <option value="">None (Remove Class In-Charge Role)</option>
+                  {classes.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.nameMl})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-relaxed">
+                <strong>Policy:</strong> Exactly ONE Class In-charge role is allowed per teacher. Assigning a new class replaces any prior class in-charge assignment.
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setInChargeModalTeacher(null)}
+                  className="px-3.5 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveInCharge}
+                  className="px-4 py-2 font-bold text-white bg-emerald-800 rounded-lg hover:bg-emerald-900 cursor-pointer"
+                >
+                  Save In-Charge Role
                 </button>
               </div>
             </div>

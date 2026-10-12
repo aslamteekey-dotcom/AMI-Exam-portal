@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { cleanForFirestore } from '../../services/firestoreSync';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import {
   ClassItem,
@@ -219,7 +220,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
       // Direct persistent Firestore write
       if (data.markSheet?.id) {
         try {
-          await setDoc(doc(db, 'marks', data.markSheet.id), data.markSheet, { merge: true });
+          await setDoc(doc(db, 'marks', data.markSheet.id), cleanForFirestore(data.markSheet), { merge: true });
         } catch (firestoreErr: any) {
           console.warn('Firestore mark draft write warning:', firestoreErr);
         }
@@ -244,10 +245,10 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
       try {
         await setDoc(
           doc(db, 'marks', markSheet.id),
-          {
+          cleanForFirestore({
             status: 'submitted',
             submittedAt: new Date().toISOString(),
-          },
+          }),
           { merge: true }
         );
       } catch (firestoreErr: any) {

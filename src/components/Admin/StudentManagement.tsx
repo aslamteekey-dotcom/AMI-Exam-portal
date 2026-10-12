@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Student, ClassItem } from '../../types';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import {
   Users,
@@ -48,6 +49,8 @@ export const StudentManagement: React.FC = () => {
 
   const isMl = lang === 'ml';
 
+  const [deleteClassId, setDeleteClassId] = useState('');
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -85,6 +88,8 @@ export const StudentManagement: React.FC = () => {
             } as Student));
             // Update React state strictly with Firestore documents
             setStudents(remoteStudents);
+          } else {
+            setStudents([]);
           }
         },
         (error) => {
@@ -148,7 +153,7 @@ export const StudentManagement: React.FC = () => {
 
         // 1. Persistent Firestore write
         try {
-          await setDoc(doc(db, 'students', editingStudent.id), updateData, { merge: true });
+          await setDoc(doc(db, 'students', editingStudent.id), cleanForFirestore(updateData), { merge: true });
         } catch (firestoreErr: any) {
           console.error('Firestore write error when updating student:', firestoreErr);
           handleFirestoreError(firestoreErr, OperationType.WRITE, `students/${editingStudent.id}`);
@@ -184,7 +189,7 @@ export const StudentManagement: React.FC = () => {
 
         // 1. Persistent Firestore write
         try {
-          await setDoc(doc(db, 'students', studentId), newStudentData);
+          await setDoc(doc(db, 'students', studentId), cleanForFirestore(newStudentData));
         } catch (firestoreErr: any) {
           console.error('Firestore write error when adding student:', firestoreErr);
           handleFirestoreError(firestoreErr, OperationType.WRITE, `students/${studentId}`);
@@ -238,6 +243,101 @@ export const StudentManagement: React.FC = () => {
     }
   };
 
+  const handleDeleteAllStudents = async () => {
+    const confirm = window.confirm(
+      'Are you sure you want to permanently delete ALL students? This will delete all student records and associated marks from Firestore and the portal.'
+    );
+    if (!confirm) return;
+
+    try {
+      setLoading(true);
+      await firestoreSync.purgeDemoStudentsFromFirestore();
+      const res = await fetchWithAuth('/api/students', { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to delete students');
+      }
+      await loadData();
+      alert('All students deleted successfully.');
+    } catch (err: any) {
+      alert(err.message || 'Error deleting all students');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteByClass = async () => {
+    if (!deleteClassId) {
+      alert('Please select a class to delete.');
+      return;
+    }
+    const targetClass = classes.find(c => c.id === deleteClassId);
+    const className = targetClass ? targetClass.name : deleteClassId;
+    const confirm = window.confirm(
+      `Are you sure you want to permanently delete all students in ${className}? This cannot be undone.`
+    );
+    if (!confirm) return;
+
+    try {
+      setLoading(true);
+      const toDelete = students.filter(s => s.classId === deleteClassId);
+      for (const st of toDelete) {
+        await deleteDoc(doc(db, 'students', st.id)).catch(() => {});
+      }
+      const res = await fetchWithAuth(`/api/students?classId=${deleteClassId}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to delete class students');
+      }
+      await loadData();
+      alert(`All students in ${className} deleted successfully.`);
+    } catch (err: any) {
+      alert(err.message || 'Error deleting students by class');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClearDemoStudents = async () => {
+    const confirm = window.confirm(
+      'Clear demo students from Firestore and local storage? Real student entries will remain intact.'
+    );
+    if (!confirm) return;
+
+    try {
+      setLoading(true);
+      await firestoreSync.purgeDemoStudentsFromFirestore();
+      const res = await fetchWithAuth('/api/students/clear-demo', { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to clear demo students');
+      }
+      await loadData();
+      alert('Demo students cleared successfully.');
+    } catch (err: any) {
+      alert(err.message || 'Error clearing demo students');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDownloadSampleCsv = () => {
+    const sample = `Admission No, Name, Class, Gender, Parent Name, Phone
+ADM-2026-001, Muhammed Bilal, Class 1, M, Shamsudheen, 9447123456
+ADM-2026-002, Fathima Zahra, Class 2, F, Abdul Kareem, 9447654321
+ADM-2026-003, Rayan Ahmed, Class 5, M, Moideen Kutty, 9846112233
+ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
+    const blob = new Blob([sample], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'students_sample_template.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  };
+
   // CSV Import Preview
   const handleCsvFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -270,7 +370,7 @@ export const StudentManagement: React.FC = () => {
   };
 
   const handleCommitImport = async () => {
-    if (!importPreview?.records || !importClassId) return;
+    if (!importPreview?.records || importPreview.records.length === 0) return;
     setIsProcessingImport(true);
     try {
       const res = await fetchWithAuth('/api/students/import-commit', {
@@ -278,12 +378,38 @@ export const StudentManagement: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           records: importPreview.records,
-          targetClassId: importClassId,
+          targetClassId: importClassId || undefined,
         }),
       });
       if (res.ok) {
         const data = await res.json();
-        alert(`Successfully imported ${data.importedCount} student records!`);
+        // Await writing imported records to Firestore
+        try {
+          if (Array.isArray(importPreview.records)) {
+            for (const r of importPreview.records) {
+              if (r.isValid) {
+                const sId = `stu_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+                await setDoc(doc(db, 'students', sId), cleanForFirestore({
+                  id: sId,
+                  admissionNo: r.admissionNo,
+                  rollNo: r.rollNo || 1,
+                  nameEn: r.nameEn,
+                  nameMl: r.nameMl || r.nameEn,
+                  classId: r.classId || importClassId || classes[0]?.id || 'cls_1',
+                  academicYearId: 'ay_2026_2027',
+                  parentNameEn: r.parentNameEn || '',
+                  parentPhone: r.parentPhone || '',
+                  gender: r.gender || 'M',
+                  status: 'active',
+                }));
+              }
+            }
+          }
+        } catch (fErr) {
+          console.warn('Firestore bulk import write warning:', fErr);
+        }
+
+        alert(`Successfully imported ${data.importedCount} student records across classes!`);
         setShowImportModal(false);
         setImportPreview(null);
         setCsvText('');
@@ -296,12 +422,15 @@ export const StudentManagement: React.FC = () => {
     }
   };
 
-  const handleExportCsv = async () => {
+  const handleExportCsv = () => {
     try {
-      const res = await fetchWithAuth(`/api/students/export-csv${selectedClassId ? `?classId=${selectedClassId}` : ''}`);
-      if (!res.ok) throw new Error('Failed to export students CSV');
-      const text = await res.text();
-      const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
+      const rows = filteredStudents.map(s => {
+        const cls = classes.find(c => c.id === s.classId);
+        const cName = cls?.name || 'Class 1';
+        return `"${s.admissionNo}","${s.nameEn}","${cName}","${s.gender || 'M'}","${s.parentNameEn || ''}","${s.parentPhone || ''}"`;
+      });
+      const csvContent = ['Admission No, Name, Class, Gender, Parent Name, Phone', ...rows].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -341,6 +470,16 @@ export const StudentManagement: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
+            onClick={handleDownloadSampleCsv}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 bg-white hover:bg-emerald-50 border border-emerald-300 rounded-xl transition shadow-2xs cursor-pointer"
+            title="Download CSV Template with Demo Structure"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-700" />
+            Download Sample CSV
+          </button>
+
+          <button
+            type="button"
             onClick={handleExportCsv}
             className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer"
           >
@@ -350,15 +489,33 @@ export const StudentManagement: React.FC = () => {
 
           <button
             onClick={() => setShowImportModal(true)}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition cursor-pointer"
           >
             <Upload className="w-3.5 h-3.5" />
             {t.importCsv}
           </button>
 
           <button
+            onClick={handleClearDemoStudents}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-xl transition cursor-pointer"
+            title="Purge only mock student records from database"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-amber-700" />
+            Clear Demo Students
+          </button>
+
+          <button
+            onClick={handleDeleteAllStudents}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded-xl transition cursor-pointer"
+            title="Permanently remove all students"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-700" />
+            Delete All Students
+          </button>
+
+          <button
             onClick={handleOpenAdd}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs"
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             Add Student
@@ -366,22 +523,47 @@ export const StudentManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* Filter and Search Bar */}
+      {/* Filter, Search & Delete by Class Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <span className="font-semibold text-slate-600">{t.filterClass}:</span>
-          <select
-            value={selectedClassId}
-            onChange={e => setSelectedClassId(e.target.value)}
-            className="p-2 border border-slate-300 rounded-lg bg-slate-50 text-xs font-medium focus:outline-none"
-          >
-            <option value="">{t.allClasses}</option>
-            {classes.map(c => (
-              <option key={c.id} value={c.id}>
-                {isMl ? c.nameMl : c.name}
-              </option>
-            ))}
-          </select>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-slate-600">{t.filterClass}:</span>
+            <select
+              value={selectedClassId}
+              onChange={e => setSelectedClassId(e.target.value)}
+              className="p-2 border border-slate-300 rounded-lg bg-slate-50 text-xs font-medium focus:outline-none"
+            >
+              <option value="">{t.allClasses}</option>
+              {classes.map(c => (
+                <option key={c.id} value={c.id}>
+                  {isMl ? c.nameMl : c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Delete by Class Selector */}
+          <div className="flex items-center gap-1.5 pl-2 border-l border-slate-200">
+            <select
+              value={deleteClassId}
+              onChange={e => setDeleteClassId(e.target.value)}
+              className="p-2 border border-rose-200 rounded-lg bg-rose-50/50 text-xs font-medium text-rose-900 focus:outline-none"
+            >
+              <option value="">Select Class to Delete...</option>
+              {classes.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={handleDeleteByClass}
+              disabled={!deleteClassId}
+              className="px-3 py-2 text-xs font-bold text-rose-700 bg-rose-100 hover:bg-rose-200 rounded-lg transition disabled:opacity-40 cursor-pointer"
+            >
+              Delete Class Students
+            </button>
+          </div>
         </div>
 
         <div className="relative w-full sm:w-64">
@@ -396,64 +578,86 @@ export const StudentManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* Students Table */}
+      {/* Students Table strictly aligned with CSV: Admission No | Name | Class | Gender | Parent Name | Phone | Actions */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <table className="w-full text-xs text-left">
           <thead className="bg-slate-100 text-slate-700 font-bold border-b">
             <tr>
-              <th className="p-3 text-center w-12">{t.rollNo}</th>
-              <th className="p-3">{t.studentName}</th>
-              <th className="p-3">{t.admissionNo}</th>
-              <th className="p-3">{t.class}</th>
-              <th className="p-3">{t.parent}</th>
+              <th className="p-3 font-mono">Admission No</th>
+              <th className="p-3">Name</th>
+              <th className="p-3">Class</th>
+              <th className="p-3 text-center">Gender</th>
+              <th className="p-3">Parent Name</th>
+              <th className="p-3">Phone</th>
               <th className="p-3 text-center w-24">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {filteredStudents.map(student => {
-              const cls = classes.find(c => c.id === student.classId);
-              return (
-                <tr key={student.id} className="hover:bg-slate-50 transition">
-                  <td className="p-3 text-center font-mono font-bold text-slate-700">
-                    {student.rollNo}
-                  </td>
-                  <td className="p-3">
-                    <div className="font-bold text-slate-900">{student.nameEn}</div>
-                    <div className="text-[11px] text-slate-500">{student.nameMl}</div>
-                  </td>
-                  <td className="p-3 font-mono font-semibold text-slate-600">
-                    {student.admissionNo}
-                  </td>
-                  <td className="p-3">
-                    <span className="bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md font-semibold">
-                      {isMl ? cls?.nameMl : cls?.name}
-                    </span>
-                  </td>
-                  <td className="p-3">
-                    <div className="font-medium text-slate-800">{student.parentNameEn || '—'}</div>
-                    <div className="text-[10px] text-slate-400 font-mono">{student.parentPhone}</div>
-                  </td>
-                  <td className="p-3 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <button
-                        onClick={() => handleOpenEdit(student)}
-                        className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition"
-                        title="Edit student"
+            {filteredStudents.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="p-8 text-center text-slate-400">
+                  No students found. Add a student or import via CSV.
+                </td>
+              </tr>
+            ) : (
+              filteredStudents.map(student => {
+                const cls = classes.find(c => c.id === student.classId);
+                return (
+                  <tr key={student.id} className="hover:bg-slate-50 transition">
+                    <td className="p-3 font-mono font-semibold text-slate-700">
+                      {student.admissionNo}
+                    </td>
+                    <td className="p-3">
+                      <div className="font-bold text-slate-900">{student.nameEn}</div>
+                      <div className="text-[11px] text-slate-500">{student.nameMl}</div>
+                    </td>
+                    <td className="p-3">
+                      <span className="bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md font-semibold">
+                        {isMl ? cls?.nameMl : cls?.name}
+                      </span>
+                    </td>
+                    <td className="p-3 text-center">
+                      <span
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                          student.gender === 'F'
+                            ? 'bg-pink-100 text-pink-800 border border-pink-200'
+                            : 'bg-blue-100 text-blue-800 border border-blue-200'
+                        }`}
                       >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteStudent(student)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                        title="Delete student"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+                        {student.gender || 'M'}
+                      </span>
+                    </td>
+                    <td className="p-3">
+                      <div className="font-medium text-slate-800">{student.parentNameEn || '—'}</div>
+                      {student.parentNameMl && (
+                        <div className="text-[10px] text-slate-400">{student.parentNameMl}</div>
+                      )}
+                    </td>
+                    <td className="p-3 font-mono text-slate-600">
+                      {student.parentPhone || '—'}
+                    </td>
+                    <td className="p-3 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => handleOpenEdit(student)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition"
+                          title="Edit student"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteStudent(student)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                          title="Delete student"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </table>
       </div>
@@ -601,6 +805,7 @@ export const StudentManagement: React.FC = () => {
                 }}
                 className="w-full p-2 border rounded-lg bg-slate-50 font-bold"
               >
+                <option value="">Auto-Detect from CSV Class Column (Multi-Class Upload)</option>
                 {classes.map(c => (
                   <option key={c.id} value={c.id}>
                     {c.name} ({c.nameMl})
@@ -610,15 +815,28 @@ export const StudentManagement: React.FC = () => {
             </div>
 
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-              <span className="font-bold text-slate-700 block">CSV File Format Requirements:</span>
-              <p className="text-[11px] text-slate-500 font-mono">
-                admission_no, roll_no, student_name, name_ml, parent_name, phone
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-700 block">CSV File Format (Required Columns):</span>
+                <button
+                  type="button"
+                  onClick={handleDownloadSampleCsv}
+                  className="text-[11px] font-bold text-emerald-800 hover:text-emerald-950 underline flex items-center gap-1 cursor-pointer"
+                >
+                  <Download className="w-3 h-3" />
+                  Download Sample CSV
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-600 font-mono bg-white p-2 rounded-lg border border-slate-200">
+                Admission No, Name, Class, Gender, Parent Name, Phone
+              </p>
+              <p className="text-[11px] text-slate-500">
+                Supports multi-class records! The parser automatically matches the <em>Class</em> column (e.g. Class 1, Class 5) to enroll students in their respective classes.
               </p>
               <input
                 type="file"
                 accept=".csv,text/csv"
                 onChange={handleCsvFileChange}
-                className="block w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"
+                className="block w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
               />
             </div>
 
@@ -638,6 +856,8 @@ export const StudentManagement: React.FC = () => {
                         <th className="p-2">Row</th>
                         <th className="p-2">Admission No</th>
                         <th className="p-2">Name</th>
+                        <th className="p-2">Class</th>
+                        <th className="p-2">Gender</th>
                         <th className="p-2">Status</th>
                       </tr>
                     </thead>
@@ -647,6 +867,8 @@ export const StudentManagement: React.FC = () => {
                           <td className="p-2 font-mono">{r.rowNumber}</td>
                           <td className="p-2 font-mono">{r.admissionNo}</td>
                           <td className="p-2 font-medium">{r.nameEn}</td>
+                          <td className="p-2 font-medium text-emerald-800">{r.className || 'Class 1'}</td>
+                          <td className="p-2 font-bold">{r.gender || 'M'}</td>
                           <td className="p-2">
                             {r.isValid ? (
                               <span className="text-emerald-700 font-bold">Valid</span>
