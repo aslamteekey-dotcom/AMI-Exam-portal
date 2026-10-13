@@ -107,9 +107,13 @@ export const TeacherManagement: React.FC = () => {
             setTeachers((prevTeachers) => {
               return remoteTeachers.map((rt) => {
                 const prev = prevTeachers.find((p) => p.id === rt.id);
+                const asgs = Array.isArray((rt as any).assignedSubjects)
+                  ? (rt as any).assignedSubjects
+                  : (Array.isArray(rt.assignments) ? rt.assignments : (prev?.assignments || []));
                 return {
                   ...rt,
-                  assignments: prev?.assignments || [],
+                  assignments: asgs,
+                  assignedSubjects: asgs,
                 };
               });
             });
@@ -399,14 +403,21 @@ export const TeacherManagement: React.FC = () => {
 
       // 1. Commit directly to Firestore 'teachers' collection
       try {
-        const existingAsgs = Array.isArray(assignTeacher.assignments) ? assignTeacher.assignments : [];
+        const existingAsgs = Array.isArray(assignTeacher.assignedSubjects)
+          ? assignTeacher.assignedSubjects
+          : (Array.isArray(assignTeacher.assignments) ? assignTeacher.assignments : []);
         const updated = [
           ...existingAsgs.filter((a: any) => !(a.classId === assignClassId && a.subjectId === assignSubjectId)),
           newAsg,
         ];
+        const updatedTeacher = {
+          ...assignTeacher,
+          assignments: updated,
+          assignedSubjects: updated,
+        };
         await setDoc(
           doc(db, 'teachers', assignTeacher.id),
-          cleanForFirestore({ assignments: updated }),
+          cleanForFirestore(updatedTeacher),
           { merge: true }
         );
       } catch (fErr: any) {
@@ -440,11 +451,19 @@ export const TeacherManagement: React.FC = () => {
       if (teacherId) {
         try {
           const tObj = teachers.find(t => t.id === teacherId);
-          if (tObj && Array.isArray(tObj.assignments)) {
-            const updated = tObj.assignments.filter((a: any) => a.id !== assignId);
+          if (tObj) {
+            const existingAsgs = Array.isArray((tObj as any).assignedSubjects)
+              ? (tObj as any).assignedSubjects
+              : (Array.isArray(tObj.assignments) ? tObj.assignments : []);
+            const updated = existingAsgs.filter((a: any) => a.id !== assignId);
+            const updatedTeacher = {
+              ...tObj,
+              assignments: updated,
+              assignedSubjects: updated,
+            };
             await setDoc(
               doc(db, 'teachers', teacherId),
-              cleanForFirestore({ assignments: updated }),
+              cleanForFirestore(updatedTeacher),
               { merge: true }
             );
           }
@@ -510,7 +529,11 @@ export const TeacherManagement: React.FC = () => {
         /* Teachers Cards List */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {teachers.map(teacher => {
-            const tAssignments = assignments.filter(a => a.teacherId === teacher.id);
+            const teacherAssigned = Array.isArray((teacher as any).assignedSubjects)
+              ? (teacher as any).assignedSubjects
+              : (Array.isArray(teacher.assignments) ? teacher.assignments : []);
+            const fromList = assignments.filter(a => a.teacherId === teacher.id);
+            const tAssignments: TeacherAssignment[] = fromList.length > 0 ? fromList : teacherAssigned;
             const isPasswordVisible = !!showPasswordMap[teacher.id];
 
             return (
@@ -617,7 +640,7 @@ export const TeacherManagement: React.FC = () => {
                       <span className="text-xs text-slate-400 italic">No classes assigned yet</span>
                     ) : (
                       <div className="space-y-1 max-h-36 overflow-y-auto">
-                        {tAssignments.map(a => {
+                        {tAssignments.map((a: TeacherAssignment) => {
                           const cls = classes.find(c => c.id === a.classId);
                           const sub = subjects.find(s => s.id === a.subjectId);
                           const subMlName = sub ? getSubjectMalayalamName(sub, cls?.numericGrade) : '—';

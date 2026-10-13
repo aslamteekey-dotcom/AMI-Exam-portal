@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
 import { Language, translations } from '../i18n';
 import { clientStorageApi } from '../services/clientStorageApi';
+import { db } from '../services/firebase';
+import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 
 // Pure client-side authentication and mock API routes running 100% in-browser on Vercel
 
@@ -39,6 +41,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshUser = async () => {
     const current = clientStorageApi.getCurrentUser();
+    if (current && current.role === 'teacher') {
+      try {
+        const tDoc = await getDoc(doc(db, 'teachers', current.id));
+        if (tDoc.exists()) {
+          const tData = tDoc.data();
+          const asgs = Array.isArray(tData.assignedSubjects)
+            ? tData.assignedSubjects
+            : (Array.isArray(tData.assignments) ? tData.assignments : []);
+          const updatedUser: User = {
+            ...current,
+            ...tData,
+            assignments: asgs,
+            assignedSubjects: asgs,
+          } as User;
+          clientStorageApi.setCurrentUser(updatedUser);
+          setUser(updatedUser);
+          setIsLoading(false);
+          return;
+        }
+      } catch (fErr) {
+        console.warn('Could not refresh teacher doc from Firestore:', fErr);
+      }
+    }
     setUser(current);
     setIsLoading(false);
   };
@@ -49,10 +74,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (username: string, pass: string) => {
     try {
+      // 1. Fresh cloud fetch on login: fetch fresh teachers from Firestore to ensure assignments and credentials sync across devices
+      try {
+        const teachersSnap = await getDocs(collection(db, 'teachers'));
+        if (!teachersSnap.empty) {
+          const remoteTeachers = teachersSnap.docs.map(d => ({
+            ...d.data(),
+            id: d.id,
+          } as User));
+          clientStorageApi.syncTeachersFromRemote(remoteTeachers);
+        }
+      } catch (syncErr) {
+        console.warn('Could not pre-sync teachers from Firestore on login:', syncErr);
+      }
+
       const res = clientStorageApi.login(username, pass);
       if (!res.success || !res.user || !res.token) {
         return { success: false, error: res.error || 'Authentication failed. Please check your credentials.' };
       }
+
+      // If user is teacher, ensure their fresh document with assignedSubjects is active
+      if (res.user.role === 'teacher') {
+        try {
+          const tDoc = await getDoc(doc(db, 'teachers', res.user.id));
+          if (tDoc.exists()) {
+            const tData = tDoc.data();
+            const asgs = Array.isArray(tData.assignedSubjects)
+              ? tData.assignedSubjects
+              : (Array.isArray(tData.assignments) ? tData.assignments : []);
+            const updatedUser: User = {
+              ...res.user,
+              ...tData,
+              assignments: asgs,
+              assignedSubjects: asgs,
+            } as User;
+            clientStorageApi.setCurrentUser(updatedUser);
+            res.user = updatedUser;
+          }
+        } catch (fErr) {
+          console.warn('Could not fetch teacher doc from Firestore during login:', fErr);
+        }
+      }
+
       setToken(res.token);
       setUser(res.user);
       return { success: true };

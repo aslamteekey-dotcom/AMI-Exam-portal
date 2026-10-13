@@ -661,12 +661,7 @@ export class ClientStorageApi {
         },
         onTeachers: (remoteTeachers) => {
           if (Array.isArray(remoteTeachers)) {
-            // Merge teachers into users keeping admin and parents
-            const nonTeachers = this.db.users.filter(u => u.role !== 'teacher');
-            this.db.users = [...nonTeachers, ...remoteTeachers];
-            try {
-              localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
-            } catch {}
+            this.syncTeachersFromRemote(remoteTeachers);
           }
         },
         getInitialTeachers: () => {
@@ -963,6 +958,55 @@ export class ClientStorageApi {
       localStorage.removeItem(CURRENT_USER_KEY);
       localStorage.removeItem(TOKEN_KEY);
     }
+  }
+
+  public syncTeachersFromRemote(remoteTeachers: User[]): void {
+    if (!Array.isArray(remoteTeachers)) return;
+    // Merge teachers into users keeping admin and parents
+    const nonTeachers = this.db.users.filter(u => u.role !== 'teacher');
+    this.db.users = [...nonTeachers, ...remoteTeachers];
+
+    // Reconstruct teacher assignments from all remote teachers
+    const collectedAsgs: TeacherAssignment[] = [];
+    remoteTeachers.forEach(t => {
+      const asgs = Array.isArray((t as any).assignedSubjects)
+        ? (t as any).assignedSubjects
+        : (Array.isArray(t.assignments) ? t.assignments : []);
+      if (asgs.length > 0) {
+        collectedAsgs.push(...asgs);
+      }
+    });
+
+    if (collectedAsgs.length > 0 || remoteTeachers.length > 0) {
+      const asgMap = new Map<string, TeacherAssignment>();
+      collectedAsgs.forEach(a => {
+        const key = `${a.teacherId}_${a.classId}_${a.subjectId}`;
+        asgMap.set(key, a);
+      });
+      this.db.teacherAssignments = Array.from(asgMap.values());
+    }
+
+    // Refresh currently logged in teacher user if applicable
+    const currentUser = this.getCurrentUser();
+    if (currentUser && currentUser.role === 'teacher') {
+      const fresh = remoteTeachers.find(t => t.id === currentUser.id || t.username === currentUser.username);
+      if (fresh) {
+        const freshAsgs = Array.isArray((fresh as any).assignedSubjects)
+          ? (fresh as any).assignedSubjects
+          : (Array.isArray(fresh.assignments) ? fresh.assignments : []);
+        const updatedCurrentUser = {
+          ...currentUser,
+          ...fresh,
+          assignments: freshAsgs,
+          assignedSubjects: freshAsgs,
+        };
+        this.setCurrentUser(updatedCurrentUser);
+      }
+    }
+
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
+    } catch {}
   }
 
   // Client authentication
@@ -1407,8 +1451,16 @@ export class ClientStorageApi {
         if (!current) {
           return this.jsonResponse({ error: 'Unauthorized' }, 401);
         }
-        const freshUser = this.db.users.find(u => u.id === current.id) || current;
-        const assignments = this.db.teacherAssignments.filter(a => a.teacherId === freshUser.id);
+        const freshUser = this.db.users.find(u => u.id === current.id || u.username === current.username) || current;
+        const userAssigned = Array.isArray((freshUser as any).assignedSubjects)
+          ? (freshUser as any).assignedSubjects
+          : (Array.isArray(freshUser.assignments) ? freshUser.assignments : []);
+        const dbAssigned = this.db.teacherAssignments.filter(a => a.teacherId === freshUser.id);
+        const assignments = dbAssigned.length > 0 ? dbAssigned : userAssigned;
+        if (freshUser.role === 'teacher') {
+          freshUser.assignments = assignments;
+          (freshUser as any).assignedSubjects = assignments;
+        }
         let children: Student[] = [];
         if (freshUser.role === 'parent') {
           const cleanPhone = (freshUser.phone || '').replace(/\D/g, '');
@@ -1642,6 +1694,18 @@ export class ClientStorageApi {
 
       // Teacher assignments
       if (path === '/api/teacher-assignments' && method === 'GET') {
+        if (this.db.teacherAssignments.length === 0) {
+          const collected: TeacherAssignment[] = [];
+          this.db.users.filter(u => u.role === 'teacher').forEach(t => {
+            const asgs = Array.isArray((t as any).assignedSubjects)
+              ? (t as any).assignedSubjects
+              : (Array.isArray(t.assignments) ? t.assignments : []);
+            collected.push(...asgs);
+          });
+          if (collected.length > 0) {
+            this.db.teacherAssignments = collected;
+          }
+        }
         return this.jsonResponse(this.db.teacherAssignments);
       }
 
@@ -1662,7 +1726,9 @@ export class ClientStorageApi {
         this.db.teacherAssignments.push(newAssignment);
         const teacher = this.db.users.find(u => u.id === teacherId);
         if (teacher) {
-          teacher.assignments = this.db.teacherAssignments.filter(a => a.teacherId === teacherId);
+          const teacherAsgs = this.db.teacherAssignments.filter(a => a.teacherId === teacherId);
+          teacher.assignments = teacherAsgs;
+          (teacher as any).assignedSubjects = teacherAsgs;
           firestoreSync.syncTeacher(teacher).catch(e => console.error('Firestore syncTeacher error on assignment:', e));
         }
         this.saveDB();
@@ -1678,7 +1744,9 @@ export class ClientStorageApi {
         if (affectedTeacherId) {
           const teacher = this.db.users.find(u => u.id === affectedTeacherId);
           if (teacher) {
-            teacher.assignments = this.db.teacherAssignments.filter(a => a.teacherId === affectedTeacherId);
+            const teacherAsgs = this.db.teacherAssignments.filter(a => a.teacherId === affectedTeacherId);
+            teacher.assignments = teacherAsgs;
+            (teacher as any).assignedSubjects = teacherAsgs;
             firestoreSync.syncTeacher(teacher).catch(e => console.error('Firestore syncTeacher error on remove assignment:', e));
           }
         }

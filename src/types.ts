@@ -13,6 +13,7 @@ export interface User {
   phone?: string;
   inChargeClassId?: string;
   assignments?: TeacherAssignment[];
+  assignedSubjects?: TeacherAssignment[];
   createdAt?: string;
 }
 

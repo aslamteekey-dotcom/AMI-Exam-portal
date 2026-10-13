@@ -460,7 +460,15 @@ export class FirestoreSyncService {
   // Sync teacher
   public async syncTeacher(teacher: User): Promise<void> {
     try {
-      await setDoc(doc(db, 'teachers', teacher.id), cleanForFirestore(teacher));
+      const asgs = Array.isArray(teacher.assignedSubjects)
+        ? teacher.assignedSubjects
+        : (Array.isArray(teacher.assignments) ? teacher.assignments : []);
+      const docData = {
+        ...teacher,
+        assignments: asgs,
+        assignedSubjects: asgs,
+      };
+      await setDoc(doc(db, 'teachers', teacher.id), cleanForFirestore(docData), { merge: true });
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `teachers/${teacher.id}`);
       throw e;

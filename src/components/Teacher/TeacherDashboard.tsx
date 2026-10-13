@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { TeacherAssignment, ClassItem, SubjectItem, Examination, MarkSheet, Student, sortStudentsBoysFirst } from '../../types';
 import { MarkEntryScreen } from './MarkEntryScreen';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, doc, getDoc, getDocs } from 'firebase/firestore';
 import {
   BookOpen,
   Users,
@@ -58,7 +58,60 @@ export const TeacherDashboard: React.FC = () => {
       const examData: Examination[] = await resExams.json();
       const stuData: Student[] = await resStudents.json();
 
-      setAssignments(authData.assignments || []);
+      let currentAssignments: TeacherAssignment[] = authData.assignments || [];
+
+      // DIRECT CLOUD SYNC: Fetch teacher profile directly from Firestore on mount/load
+      const teacherId = user?.id || authData.user?.id;
+      const teacherUsername = user?.username || authData.user?.username;
+
+      if (teacherId) {
+        try {
+          const tDocRef = doc(db, 'teachers', teacherId);
+          const tDocSnap = await getDoc(tDocRef);
+          if (tDocSnap.exists()) {
+            const tData = tDocSnap.data();
+            const rawSubs = Array.isArray(tData.assignedSubjects)
+              ? tData.assignedSubjects
+              : (Array.isArray(tData.assignments) ? tData.assignments : []);
+            if (rawSubs.length > 0) {
+              currentAssignments = rawSubs.map((a: any, idx: number) => ({
+                id: a.id || `asg_${teacherId}_${idx}`,
+                teacherId: a.teacherId || teacherId,
+                classId: a.classId,
+                subjectId: a.subjectId,
+              }));
+            }
+            if (tData.inChargeClassId !== undefined) {
+              setCurrentTeacherInChargeClassId(tData.inChargeClassId || undefined);
+            }
+          } else {
+            // Fallback collection scan if teacher was stored under different ID or username
+            const allTeachersSnap = await getDocs(collection(db, 'teachers'));
+            const matched = allTeachersSnap.docs.find(d => d.id === teacherId || d.data().username === teacherUsername);
+            if (matched) {
+              const tData = matched.data();
+              const rawSubs = Array.isArray(tData.assignedSubjects)
+                ? tData.assignedSubjects
+                : (Array.isArray(tData.assignments) ? tData.assignments : []);
+              if (rawSubs.length > 0) {
+                currentAssignments = rawSubs.map((a: any, idx: number) => ({
+                  id: a.id || `asg_${matched.id}_${idx}`,
+                  teacherId: a.teacherId || matched.id,
+                  classId: a.classId,
+                  subjectId: a.subjectId,
+                }));
+              }
+              if (tData.inChargeClassId !== undefined) {
+                setCurrentTeacherInChargeClassId(tData.inChargeClassId || undefined);
+              }
+            }
+          }
+        } catch (fErr) {
+          console.error('Error fetching teacher profile directly from Firestore:', fErr);
+        }
+      }
+
+      setAssignments(currentAssignments);
       setClasses(clsData);
       setSubjects(subData);
       setExaminations(examData);
@@ -136,19 +189,28 @@ export const TeacherDashboard: React.FC = () => {
       );
       unsubs.push(unsubStu);
 
+      // Real-time teacher assignments listener
       const unsubTeachers = onSnapshot(
         collection(db, 'teachers'),
         snapshot => {
-          if (!snapshot.empty && user?.id) {
-            const currentT = snapshot.docs.find(d => d.id === user.id);
+          if (!snapshot.empty && (user?.id || user?.username)) {
+            const currentT = snapshot.docs.find(d => d.id === user?.id || d.data().username === user?.username);
             if (currentT) {
               const tData = currentT.data();
               if (tData.inChargeClassId !== undefined) {
                 setCurrentTeacherInChargeClassId(tData.inChargeClassId || undefined);
               }
-              if (Array.isArray(tData.assignments)) {
-                setAssignments(tData.assignments);
-              }
+              const rawSubs = Array.isArray(tData.assignedSubjects)
+                ? tData.assignedSubjects
+                : (Array.isArray(tData.assignments) ? tData.assignments : []);
+
+              const mappedAsgs: TeacherAssignment[] = rawSubs.map((a: any, idx: number) => ({
+                id: a.id || `asg_${currentT.id}_${idx}`,
+                teacherId: a.teacherId || currentT.id,
+                classId: a.classId,
+                subjectId: a.subjectId,
+              }));
+              setAssignments(mappedAsgs);
             }
           }
         },
@@ -158,6 +220,36 @@ export const TeacherDashboard: React.FC = () => {
         }
       );
       unsubs.push(unsubTeachers);
+
+      // Direct document listener on specific teacher profile
+      if (user?.id) {
+        const unsubDoc = onSnapshot(
+          doc(db, 'teachers', user.id),
+          docSnap => {
+            if (docSnap.exists()) {
+              const tData = docSnap.data();
+              if (tData.inChargeClassId !== undefined) {
+                setCurrentTeacherInChargeClassId(tData.inChargeClassId || undefined);
+              }
+              const rawSubs = Array.isArray(tData.assignedSubjects)
+                ? tData.assignedSubjects
+                : (Array.isArray(tData.assignments) ? tData.assignments : []);
+
+              const mappedAsgs: TeacherAssignment[] = rawSubs.map((a: any, idx: number) => ({
+                id: a.id || `asg_${user.id}_${idx}`,
+                teacherId: a.teacherId || user.id,
+                classId: a.classId,
+                subjectId: a.subjectId,
+              }));
+              setAssignments(mappedAsgs);
+            }
+          },
+          err => {
+            console.error('Firestore direct teacher doc listener error:', err);
+          }
+        );
+        unsubs.push(unsubDoc);
+      }
     } catch (e) {
       console.error('Failed to attach Teacher Portal real-time listeners:', e);
     }
@@ -169,7 +261,7 @@ export const TeacherDashboard: React.FC = () => {
         } catch {}
       });
     };
-  }, [user?.id]);
+  }, [user?.id, user?.username]);
 
   const handleExamChange = async (examId: string) => {
     setSelectedExamId(examId);
