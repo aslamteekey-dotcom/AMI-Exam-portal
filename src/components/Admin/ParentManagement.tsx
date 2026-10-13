@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { User, Student, ClassItem } from '../../types';
+import { User, Student, ClassItem, sortStudentsBoysFirst } from '../../types';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
@@ -21,6 +21,10 @@ import {
   CheckSquare,
   Square,
   GraduationCap,
+  Loader2,
+  Filter,
+  Phone,
+  ShieldCheck,
 } from 'lucide-react';
 
 export const ParentManagement: React.FC = () => {
@@ -29,6 +33,16 @@ export const ParentManagement: React.FC = () => {
   const [parents, setParents] = useState<any[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
+
+  // Search & Filter
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterClassId, setFilterClassId] = useState('');
+
+  // Automated Parent Credentials & Sync Modal
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [syncClassId, setSyncClassId] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<any>(null);
 
   // Create Parent Modal
   const [showAddModal, setShowAddModal] = useState(false);
@@ -70,7 +84,7 @@ export const ParentManagement: React.FC = () => {
       const sData = await resS.json();
       const cData = await resC.json();
       setParents(pData);
-      setStudents(sData);
+      setStudents(sortStudentsBoysFirst(sData));
       setClasses(cData);
     } catch (err) {
       console.error('Error loading parents:', err);
@@ -147,7 +161,7 @@ export const ParentManagement: React.FC = () => {
       if (!pass && createChildIds.length > 0) {
         const selKids = students.filter(s => createChildIds.includes(s.id));
         const elder = getElderChild(selKids);
-        if (elder) pass = elder.admissionNo;
+        if (elder) pass = `Admn@${elder.admissionNo}`;
       }
       if (!pass) pass = 'parent123';
 
@@ -202,6 +216,31 @@ export const ParentManagement: React.FC = () => {
       await loadData();
     } catch (err: any) {
       alert(err.message);
+    }
+  };
+
+  // Automated Parent Credentials & Sync Handler
+  const handleGenerateSyncParentAccounts = async () => {
+    setIsSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await fetchWithAuth('/api/parents/sync-from-students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ classId: syncClassId || undefined }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to generate/sync parent accounts');
+      }
+      const data = await res.json();
+      setSyncResult(data);
+      await loadData();
+    } catch (err: any) {
+      console.error('Error generating parent accounts:', err);
+      alert(err.message || 'Error generating parent accounts');
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -388,6 +427,27 @@ export const ParentManagement: React.FC = () => {
     return <div className="text-center py-10 text-xs text-slate-500">Loading parent accounts...</div>;
   }
 
+  const filteredParents = parents.filter(parent => {
+    const linked = students.filter(s => s.parentUserId === parent.id);
+    const matchesClass = filterClassId
+      ? linked.some(s => s.classId === filterClassId)
+      : true;
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return matchesClass;
+    const matchesQuery =
+      (parent.name && parent.name.toLowerCase().includes(q)) ||
+      (parent.nameMl && parent.nameMl.toLowerCase().includes(q)) ||
+      (parent.username && parent.username.toLowerCase().includes(q)) ||
+      (parent.phone && parent.phone.toLowerCase().includes(q)) ||
+      linked.some(
+        s =>
+          s.nameEn.toLowerCase().includes(q) ||
+          (s.nameMl && s.nameMl.toLowerCase().includes(q)) ||
+          s.admissionNo.toLowerCase().includes(q)
+      );
+    return matchesClass && matchesQuery;
+  });
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -400,6 +460,19 @@ export const ParentManagement: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => {
+              setSyncClassId('');
+              setSyncResult(null);
+              setShowSyncModal(true);
+            }}
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition shadow-2xs cursor-pointer"
+            title="Generate & sync automated parent credentials from student phone numbers"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-700" />
+            Generate / Sync Parent Accounts
+          </button>
+
           <button
             onClick={handleClearDemoParents}
             className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-xl transition cursor-pointer"
@@ -419,17 +492,63 @@ export const ParentManagement: React.FC = () => {
         </div>
       </div>
 
-      {parents.length === 0 ? (
+      {/* Search and Class Filter Bar */}
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-slate-600 flex items-center gap-1">
+              <Filter className="w-3.5 h-3.5 text-slate-400" /> Filter by Class:
+            </span>
+            <select
+              value={filterClassId}
+              onChange={e => setFilterClassId(e.target.value)}
+              className="p-2 border border-slate-300 rounded-lg bg-slate-50 text-xs font-medium focus:outline-none"
+            >
+              <option value="">All Classes</option>
+              {classes.map(c => (
+                <option key={c.id} value={c.id}>
+                  {isMl ? c.nameMl : c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          {filterClassId && (
+            <button
+              onClick={() => setFilterClassId('')}
+              className="text-xs text-rose-600 hover:underline font-medium cursor-pointer"
+            >
+              Reset Filter
+            </button>
+          )}
+        </div>
+
+        <div className="relative w-full sm:w-72">
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search by parent, phone, child, adm..."
+            className="w-full pl-8 pr-3 py-1.5 border border-slate-300 rounded-lg bg-slate-50/50 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-700"
+          />
+        </div>
+      </div>
+
+      {filteredParents.length === 0 ? (
         <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
           <Users className="w-10 h-10 mx-auto text-slate-400 mb-2" />
-          <h3 className="font-bold text-slate-800 text-sm">No Parent Accounts Added Yet</h3>
+          <h3 className="font-bold text-slate-800 text-sm">
+            {parents.length === 0 ? 'No Parent Accounts Added Yet' : 'No Parent Accounts Match Your Search'}
+          </h3>
           <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-            Parent accounts will be generated automatically when you upload student CSV/Excel files (Parent Name is Username, Admission Number is Password), or you can create them manually here.
+            {parents.length === 0
+              ? 'Click "Generate / Sync Parent Accounts" above to automatically create accounts from students\' phone numbers, or add them manually.'
+              : 'Try clearing the search query or class filter to view other parent accounts.'}
           </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {parents.map(parent => {
+          {filteredParents.map(parent => {
             const linkedStudents = students.filter(s => s.parentUserId === parent.id);
             const elderChild = getElderChild(linkedStudents);
             const isPasswordVisible = !!showPasswordMap[parent.id];
@@ -959,6 +1078,114 @@ export const ParentManagement: React.FC = () => {
                 className="px-4 py-2 font-bold text-white bg-emerald-800 rounded-lg hover:bg-emerald-900 text-xs cursor-pointer"
               >
                 Confirm Link ({selectedStudentIdsToLink.length} Children)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Generate / Sync Parent Accounts Modal */}
+      {showSyncModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-4 sm:p-6 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto space-y-4 text-xs">
+            <div className="flex items-center justify-between border-b pb-3">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-emerald-800" />
+                Generate / Sync Parent Accounts
+              </h3>
+              <button
+                disabled={isSyncing}
+                onClick={() => setShowSyncModal(false)}
+                className="text-slate-400 hover:text-slate-600 font-bold disabled:opacity-40 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-slate-600 leading-relaxed">
+                Automatically generate or update parent login accounts based on student phone and guardian records:
+              </p>
+
+              <div className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-2 text-emerald-950">
+                <div className="font-bold flex items-center gap-1.5 text-emerald-900">
+                  <ShieldCheck className="w-4 h-4 text-emerald-800" />
+                  Automated Credentials Rules:
+                </div>
+                <ul className="list-disc list-inside space-y-1 text-slate-700">
+                  <li>
+                    <strong>Username:</strong> Student's Parent Phone Number (e.g. <span className="font-mono font-semibold">9744096055</span>)
+                  </li>
+                  <li>
+                    <strong>Password:</strong> <span className="font-mono font-semibold">Admn@</span> + Admission No (e.g. <span className="font-mono font-semibold">Admn@0984</span>)
+                  </li>
+                  <li>
+                    <strong>Multi-Student Sibling Support:</strong> Siblings sharing the same phone number are automatically grouped under one parent account with all their progress report cards accessible!
+                  </li>
+                </ul>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Target Scope (All Students or Filter by Class):
+                </label>
+                <select
+                  value={syncClassId}
+                  onChange={e => setSyncClassId(e.target.value)}
+                  disabled={isSyncing}
+                  className="w-full p-2.5 border rounded-lg bg-slate-50 font-medium focus:outline-emerald-700"
+                >
+                  <option value="">All Students (Entire Madrasa)</option>
+                  {classes.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.nameMl})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {syncResult && (
+                <div className="p-3 bg-emerald-100/70 border border-emerald-300 rounded-xl text-emerald-900 space-y-1">
+                  <div className="font-bold flex items-center gap-1">
+                    <Check className="w-4 h-4 text-emerald-800" />
+                    Parent Accounts Synced Successfully!
+                  </div>
+                  <p className="text-[11px]">
+                    Created / updated <strong>{syncResult.syncedAccounts}</strong> parent accounts across <strong>{syncResult.totalStudentsProcessed}</strong> student records.
+                  </p>
+                  <p className="text-[11px] font-mono text-emerald-800">
+                    Format: Username = Phone No, Password = Admn@&lt;AdmissionNo&gt;
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t">
+              <button
+                type="button"
+                disabled={isSyncing}
+                onClick={() => setShowSyncModal(false)}
+                className="px-4 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg disabled:opacity-40 cursor-pointer"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                disabled={isSyncing}
+                onClick={handleGenerateSyncParentAccounts}
+                className="flex items-center gap-2 px-4 py-2 font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg shadow-xs disabled:opacity-50 cursor-pointer"
+              >
+                {isSyncing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Generating & Syncing...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 text-emerald-200" />
+                    <span>Confirm & Generate</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

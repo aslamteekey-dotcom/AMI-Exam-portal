@@ -174,18 +174,19 @@ export const MarkMonitoring: React.FC = () => {
       </div>
 
       {/* Monitoring Matrix Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <table className="w-full text-xs text-left">
-          <thead className="bg-slate-100 text-slate-700 font-bold border-b">
-            <tr>
-              <th className="p-3 w-28">Class</th>
-              <th className="p-3">Subject</th>
-              <th className="p-3">Assigned Usthad (Teacher)</th>
-              <th className="p-3 text-center w-24">Students</th>
-              <th className="p-3 text-center w-36">Status</th>
-              <th className="p-3 text-center w-32">Action</th>
-            </tr>
-          </thead>
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden w-full">
+        <div className="overflow-x-auto w-full scrollbar-thin">
+          <table className="w-full min-w-[680px] text-xs text-left">
+            <thead className="bg-slate-100 text-slate-700 font-bold border-b">
+              <tr>
+                <th className="p-3 w-28 whitespace-nowrap">Class</th>
+                <th className="p-3 whitespace-nowrap">Subject</th>
+                <th className="p-3 whitespace-nowrap">Assigned Usthad (Teacher)</th>
+                <th className="p-3 text-center w-24 whitespace-nowrap">Students</th>
+                <th className="p-3 text-center w-36 whitespace-nowrap">Status</th>
+                <th className="p-3 text-center w-32 whitespace-nowrap">Action</th>
+              </tr>
+            </thead>
           <tbody className="divide-y divide-slate-100">
             {filteredMatrix.map((item, idx) => {
               const status = item.status;
@@ -270,6 +271,7 @@ export const MarkMonitoring: React.FC = () => {
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Inspect and Verification Modal */}

@@ -56,8 +56,8 @@ const AppContent: React.FC = () => {
 
           <div className="text-[11px] text-slate-400">
             {lang === 'ml'
-              ? 'അധ്യയന വർഷം: 2026–2027 • അർദ്ധവാർഷിക പരീക്ഷാ മൂല്യനിർണ്ണയ സംവിധാനം'
-              : 'Academic Session: 2026–2027 • Half-Yearly Examination System'}
+              ? 'അധ്യയന വർഷം: 2026–2027 • പരീക്ഷാ മൂല്യനിർണ്ണയ സംവിധാനം'
+              : 'Academic session 2026-2027 . Examination system'}
           </div>
         </div>
       </footer>

@@ -106,7 +106,7 @@ export const translations = {
     
     // Roles
     adminRole: 'പ്രിൻസിപ്പൽ / അഡ്മിനിസ്ട്രേറ്റർ',
-    teacherRole: 'അധ്യാപകൻ (ഉസ്താദ്)',
+    teacherRole: 'ടീച്ചർ',
     parentRole: 'രക്ഷിതാവ്',
     
     // Navigation

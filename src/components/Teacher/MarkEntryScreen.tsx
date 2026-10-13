@@ -11,6 +11,7 @@ import {
   Student,
   MarkSheet,
   StudentMarkEntry,
+  sortStudentsBoysFirst,
 } from '../../types';
 import {
   Save,
@@ -67,13 +68,13 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
       setCls(data.class);
       setSubject(data.subject);
       setExam(data.examination);
-      setComponents(data.components);
-      setStudents(data.students);
+      const sortedStudents = sortStudentsBoysFirst<Student>(data.students || []);
+      setStudents(sortedStudents);
       setMarkSheet(data.markSheet);
 
       // Initialize marks state
       const initialMarks: Record<string, { isAbsent: boolean; componentMarks: Record<string, string>; remarks: string }> = {};
-      data.students.forEach((s: Student) => {
+      sortedStudents.forEach((s: Student) => {
         const entry: StudentMarkEntry = data.markSheet?.studentMarks?.[s.id];
         if (entry) {
           const compStr: Record<string, string> = {};

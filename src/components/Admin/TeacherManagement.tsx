@@ -242,8 +242,9 @@ export const TeacherManagement: React.FC = () => {
           cleanForFirestore({ inChargeClassId: classVal }),
           { merge: true }
         );
-      } catch (fErr) {
-        console.warn('Firestore in-charge write error:', fErr);
+      } catch (fErr: any) {
+        console.error('Firestore in-charge write error:', fErr);
+        handleFirestoreError(fErr, OperationType.WRITE, `teachers/${inChargeModalTeacher.id}`);
       }
 
       // 2. Local update
@@ -289,7 +290,8 @@ export const TeacherManagement: React.FC = () => {
       try {
         await setDoc(doc(db, 'teachers', editingTeacher.id), cleanForFirestore(updateData), { merge: true });
       } catch (firestoreErr: any) {
-        console.warn('Firestore teacher edit error:', firestoreErr);
+        console.error('Firestore teacher edit error:', firestoreErr);
+        handleFirestoreError(firestoreErr, OperationType.WRITE, `teachers/${editingTeacher.id}`);
       }
 
       // 2. Update local state
@@ -320,7 +322,8 @@ export const TeacherManagement: React.FC = () => {
       try {
         await deleteDoc(doc(db, 'teachers', teacher.id));
       } catch (firestoreErr: any) {
-        console.warn('Firestore teacher delete error:', firestoreErr);
+        console.error('Firestore teacher delete error:', firestoreErr);
+        handleFirestoreError(firestoreErr, OperationType.DELETE, `teachers/${teacher.id}`);
       }
 
       // 2. Delete from local state
@@ -358,7 +361,8 @@ export const TeacherManagement: React.FC = () => {
           { merge: true }
         );
       } catch (firestoreErr: any) {
-        console.warn('Firestore teacher password update error:', firestoreErr);
+        console.error('Firestore teacher password update error:', firestoreErr);
+        handleFirestoreError(firestoreErr, OperationType.WRITE, `teachers/${passwordTargetTeacher.id}`);
       }
 
       // 2. Update in local state
@@ -386,37 +390,78 @@ export const TeacherManagement: React.FC = () => {
   const handleAddAssignment = async () => {
     if (!assignTeacher || !assignClassId || !assignSubjectId) return;
     try {
+      const newAsg = {
+        id: `asg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        teacherId: assignTeacher.id,
+        classId: assignClassId,
+        subjectId: assignSubjectId,
+      };
+
+      // 1. Commit directly to Firestore 'teachers' collection
+      try {
+        const existingAsgs = Array.isArray(assignTeacher.assignments) ? assignTeacher.assignments : [];
+        const updated = [
+          ...existingAsgs.filter((a: any) => !(a.classId === assignClassId && a.subjectId === assignSubjectId)),
+          newAsg,
+        ];
+        await setDoc(
+          doc(db, 'teachers', assignTeacher.id),
+          cleanForFirestore({ assignments: updated }),
+          { merge: true }
+        );
+      } catch (fErr: any) {
+        console.error('Firestore assignment write error:', fErr);
+        handleFirestoreError(fErr, OperationType.WRITE, `teachers/${assignTeacher.id}`);
+      }
+
+      // 2. Local storage / backend API
       const res = await fetchWithAuth('/api/teacher-assignments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          teacherId: assignTeacher.id,
-          classId: assignClassId,
-          subjectId: assignSubjectId,
-        }),
+        body: JSON.stringify(newAsg),
       });
       if (res.ok) {
         setAssignTeacher(null);
-        loadData();
+        await loadData();
       } else {
         const err = await res.json();
         alert(err.error || 'Failed to assign teacher');
       }
-    } catch (err) {
+    } catch (err: any) {
+      console.error('Error adding teacher assignment:', err);
       alert('Failed to assign teacher');
     }
   };
 
-  const handleRemoveAssignment = async (assignId: string) => {
+  const handleRemoveAssignment = async (assignId: string, teacherId?: string) => {
     if (!window.confirm('Remove this subject assignment?')) return;
     try {
+      // 1. Commit directly to Firestore 'teachers' collection
+      if (teacherId) {
+        try {
+          const tObj = teachers.find(t => t.id === teacherId);
+          if (tObj && Array.isArray(tObj.assignments)) {
+            const updated = tObj.assignments.filter((a: any) => a.id !== assignId);
+            await setDoc(
+              doc(db, 'teachers', teacherId),
+              cleanForFirestore({ assignments: updated }),
+              { merge: true }
+            );
+          }
+        } catch (fErr: any) {
+          console.error('Firestore remove assignment error:', fErr);
+          handleFirestoreError(fErr, OperationType.WRITE, `teachers/${teacherId}`);
+        }
+      }
+
       const res = await fetchWithAuth(`/api/teacher-assignments/${assignId}`, {
         method: 'DELETE',
       });
       if (res.ok) {
-        loadData();
+        await loadData();
       }
-    } catch (err) {
+    } catch (err: any) {
+      console.error('Error removing assignment:', err);
       alert('Failed to delete assignment');
     }
   };
@@ -586,8 +631,8 @@ export const TeacherManagement: React.FC = () => {
                                 {cls?.name} • <span className="text-emerald-950 font-bold">{subMlName}</span>
                               </span>
                               <button
-                                onClick={() => handleRemoveAssignment(a.id)}
-                                className="text-slate-400 hover:text-rose-600 p-0.5 transition"
+                                onClick={() => handleRemoveAssignment(a.id, teacher.id)}
+                                className="text-slate-400 hover:text-rose-600 p-0.5 transition cursor-pointer"
                                 title="Remove assignment"
                               >
                                 <Trash2 className="w-3 h-3" />

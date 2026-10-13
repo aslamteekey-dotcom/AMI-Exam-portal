@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
 import { doc, setDoc } from 'firebase/firestore';
-import { MarkSheet, SubjectAssessmentRule, Student, StudentMarkEntry } from '../../types';
+import { MarkSheet, SubjectAssessmentRule, Student, StudentMarkEntry, sortStudentsBoysFirst } from '../../types';
 import {
   CheckCircle,
   Lock,
@@ -54,6 +54,9 @@ export const MarkVerificationModal: React.FC<Props> = ({
       );
       if (res.ok) {
         const data = await res.json();
+        if (Array.isArray(data.students)) {
+          data.students = sortStudentsBoysFirst(data.students);
+        }
         setSheetData(data);
       }
     } catch (err) {
@@ -384,19 +387,19 @@ export const MarkVerificationModal: React.FC<Props> = ({
         )}
 
         {/* Marks Table */}
-        <div className="border border-slate-200 rounded-xl overflow-hidden">
-          <table className="w-full text-xs text-left">
+        <div className="border border-slate-200 rounded-xl overflow-x-auto w-full scrollbar-thin">
+          <table className="w-full min-w-[560px] text-xs text-left">
             <thead className="bg-slate-100 font-bold text-slate-700 border-b">
               <tr>
-                <th className="p-2.5 text-center w-12">Roll</th>
-                <th className="p-2.5">Student Name</th>
+                <th className="p-2.5 text-center w-12 whitespace-nowrap">Roll</th>
+                <th className="p-2.5 whitespace-nowrap">Student Name</th>
                 {components.map((c: SubjectAssessmentRule) => (
-                  <th key={c.componentKey} className="p-2.5 text-center">
+                  <th key={c.componentKey} className="p-2.5 text-center whitespace-nowrap">
                     {c.labelEn} ({c.maxMarks})
                   </th>
                 ))}
-                <th className="p-2.5 text-center font-bold bg-slate-200/50">Total (50)</th>
-                <th className="p-2.5 text-center w-20">Admin</th>
+                <th className="p-2.5 text-center font-bold bg-slate-200/50 whitespace-nowrap">Total (50)</th>
+                <th className="p-2.5 text-center w-20 whitespace-nowrap">Admin</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">

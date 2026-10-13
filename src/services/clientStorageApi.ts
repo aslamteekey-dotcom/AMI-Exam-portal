@@ -13,6 +13,7 @@ import {
   ProgressReportSubject,
   StudentProgressReport,
   SubjectAssessmentRule,
+  sortStudentsBoysFirst,
 } from '../types';
 import { firestoreSync } from './firestoreSync';
 
@@ -969,8 +970,13 @@ export class ClientStorageApi {
     const trimmedUsername = username.trim().toLowerCase();
     const trimmedPass = pass.trim();
 
-    // Default admin fallback guarantee
-    let user = this.db.users.find(u => u.username.toLowerCase() === trimmedUsername);
+    const cleanDigits = trimmedUsername.replace(/\D/g, '');
+    // Match by username or phone number
+    let user = this.db.users.find(u =>
+      u.username.toLowerCase() === trimmedUsername ||
+      (cleanDigits.length >= 6 && u.username.replace(/\D/g, '') === cleanDigits) ||
+      (cleanDigits.length >= 6 && u.phone && u.phone.replace(/\D/g, '') === cleanDigits)
+    );
 
     if (!user && (trimmedUsername === 'principal' || trimmedUsername === 'admin')) {
       // Restore default admin if missing
@@ -999,11 +1005,30 @@ export class ClientStorageApi {
       return { success: false, error: 'Account is deactivated' };
     }
 
-    // Password check: Match plainPassword, or default admin123 if principal
-    const isPasswordMatch =
+    // Password check: Match plainPassword, default admin123, or Admn@<AdmissionNo>
+    let isPasswordMatch =
       user.plainPassword === trimmedPass ||
       (user.username.toLowerCase() === 'principal' && trimmedPass === 'admin123') ||
       (user as any).passwordHash === clientHashPassword(trimmedPass);
+
+    if (!isPasswordMatch && user.role === 'parent') {
+      const userKids = this.db.students.filter(s =>
+        s.parentUserId === user?.id ||
+        (cleanDigits.length >= 6 && s.parentPhone && s.parentPhone.replace(/\D/g, '') === cleanDigits) ||
+        (s.parentNameEn && s.parentNameEn.toLowerCase() === user?.name.toLowerCase())
+      );
+      for (const k of userKids) {
+        if (
+          `admn@${k.admissionNo.toLowerCase()}` === trimmedPass.toLowerCase() ||
+          k.admissionNo.toLowerCase() === trimmedPass.toLowerCase()
+        ) {
+          isPasswordMatch = true;
+          user.plainPassword = `Admn@${k.admissionNo}`;
+          this.saveDB();
+          break;
+        }
+      }
+    }
 
     if (!isPasswordMatch) {
       return { success: false, error: 'Invalid password' };
@@ -1384,7 +1409,18 @@ export class ClientStorageApi {
         }
         const freshUser = this.db.users.find(u => u.id === current.id) || current;
         const assignments = this.db.teacherAssignments.filter(a => a.teacherId === freshUser.id);
-        return this.jsonResponse({ user: freshUser, assignments });
+        let children: Student[] = [];
+        if (freshUser.role === 'parent') {
+          const cleanPhone = (freshUser.phone || '').replace(/\D/g, '');
+          children = this.db.students.filter(s =>
+            s.parentUserId === freshUser.id ||
+            (cleanPhone && s.parentPhone && s.parentPhone.replace(/\D/g, '') === cleanPhone) ||
+            (s.parentNameEn && s.parentNameEn.toLowerCase() === freshUser.name.toLowerCase()) ||
+            (s.parentNameEn && s.parentNameEn.toLowerCase() === freshUser.username.toLowerCase())
+          );
+          children = sortStudentsBoysFirst(children);
+        }
+        return this.jsonResponse({ user: freshUser, assignments, children });
       }
 
       if (path === '/api/auth/logout' && method === 'POST') {
@@ -1610,7 +1646,7 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/teacher-assignments' && method === 'POST') {
-        const { teacherId, classId, subjectId } = bodyData;
+        const { teacherId, classId, subjectId, id } = bodyData;
         const exists = this.db.teacherAssignments.some(
           a => a.teacherId === teacherId && a.classId === classId && a.subjectId === subjectId
         );
@@ -1618,12 +1654,17 @@ export class ClientStorageApi {
           return this.jsonResponse({ error: 'Assignment already exists' }, 400);
         }
         const newAssignment: TeacherAssignment = {
-          id: `asg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          id: id || `asg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
           teacherId,
           classId,
           subjectId,
         };
         this.db.teacherAssignments.push(newAssignment);
+        const teacher = this.db.users.find(u => u.id === teacherId);
+        if (teacher) {
+          teacher.assignments = this.db.teacherAssignments.filter(a => a.teacherId === teacherId);
+          firestoreSync.syncTeacher(teacher).catch(e => console.error('Firestore syncTeacher error on assignment:', e));
+        }
         this.saveDB();
         return this.jsonResponse(newAssignment);
       }
@@ -1631,7 +1672,16 @@ export class ClientStorageApi {
       const asgIdMatch = path.match(/^\/api\/teacher-assignments\/([^/]+)$/);
       if (asgIdMatch && method === 'DELETE') {
         const asgId = asgIdMatch[1];
+        const existingAsg = this.db.teacherAssignments.find(a => a.id === asgId);
+        const affectedTeacherId = existingAsg?.teacherId;
         this.db.teacherAssignments = this.db.teacherAssignments.filter(a => a.id !== asgId);
+        if (affectedTeacherId) {
+          const teacher = this.db.users.find(u => u.id === affectedTeacherId);
+          if (teacher) {
+            teacher.assignments = this.db.teacherAssignments.filter(a => a.teacherId === affectedTeacherId);
+            firestoreSync.syncTeacher(teacher).catch(e => console.error('Firestore syncTeacher error on remove assignment:', e));
+          }
+        }
         this.saveDB();
         return this.jsonResponse({ success: true });
       }
@@ -1643,7 +1693,7 @@ export class ClientStorageApi {
         if (classId) {
           students = students.filter(s => s.classId === classId);
         }
-        return this.jsonResponse(students);
+        return this.jsonResponse(sortStudentsBoysFirst(students));
       }
 
       if (path === '/api/students' && method === 'POST') {
@@ -2139,7 +2189,7 @@ export class ClientStorageApi {
         const allLinked = this.db.students.filter(s => s.parentUserId === pId);
         const elder = getElderChild(allLinked, this.db.classes);
         if (elder) {
-          parent.plainPassword = elder.admissionNo;
+          parent.plainPassword = `Admn@${elder.admissionNo}`;
         }
 
         this.saveDB();
@@ -2147,6 +2197,7 @@ export class ClientStorageApi {
           success: true,
           parent,
           elderChildAdmissionNo: elder?.admissionNo,
+          parentPassword: parent.plainPassword,
           linkedStudentsCount: allLinked.length,
         });
       }
@@ -2163,11 +2214,86 @@ export class ClientStorageApi {
         const allLinked = this.db.students.filter(s => s.parentUserId === pId);
         const elder = getElderChild(allLinked, this.db.classes);
         if (parent && elder) {
-          parent.plainPassword = elder.admissionNo;
+          parent.plainPassword = `Admn@${elder.admissionNo}`;
         }
 
         this.saveDB();
         return this.jsonResponse({ success: true });
+      }
+
+      // Automated Parent Credentials & Multi-Student Sync
+      if (path === '/api/parents/sync-from-students' && method === 'POST') {
+        const { classId } = bodyData || {};
+        let targetStudents = this.db.students;
+        if (classId) {
+          targetStudents = targetStudents.filter(s => s.classId === classId);
+        }
+
+        const groups = new Map<string, Student[]>();
+        targetStudents.forEach(st => {
+          const rawPhone = String(st.parentPhone || '').trim();
+          const cleanPhone = rawPhone.replace(/\D/g, '');
+          const key = cleanPhone || rawPhone || String(st.parentNameEn || '').trim() || st.admissionNo;
+          if (!groups.has(key)) {
+            groups.set(key, []);
+          }
+          groups.get(key)!.push(st);
+        });
+
+        let syncedCount = 0;
+        groups.forEach((groupedKids, phoneKey) => {
+          if (groupedKids.length === 0) return;
+          const elder = getElderChild(groupedKids, this.db.classes) || groupedKids[0];
+          const primaryKid = groupedKids[0];
+          const rawPhone = String(primaryKid.parentPhone || '').trim();
+          const cleanPhone = rawPhone.replace(/\D/g, '') || phoneKey;
+          const username = cleanPhone;
+          const password = `Admn@${elder.admissionNo}`;
+          const parentName = primaryKid.parentNameEn || username;
+          const parentNameMl = primaryKid.parentNameMl || parentName;
+
+          let parent = this.db.users.find(
+            u => u.role === 'parent' && (u.username === username || (u.phone && u.phone.replace(/\D/g, '') === cleanPhone))
+          );
+
+          if (parent) {
+            parent.username = username;
+            parent.name = parentName;
+            parent.nameMl = parentNameMl;
+            parent.phone = cleanPhone;
+            parent.plainPassword = password;
+          } else {
+            parent = {
+              id: `usr_p_${cleanPhone || Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              username,
+              name: parentName,
+              nameMl: parentNameMl,
+              role: 'parent',
+              plainPassword: password,
+              active: true,
+              phone: cleanPhone,
+              createdAt: new Date().toISOString(),
+            };
+            this.db.users.push(parent);
+          }
+
+          groupedKids.forEach(k => {
+            k.parentUserId = parent!.id;
+            k.parentPhone = cleanPhone;
+            firestoreSync.syncStudent(k).catch(e => console.error('Firestore syncStudent error in sync-from-students:', e));
+          });
+
+          firestoreSync.syncParent(parent).catch(e => console.error('Firestore syncParent error in sync-from-students:', e));
+          syncedCount++;
+        });
+
+        this.saveDB();
+        return this.jsonResponse({
+          success: true,
+          syncedAccounts: syncedCount,
+          totalStudentsProcessed: targetStudents.length,
+          passwordFormat: 'Admn@<AdmissionNo>'
+        });
       }
 
       // 6. Examinations
@@ -2341,7 +2467,7 @@ export class ClientStorageApi {
           this.saveDB();
         }
 
-        const students = this.db.students.filter(s => s.classId === classId && s.status === 'active');
+        const students = sortStudentsBoysFirst(this.db.students.filter(s => s.classId === classId && s.status === 'active'));
         const components = this.getComponentsForClass(sub, cls.numericGrade);
 
         return this.jsonResponse({
@@ -2429,7 +2555,7 @@ export class ClientStorageApi {
       const classReportMatch = path.match(/^\/api\/reports\/class\/([^/]+)\/exam\/([^/]+)$/);
       if (classReportMatch && method === 'GET') {
         const [, cId, eId] = classReportMatch;
-        const students = this.db.students.filter(s => s.classId === cId && s.status === 'active');
+        const students = sortStudentsBoysFirst(this.db.students.filter(s => s.classId === cId && s.status === 'active'));
         const reports: StudentProgressReport[] = [];
         students.forEach(st => {
           const r = this.generateStudentProgressReport(st.id, eId);

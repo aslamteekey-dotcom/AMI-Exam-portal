@@ -137,8 +137,9 @@ export const ClassSubjectConfig: React.FC = () => {
       // 1. Direct persistent Firestore write
       try {
         await setDoc(doc(db, 'classes', cId), cleanForFirestore(newClassItem));
-      } catch (fErr) {
-        console.warn('Firestore class write warning:', fErr);
+      } catch (fErr: any) {
+        console.error('Firestore class write error:', fErr);
+        handleFirestoreError(fErr, OperationType.WRITE, `classes/${cId}`);
       }
 
       // 2. Local storage / backend API
@@ -174,8 +175,9 @@ export const ClassSubjectConfig: React.FC = () => {
       // 1. Delete from Firestore
       try {
         await deleteDoc(doc(db, 'classes', cls.id));
-      } catch (fErr) {
-        console.warn('Firestore delete class warning:', fErr);
+      } catch (fErr: any) {
+        console.error('Firestore delete class error:', fErr);
+        handleFirestoreError(fErr, OperationType.DELETE, `classes/${cls.id}`);
       }
 
       // 2. Delete from API
@@ -246,8 +248,9 @@ export const ClassSubjectConfig: React.FC = () => {
       // 1. Direct persistent Firestore write
       try {
         await setDoc(doc(db, 'subjects', subId), cleanForFirestore(newSubjectItem));
-      } catch (fErr) {
-        console.warn('Firestore subject write warning:', fErr);
+      } catch (fErr: any) {
+        console.error('Firestore subject write error:', fErr);
+        handleFirestoreError(fErr, OperationType.WRITE, `subjects/${subId}`);
       }
 
       // 2. Local storage / backend API
@@ -286,8 +289,9 @@ export const ClassSubjectConfig: React.FC = () => {
       // 1. Delete from Firestore
       try {
         await deleteDoc(doc(db, 'subjects', sub.id));
-      } catch (fErr) {
-        console.warn('Firestore delete subject warning:', fErr);
+      } catch (fErr: any) {
+        console.error('Firestore delete subject error:', fErr);
+        handleFirestoreError(fErr, OperationType.DELETE, `subjects/${sub.id}`);
       }
 
       // 2. Delete from API

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Student, ClassItem } from '../../types';
+import { Student, ClassItem, sortStudentsBoysFirst } from '../../types';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
@@ -486,17 +486,19 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
     }
   };
 
-  // Filter students
-  const filteredStudents = students.filter(s => {
-    const matchClass = selectedClassId ? s.classId === selectedClassId : true;
-    const q = searchQuery.toLowerCase();
-    const matchSearch =
-      s.nameEn.toLowerCase().includes(q) ||
-      (s.nameMl && s.nameMl.includes(q)) ||
-      s.admissionNo.toLowerCase().includes(q) ||
-      String(s.rollNo).includes(q);
-    return matchClass && matchSearch;
-  });
+  // Filter students with strict sorting: Boys first, then Girls; alphabetical A to Z within each
+  const filteredStudents = sortStudentsBoysFirst(
+    students.filter(s => {
+      const matchClass = selectedClassId ? s.classId === selectedClassId : true;
+      const q = searchQuery.toLowerCase();
+      const matchSearch =
+        s.nameEn.toLowerCase().includes(q) ||
+        (s.nameMl && s.nameMl.includes(q)) ||
+        s.admissionNo.toLowerCase().includes(q) ||
+        String(s.rollNo).includes(q);
+      return matchClass && matchSearch;
+    })
+  );
 
   return (
     <div className="space-y-6">
@@ -621,93 +623,95 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
       </div>
 
       {/* Students Table strictly aligned with CSV: Admission No | Name | Class | Gender | Parent Name | Phone | Actions */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <table className="w-full text-xs text-left">
-          <thead className="bg-slate-100 text-slate-700 font-bold border-b">
-            <tr>
-              <th className="p-3 font-mono">Admission No</th>
-              <th className="p-3">Name</th>
-              <th className="p-3">Class</th>
-              <th className="p-3 text-center">Gender</th>
-              <th className="p-3">Parent Name</th>
-              <th className="p-3">Phone</th>
-              <th className="p-3 text-center w-24">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {filteredStudents.length === 0 ? (
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden w-full">
+        <div className="overflow-x-auto w-full scrollbar-thin">
+          <table className="w-full min-w-[760px] text-xs text-left">
+            <thead className="bg-slate-100 text-slate-700 font-bold border-b">
               <tr>
-                <td colSpan={7} className="p-8 text-center text-slate-400">
-                  No students found. Add a student or import via CSV.
-                </td>
+                <th className="p-3 font-mono whitespace-nowrap">Admission No</th>
+                <th className="p-3 whitespace-nowrap">Name</th>
+                <th className="p-3 whitespace-nowrap">Class</th>
+                <th className="p-3 text-center whitespace-nowrap">Gender</th>
+                <th className="p-3 whitespace-nowrap">Parent Name</th>
+                <th className="p-3 whitespace-nowrap">Phone</th>
+                <th className="p-3 text-center w-24 whitespace-nowrap">Actions</th>
               </tr>
-            ) : (
-              filteredStudents.map(student => {
-                const cls = classes.find(c => c.id === student.classId);
-                return (
-                  <tr key={student.id} className="hover:bg-slate-50 transition">
-                    <td className="p-3 font-mono font-semibold text-slate-700">
-                      {student.admissionNo}
-                    </td>
-                    <td className="p-3">
-                      <div className="font-bold text-slate-900">{student.nameEn}</div>
-                      <div className="text-[11px] text-slate-500">{student.nameMl}</div>
-                    </td>
-                    <td className="p-3">
-                      <span className="bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md font-semibold">
-                        {isMl ? cls?.nameMl : cls?.name}
-                      </span>
-                    </td>
-                    <td className="p-3 text-center">
-                      <span
-                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                          student.gender === 'F'
-                            ? 'bg-pink-100 text-pink-800 border border-pink-200'
-                            : 'bg-blue-100 text-blue-800 border border-blue-200'
-                        }`}
-                      >
-                        {student.gender || 'M'}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      <div className="font-medium text-slate-800">{student.parentNameEn || '—'}</div>
-                      {student.parentNameMl && (
-                        <div className="text-[10px] text-slate-400">{student.parentNameMl}</div>
-                      )}
-                    </td>
-                    <td className="p-3 font-mono text-slate-600">
-                      {student.parentPhone || '—'}
-                    </td>
-                    <td className="p-3 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          onClick={() => handleOpenEdit(student)}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition"
-                          title="Edit student"
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredStudents.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-8 text-center text-slate-400">
+                    No students found. Add a student or import via CSV.
+                  </td>
+                </tr>
+              ) : (
+                filteredStudents.map(student => {
+                  const cls = classes.find(c => c.id === student.classId);
+                  return (
+                    <tr key={student.id} className="hover:bg-slate-50 transition">
+                      <td className="p-3 font-mono font-semibold text-slate-700 whitespace-nowrap">
+                        {student.admissionNo}
+                      </td>
+                      <td className="p-3 min-w-[140px]">
+                        <div className="font-bold text-slate-900">{student.nameEn}</div>
+                        <div className="text-[11px] text-slate-500">{student.nameMl}</div>
+                      </td>
+                      <td className="p-3 whitespace-nowrap">
+                        <span className="bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md font-semibold">
+                          {isMl ? cls?.nameMl : cls?.name}
+                        </span>
+                      </td>
+                      <td className="p-3 text-center whitespace-nowrap">
+                        <span
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                            student.gender === 'F'
+                              ? 'bg-pink-100 text-pink-800 border border-pink-200'
+                              : 'bg-blue-100 text-blue-800 border border-blue-200'
+                          }`}
                         >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteStudent(student)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                          title="Delete student"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                          {student.gender || 'M'}
+                        </span>
+                      </td>
+                      <td className="p-3 min-w-[140px]">
+                        <div className="font-medium text-slate-800">{student.parentNameEn || '—'}</div>
+                        {student.parentNameMl && (
+                          <div className="text-[10px] text-slate-400">{student.parentNameMl}</div>
+                        )}
+                      </td>
+                      <td className="p-3 font-mono text-slate-600 whitespace-nowrap">
+                        {student.parentPhone || '—'}
+                      </td>
+                      <td className="p-3 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => handleOpenEdit(student)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition cursor-pointer"
+                            title="Edit student"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteStudent(student)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                            title="Delete student"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Add / Edit Student Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-4 sm:p-6 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto">
             <h3 className="text-base font-bold text-slate-900 mb-4">
               {editingStudent ? 'Edit Student Details' : 'Add New Student'}
             </h3>
@@ -909,16 +913,16 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
                   </span>
                 </div>
 
-                <div className="border border-slate-200 rounded-lg max-h-48 overflow-y-auto">
-                  <table className="w-full text-[11px] text-left">
+                <div className="border border-slate-200 rounded-lg max-h-48 overflow-y-auto overflow-x-auto w-full scrollbar-thin">
+                  <table className="w-full min-w-[500px] text-[11px] text-left">
                     <thead className="bg-slate-100 font-bold sticky top-0">
                       <tr>
-                        <th className="p-2">Row</th>
-                        <th className="p-2">Admission No</th>
-                        <th className="p-2">Name</th>
-                        <th className="p-2">Class</th>
-                        <th className="p-2">Gender</th>
-                        <th className="p-2">Status</th>
+                        <th className="p-2 whitespace-nowrap">Row</th>
+                        <th className="p-2 whitespace-nowrap">Admission No</th>
+                        <th className="p-2 whitespace-nowrap">Name</th>
+                        <th className="p-2 whitespace-nowrap">Class</th>
+                        <th className="p-2 whitespace-nowrap">Gender</th>
+                        <th className="p-2 whitespace-nowrap">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">

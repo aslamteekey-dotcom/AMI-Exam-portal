@@ -51,7 +51,13 @@ export const BulkReportsPrint: React.FC = () => {
       const res = await fetchWithAuth(`/api/reports/class/${selectedClassId}/exam/${selectedExamId}`);
       if (res.ok) {
         const data = await res.json();
-        setReportsData(data);
+        const sortedReports = [...(data.reports || [])].sort((a, b) => {
+          const isGirlA = (a.student?.gender || 'M').toUpperCase().startsWith('F');
+          const isGirlB = (b.student?.gender || 'M').toUpperCase().startsWith('F');
+          if (isGirlA !== isGirlB) return isGirlA ? 1 : -1;
+          return (a.student?.nameEn || '').trim().toLowerCase().localeCompare((b.student?.nameEn || '').trim().toLowerCase());
+        });
+        setReportsData({ ...data, reports: sortedReports });
       }
     } catch (err) {
       alert('Failed to generate batch reports');

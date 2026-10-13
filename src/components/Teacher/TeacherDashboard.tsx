@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { TeacherAssignment, ClassItem, SubjectItem, Examination, MarkSheet, Student } from '../../types';
+import { TeacherAssignment, ClassItem, SubjectItem, Examination, MarkSheet, Student, sortStudentsBoysFirst } from '../../types';
 import { MarkEntryScreen } from './MarkEntryScreen';
+import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { collection, onSnapshot } from 'firebase/firestore';
 import {
   BookOpen,
   Users,
@@ -28,6 +30,7 @@ export const TeacherDashboard: React.FC = () => {
   const [selectedExamId, setSelectedExamId] = useState<string>('');
   const [markSheets, setMarkSheets] = useState<MarkSheet[]>([]);
   const [allStudents, setAllStudents] = useState<Student[]>([]);
+  const [currentTeacherInChargeClassId, setCurrentTeacherInChargeClassId] = useState<string | undefined>(user?.inChargeClassId);
 
   // Active Mark Entry Selection
   const [activeEntry, setActiveEntry] = useState<{
@@ -59,7 +62,10 @@ export const TeacherDashboard: React.FC = () => {
       setClasses(clsData);
       setSubjects(subData);
       setExaminations(examData);
-      setAllStudents(stuData);
+      setAllStudents(sortStudentsBoysFirst(stuData));
+      if (authData.user?.inChargeClassId !== undefined) {
+        setCurrentTeacherInChargeClassId(authData.user.inChargeClassId);
+      }
 
       const activeExam = examData[0];
       if (activeExam) {
@@ -79,7 +85,91 @@ export const TeacherDashboard: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
+
+    // Real-time onSnapshot listeners for subjects, classes, students, and teachers
+    const unsubs: (() => void)[] = [];
+
+    try {
+      const unsubSubs = onSnapshot(
+        collection(db, 'subjects'),
+        snapshot => {
+          if (!snapshot.empty) {
+            const remoteSubs = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as SubjectItem));
+            setSubjects(remoteSubs);
+          }
+        },
+        error => {
+          console.error('Firestore subjects onSnapshot listener error:', error);
+          handleFirestoreError(error, OperationType.GET, 'subjects');
+        }
+      );
+      unsubs.push(unsubSubs);
+
+      const unsubCls = onSnapshot(
+        collection(db, 'classes'),
+        snapshot => {
+          if (!snapshot.empty) {
+            const remoteCls = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as ClassItem));
+            remoteCls.sort((a, b) => a.numericGrade - b.numericGrade);
+            setClasses(remoteCls);
+          }
+        },
+        error => {
+          console.error('Firestore classes onSnapshot listener error:', error);
+          handleFirestoreError(error, OperationType.GET, 'classes');
+        }
+      );
+      unsubs.push(unsubCls);
+
+      const unsubStu = onSnapshot(
+        collection(db, 'students'),
+        snapshot => {
+          if (!snapshot.empty) {
+            const remoteStu = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Student));
+            setAllStudents(sortStudentsBoysFirst(remoteStu));
+          }
+        },
+        error => {
+          console.error('Firestore students onSnapshot listener error:', error);
+          handleFirestoreError(error, OperationType.GET, 'students');
+        }
+      );
+      unsubs.push(unsubStu);
+
+      const unsubTeachers = onSnapshot(
+        collection(db, 'teachers'),
+        snapshot => {
+          if (!snapshot.empty && user?.id) {
+            const currentT = snapshot.docs.find(d => d.id === user.id);
+            if (currentT) {
+              const tData = currentT.data();
+              if (tData.inChargeClassId !== undefined) {
+                setCurrentTeacherInChargeClassId(tData.inChargeClassId || undefined);
+              }
+              if (Array.isArray(tData.assignments)) {
+                setAssignments(tData.assignments);
+              }
+            }
+          }
+        },
+        error => {
+          console.error('Firestore teachers onSnapshot listener error:', error);
+          handleFirestoreError(error, OperationType.GET, 'teachers');
+        }
+      );
+      unsubs.push(unsubTeachers);
+    } catch (e) {
+      console.error('Failed to attach Teacher Portal real-time listeners:', e);
+    }
+
+    return () => {
+      unsubs.forEach(u => {
+        try {
+          u();
+        } catch {}
+      });
+    };
+  }, [user?.id]);
 
   const handleExamChange = async (examId: string) => {
     setSelectedExamId(examId);
@@ -116,10 +206,10 @@ export const TeacherDashboard: React.FC = () => {
   const selectedExam = examinations.find(e => e.id === selectedExamId);
 
   // In-charge class information
-  const inChargeClassId = user?.inChargeClassId;
+  const inChargeClassId = currentTeacherInChargeClassId !== undefined ? currentTeacherInChargeClassId : user?.inChargeClassId;
   const inChargeClass = inChargeClassId ? classes.find(c => c.id === inChargeClassId) : null;
   const inChargeStudents = inChargeClass
-    ? allStudents.filter(s => s.classId === inChargeClass.id && s.status === 'active')
+    ? sortStudentsBoysFirst(allStudents.filter(s => s.classId === inChargeClass.id && s.status === 'active'))
     : [];
   const inChargeSubjects = inChargeClass
     ? subjects.filter(s => s.applicableClasses.includes(inChargeClass.numericGrade))
@@ -146,7 +236,7 @@ export const TeacherDashboard: React.FC = () => {
               )}
             </div>
             <p className="text-xs text-emerald-200 mt-1">
-              Usthad Teacher Portal • Al-Madrasathul Islamiya Pallikkuth
+              {isMl ? 'ടീച്ചർ പോർട്ടൽ • അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്' : 'Teacher Portal • Al-Madrasathul Islamiya Pallikkuth'}
             </p>
           </div>
 
@@ -520,16 +610,16 @@ export const TeacherDashboard: React.FC = () => {
                     No students currently enrolled in {inChargeClass.name}.
                   </div>
                 ) : (
-                  <div className="border border-slate-200 rounded-xl overflow-hidden text-xs">
-                    <table className="w-full text-left">
+                  <div className="border border-slate-200 rounded-xl overflow-x-auto w-full text-xs scrollbar-thin">
+                    <table className="w-full min-w-[650px] text-left">
                       <thead className="bg-slate-100 text-slate-700 font-bold border-b">
                         <tr>
-                          <th className="p-3 font-mono">Admission No</th>
-                          <th className="p-3">Student Name</th>
-                          <th className="p-3 text-center">Gender</th>
-                          <th className="p-3">Parent Name</th>
-                          <th className="p-3">Phone</th>
-                          <th className="p-3 text-center">Status</th>
+                          <th className="p-3 font-mono whitespace-nowrap">Admission No</th>
+                          <th className="p-3 whitespace-nowrap">Student Name</th>
+                          <th className="p-3 text-center whitespace-nowrap">Gender</th>
+                          <th className="p-3 whitespace-nowrap">Parent Name</th>
+                          <th className="p-3 whitespace-nowrap">Phone</th>
+                          <th className="p-3 text-center whitespace-nowrap">Status</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">

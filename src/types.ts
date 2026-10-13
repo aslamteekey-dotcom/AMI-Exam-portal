@@ -12,6 +12,7 @@ export interface User {
   email?: string;
   phone?: string;
   inChargeClassId?: string;
+  assignments?: TeacherAssignment[];
   createdAt?: string;
 }
 
@@ -189,4 +190,22 @@ export interface StudentProgressReport {
   resultStatus: 'Passed' | 'Needs Improvement' | 'Withheld' | 'Incomplete' | 'Absent';
   resultStatusMl: 'വിജയിച്ചു' | 'മെച്ചപ്പെടേണ്ടതുണ്ട്' | 'തടഞ്ഞുവെച്ചു (Withheld)' | 'പൂർണ്ണമല്ല' | 'പങ്കെടുത്തില്ല';
   isPublished: boolean;
+}
+
+/**
+ * Student Sorting Order:
+ * 1. Primary Sort: Gender — Boys/Male ('M') first, then Girls/Female ('F')
+ * 2. Secondary Sort: Alphabetical order by Student Name (A to Z) within each gender group
+ */
+export function sortStudentsBoysFirst<T extends { gender?: string; nameEn?: string; name?: string }>(students: T[]): T[] {
+  return [...students].sort((a, b) => {
+    const isGirlA = (a.gender || 'M').toUpperCase().startsWith('F');
+    const isGirlB = (b.gender || 'M').toUpperCase().startsWith('F');
+    if (isGirlA !== isGirlB) {
+      return isGirlA ? 1 : -1; // Boys/Male first (-1), Girls/Female second (1)
+    }
+    const nameA = String(a.nameEn || a.name || '').trim().toLowerCase();
+    const nameB = String(b.nameEn || b.name || '').trim().toLowerCase();
+    return nameA.localeCompare(nameB);
+  });
 }
