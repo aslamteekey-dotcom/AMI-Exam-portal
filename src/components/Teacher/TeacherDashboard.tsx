@@ -23,7 +23,10 @@ export const TeacherDashboard: React.FC = () => {
   const { user, fetchWithAuth, lang, t } = useAuth();
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'my_assignments' | 'my_class'>('my_assignments');
-  const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
+  const [assignments, setAssignments] = useState<TeacherAssignment[]>(() => {
+    const raw = (user as any)?.assignedSubjects || user?.assignments;
+    return Array.isArray(raw) ? raw : [];
+  });
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [examinations, setExaminations] = useState<Examination[]>([]);

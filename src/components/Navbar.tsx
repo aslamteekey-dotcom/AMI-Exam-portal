@@ -60,7 +60,7 @@ export const Navbar: React.FC = () => {
                   lang === 'ml' ? 'bg-white text-emerald-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                മലയാളം
+                ML
               </button>
             </div>
 

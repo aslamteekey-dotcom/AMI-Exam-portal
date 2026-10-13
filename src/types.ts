@@ -1,11 +1,36 @@
 export type UserRole = 'admin' | 'teacher' | 'parent';
 
+export interface ModulePermission {
+  view: boolean;
+  edit: boolean;
+}
+
+export interface AdminPermissions {
+  students: ModulePermission;
+  teachers: ModulePermission;
+  academicExams: ModulePermission;
+  marksReports: ModulePermission;
+  feesCollections: ModulePermission;
+  settings: ModulePermission;
+}
+
+export const DEFAULT_ADMIN_PERMISSIONS: AdminPermissions = {
+  students: { view: true, edit: true },
+  teachers: { view: true, edit: true },
+  academicExams: { view: true, edit: true },
+  marksReports: { view: true, edit: true },
+  feesCollections: { view: true, edit: true },
+  settings: { view: true, edit: true },
+};
+
 export interface User {
   id: string;
   username: string;
   name: string;
   nameMl?: string;
   role: UserRole;
+  isSubAdmin?: boolean;
+  permissions?: AdminPermissions;
   plainPassword?: string;
   passwordHash?: string;
   active: boolean;
@@ -82,6 +107,10 @@ export interface Student {
   status: 'active' | 'inactive';
   dob?: string;
   gender?: 'M' | 'F';
+  attendance?: {
+    daysAttended: number;
+    totalWorkingDays: number;
+  };
 }
 
 export interface TeacherAssignment {
@@ -191,6 +220,68 @@ export interface StudentProgressReport {
   resultStatus: 'Passed' | 'Needs Improvement' | 'Withheld' | 'Incomplete' | 'Absent';
   resultStatusMl: 'വിജയിച്ചു' | 'മെച്ചപ്പെടേണ്ടതുണ്ട്' | 'തടഞ്ഞുവെച്ചു (Withheld)' | 'പൂർണ്ണമല്ല' | 'പങ്കെടുത്തില്ല';
   isPublished: boolean;
+  attendance?: {
+    daysAttended: number;
+    totalWorkingDays: number;
+  };
+  denseRankText?: string; // e.g. "Rank 1", "Need Improvement", "Withheld", "Absent"
+}
+
+export const TUITION_FEE_MONTHS = [
+  'June 2026',
+  'July 2026',
+  'August 2026',
+  'September 2026',
+  'October 2026',
+  'November 2026',
+  'December 2026',
+  'January 2027',
+  'February 2027',
+  'March 2027',
+  'April 2027',
+  'May 2027',
+] as const;
+
+export type FeeMonth = (typeof TUITION_FEE_MONTHS)[number];
+
+export interface SpecialFeeBreakdown {
+  podhuPareeksha?: number;   // Board Exam fee (₹500 for Class 7 & 9)
+  desheeyaPariksha?: number; // Desheeya Pariksha (₹90 for 1-4, ₹130 for 5,6,8,10, ₹65 for 7,9)
+  vikasanam?: number;        // Vikasanam (₹130)
+  councilFund?: number;      // Council Fund (₹100)
+  ccaFund?: number;          // CCA Fund (₹100)
+  unifiedCouncilFund?: number; // Unified Council & CCA Fund (₹200)
+  halfYearlyExam?: number;   // Half-yearly exam charges installment
+  annualExam?: number;       // Annual exam charges installment
+}
+
+export interface FeePayment {
+  id: string;
+  receiptNo: string;
+  date: string;
+  studentId: string;
+  studentName: string;
+  admissionNo: string;
+  classId: string;
+  className: string;
+  admissionFee: number;
+  tuitionFeeMonths: FeeMonth[];
+  tuitionFeeAmount: number; // ₹300 per month
+  specialFeeComponents: SpecialFeeBreakdown;
+  specialFeeAmount: number;
+  donationAmount: number;
+  totalAmount: number;
+  amountInWords: string;
+  notes?: string;
+  collectedBy?: string;
+  createdAt: string;
+}
+
+export interface ClassAttendanceConfig {
+  classId: string;
+  totalWorkingDays: number;
+  studentDaysAttended: Record<string, number>; // studentId -> days attended
+  updatedAt?: string;
 }
 
 /**

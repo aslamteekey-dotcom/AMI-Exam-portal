@@ -136,11 +136,11 @@ export const AdminDashboard: React.FC = () => {
     <div className="space-y-6">
       {/* Principal Header Banner */}
       <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-emerald-800 text-white rounded-2xl p-6 shadow-md">
+        <div className="text-center font-serif text-emerald-300 text-sm mb-3" dir="rtl">
+          بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
+        </div>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <div className="font-serif text-emerald-300 text-sm mb-1" dir="rtl">
-              بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ • إدارة المدرسة
-            </div>
             <h1 className="text-xl md:text-2xl font-bold font-serif">
               {isMl && user?.nameMl ? user.nameMl : user?.name}
             </h1>
@@ -164,14 +164,6 @@ export const AdminDashboard: React.FC = () => {
                 Results In Review
               </span>
             )}
-            <button
-              onClick={handleClearDemoData}
-              className="text-xs bg-rose-900/60 hover:bg-rose-900/90 text-rose-200 hover:text-white border border-rose-700 font-bold px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-              title="Purge dummy students, demo mark sheets, and sample teachers from Firestore & localStorage"
-            >
-              <Trash2 className="w-3.5 h-3.5 text-rose-300" />
-              Clear Demo Data
-            </button>
           </div>
         </div>
       </div>

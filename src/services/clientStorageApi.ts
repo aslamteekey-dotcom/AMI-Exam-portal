@@ -14,6 +14,8 @@ import {
   StudentProgressReport,
   SubjectAssessmentRule,
   sortStudentsBoysFirst,
+  FeePayment,
+  ClassAttendanceConfig,
 } from '../types';
 import { firestoreSync } from './firestoreSync';
 
@@ -28,6 +30,8 @@ export interface MadrasaDatabase {
   markSheets: MarkSheet[];
   auditLogs: AuditLog[];
   settings: InstitutionSettings;
+  feePayments: FeePayment[];
+  attendanceConfigs: ClassAttendanceConfig[];
 }
 
 const STORAGE_KEY = 'madrasa_db_storage_v2';
@@ -611,6 +615,8 @@ export function getInitialClientSeedData(): MadrasaDatabase {
     markSheets,
     auditLogs,
     settings,
+    feePayments: [],
+    attendanceConfigs: [],
   };
 }
 
@@ -724,6 +730,44 @@ export class ClientStorageApi {
         getInitialExams: () => {
           return this.db.examinations;
         },
+        onFees: (remoteFees) => {
+          if (Array.isArray(remoteFees)) {
+            this.db.feePayments = remoteFees;
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
+            } catch {}
+          }
+        },
+        onAdmins: (remoteAdmins) => {
+          if (Array.isArray(remoteAdmins)) {
+            // Merge sub-admins into users, keeping principal, teachers and parents
+            const nonSubAdmins = this.db.users.filter(u => !(u.isSubAdmin || (u.role === 'admin' && u.id !== 'usr_admin' && u.username !== 'principal')));
+            this.db.users = [...nonSubAdmins, ...remoteAdmins];
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
+            } catch {}
+          }
+        },
+        onAttendance: (remoteAttendance) => {
+          if (Array.isArray(remoteAttendance)) {
+            this.db.attendanceConfigs = remoteAttendance;
+            // Also apply to students
+            remoteAttendance.forEach(cfg => {
+              Object.entries(cfg.studentDaysAttended || {}).forEach(([stuId, days]) => {
+                const stu = this.db.students.find(s => s.id === stuId);
+                if (stu) {
+                  stu.attendance = {
+                    daysAttended: days,
+                    totalWorkingDays: cfg.totalWorkingDays,
+                  };
+                }
+              });
+            });
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
+            } catch {}
+          }
+        },
       });
     } catch (e) {
       console.warn('Firestore sync init error:', e);
@@ -789,6 +833,8 @@ export class ClientStorageApi {
           parsed.markSheets = Array.isArray(parsed.markSheets) ? parsed.markSheets : [];
           parsed.auditLogs = Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [];
           parsed.settings = parsed.settings || {};
+          parsed.feePayments = Array.isArray(parsed.feePayments) ? parsed.feePayments : [];
+          parsed.attendanceConfigs = Array.isArray(parsed.attendanceConfigs) ? parsed.attendanceConfigs : [];
 
           // Ensure admin user exists
           if (!parsed.users.some((u: any) => u.role === 'admin' || u.username === 'principal')) {

@@ -9,7 +9,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
-import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination } from '../types';
+import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination, FeePayment, ClassAttendanceConfig } from '../types';
 
 /**
  * Removes undefined fields from objects before saving to Firestore,
@@ -62,6 +62,9 @@ export class FirestoreSyncService {
     onSubjects?: (subjects: SubjectItem[]) => void;
     onMarks?: (marks: MarkSheet[]) => void;
     onExams?: (exams: Examination[]) => void;
+    onFees?: (fees: FeePayment[]) => void;
+    onAdmins?: (admins: User[]) => void;
+    onAttendance?: (configs: ClassAttendanceConfig[]) => void;
     getInitialStudents?: () => Student[];
     getInitialTeachers?: () => User[];
     getInitialParents?: () => User[];
@@ -412,6 +415,72 @@ export class FirestoreSyncService {
       }
     }
 
+    // 8. Fee Payments
+    if (callbacks.onFees) {
+      try {
+        const unsub = onSnapshot(
+          collection(db, 'fee_payments'),
+          snapshot => {
+            const fees = snapshot.docs.map(doc => ({
+              ...doc.data(),
+              id: doc.id,
+            } as FeePayment));
+            callbacks.onFees?.(fees);
+          },
+          err => {
+            handleFirestoreError(err, OperationType.GET, 'fee_payments');
+          }
+        );
+        this.unsubscribers.push(unsub);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.GET, 'fee_payments');
+      }
+    }
+
+    // 9. Sub-Admins
+    if (callbacks.onAdmins) {
+      try {
+        const unsub = onSnapshot(
+          collection(db, 'admins'),
+          snapshot => {
+            const admins = snapshot.docs.map(doc => ({
+              ...doc.data(),
+              id: doc.id,
+            } as User));
+            callbacks.onAdmins?.(admins);
+          },
+          err => {
+            handleFirestoreError(err, OperationType.GET, 'admins');
+          }
+        );
+        this.unsubscribers.push(unsub);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.GET, 'admins');
+      }
+    }
+
+    // 10. Attendance
+    if (callbacks.onAttendance) {
+      try {
+        const unsub = onSnapshot(
+          collection(db, 'attendance'),
+          snapshot => {
+            const configs = snapshot.docs.map(doc => ({
+              ...doc.data(),
+              classId: doc.id,
+            } as ClassAttendanceConfig));
+            callbacks.onAttendance?.(configs);
+          },
+          err => {
+            handleFirestoreError(err, OperationType.GET, 'attendance');
+          }
+        );
+        this.unsubscribers.push(unsub);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.GET, 'attendance');
+      }
+    }
+
     return () => this.stopSubscriptions();
   }
 
@@ -571,6 +640,56 @@ export class FirestoreSyncService {
       await deleteDoc(doc(db, 'exams', examId));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `exams/${examId}`);
+      throw e;
+    }
+  }
+
+  // Sync fee payment
+  public async syncFeePayment(fee: FeePayment): Promise<void> {
+    try {
+      await setDoc(doc(db, 'fee_payments', fee.id), cleanForFirestore(fee), { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `fee_payments/${fee.id}`);
+      throw e;
+    }
+  }
+
+  // Delete fee payment
+  public async deleteFeePayment(feeId: string): Promise<void> {
+    try {
+      await deleteDoc(doc(db, 'fee_payments', feeId));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `fee_payments/${feeId}`);
+      throw e;
+    }
+  }
+
+  // Sync sub-admin
+  public async syncAdmin(admin: User): Promise<void> {
+    try {
+      await setDoc(doc(db, 'admins', admin.id), cleanForFirestore(admin), { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `admins/${admin.id}`);
+      throw e;
+    }
+  }
+
+  // Delete sub-admin
+  public async deleteAdmin(adminId: string): Promise<void> {
+    try {
+      await deleteDoc(doc(db, 'admins', adminId));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `admins/${adminId}`);
+      throw e;
+    }
+  }
+
+  // Sync class attendance config
+  public async syncAttendance(config: ClassAttendanceConfig): Promise<void> {
+    try {
+      await setDoc(doc(db, 'attendance', config.classId), cleanForFirestore(config), { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `attendance/${config.classId}`);
       throw e;
     }
   }
