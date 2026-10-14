@@ -107,6 +107,7 @@ export interface Student {
   status: 'active' | 'inactive';
   dob?: string;
   gender?: 'M' | 'F';
+  examRegisterNumbers?: Record<string, string>; // examinationId -> exam register number
   attendance?: {
     daysAttended: number;
     totalWorkingDays: number;
@@ -209,6 +210,9 @@ export interface StudentProgressReport {
   subjects: ProgressReportSubject[];
   totalMaxMarks: number;
   totalObtainedMarks: number;
+  attendedObtainedMarks?: number;
+  attendedMaxMarks?: number;
+  examRegisterNo?: string;
   nonCeDiaryMax?: number;
   nonCeDiaryObtained?: number;
   percentage: number | null;
@@ -217,7 +221,7 @@ export interface StudentProgressReport {
   hasIncompleteSubjects: boolean;
   hasAbsentSubjects: boolean;
   hasWithheldCe?: boolean;
-  resultStatus: 'Passed' | 'Needs Improvement' | 'Withheld' | 'Incomplete' | 'Absent';
+  resultStatus: 'Passed' | 'Need Improvement' | 'Needs Improvement' | 'Withheld' | 'Incomplete' | 'Absent';
   resultStatusMl: 'വിജയിച്ചു' | 'മെച്ചപ്പെടേണ്ടതുണ്ട്' | 'തടഞ്ഞുവെച്ചു (Withheld)' | 'പൂർണ്ണമല്ല' | 'പങ്കെടുത്തില്ല';
   isPublished: boolean;
   attendance?: {

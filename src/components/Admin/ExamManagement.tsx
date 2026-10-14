@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Examination, AcademicYear } from '../../types';
+import { Examination, AcademicYear, ClassItem } from '../../types';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
@@ -16,15 +16,22 @@ import {
   Edit2,
   Trash2,
   X,
+  Hash,
 } from 'lucide-react';
+import { ExamRegisterModal } from './ExamRegisterModal';
 
 export const ExamManagement: React.FC = () => {
   const { fetchWithAuth, lang, t } = useAuth();
   const [loading, setLoading] = useState(true);
   const [examinations, setExaminations] = useState<Examination[]>([]);
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
+  const [classes, setClasses] = useState<ClassItem[]>([]);
   const [selectedExamId, setSelectedExamId] = useState<string>('');
   const [readiness, setReadiness] = useState<any>(null);
+
+  // Register numbers modal state
+  const [showRegModal, setShowRegModal] = useState(false);
+  const [regClassId, setRegClassId] = useState('');
 
   // Modals / forms
   const [showNewExamModal, setShowNewExamModal] = useState(false);
@@ -50,14 +57,20 @@ export const ExamManagement: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [resExams, resAys] = await Promise.all([
+      const [resExams, resAys, resClasses] = await Promise.all([
         fetchWithAuth('/api/examinations'),
         fetchWithAuth('/api/academic-years'),
+        fetchWithAuth('/api/classes'),
       ]);
       const exams = await resExams.json();
       const ays = await resAys.json();
+      const cls = await resClasses.json();
       setExaminations(exams);
       setAcademicYears(ays);
+      setClasses(cls);
+      if (cls.length > 0 && !regClassId) {
+        setRegClassId(cls[0].id);
+      }
 
       const activeId = selectedExamId || exams[0]?.id;
       if (activeId) {
@@ -501,6 +514,47 @@ export const ExamManagement: React.FC = () => {
             </div>
           </div>
 
+          {/* Exam Register Numbers Configuration for Classes */}
+          <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5">
+              <span className="p-2 bg-emerald-100 text-emerald-800 rounded-lg">
+                <Hash className="w-4 h-4" />
+              </span>
+              <div>
+                <h4 className="font-bold text-slate-900 text-xs">
+                  Exam Register Numbers ({selectedExam.nameEn})
+                </h4>
+                <p className="text-[11px] text-slate-500">
+                  Assign or customize exam-specific register numbers for students per examination.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <select
+                value={regClassId}
+                onChange={e => setRegClassId(e.target.value)}
+                className="p-1.5 border border-slate-300 rounded-lg bg-white font-medium text-xs focus:outline-none cursor-pointer"
+              >
+                {classes.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} {c.nameMl && `(${c.nameMl})`}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={() => setShowRegModal(true)}
+                disabled={!regClassId}
+                className="px-3.5 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-lg transition shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Hash className="w-3.5 h-3.5" />
+                Assign / Edit Register Nos
+              </button>
+            </div>
+          </div>
+
           {/* Checklist Matrix */}
           <div>
             <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">
@@ -773,6 +827,20 @@ export const ExamManagement: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Exam Register Number Modal */}
+      {showRegModal && selectedExam && regClassId && (
+        <ExamRegisterModal
+          classId={regClassId}
+          className={classes.find(c => c.id === regClassId)?.name || 'Class'}
+          examinationId={selectedExam.id}
+          examinationName={selectedExam.nameEn}
+          onClose={() => setShowRegModal(false)}
+          onSaved={() => {
+            loadReadiness(selectedExam.id);
+          }}
+        />
       )}
     </div>
   );

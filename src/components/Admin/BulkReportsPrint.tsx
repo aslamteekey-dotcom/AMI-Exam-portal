@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { ClassItem, Examination, StudentProgressReport, InstitutionSettings } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
-import { Printer, Download, Eye, Table, Award, AlertCircle, FileText } from 'lucide-react';
+import { Printer, Download, Eye, Table, Award, AlertCircle, FileText, Hash } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { ExamRegisterModal } from './ExamRegisterModal';
 
 export const BulkReportsPrint: React.FC = () => {
   const { fetchWithAuth, lang, t } = useAuth();
@@ -21,6 +22,7 @@ export const BulkReportsPrint: React.FC = () => {
   const [fetching, setFetching] = useState(false);
   const [activeSingleReport, setActiveSingleReport] = useState<StudentProgressReport | null>(null);
   const [isBatchPrinting, setIsBatchPrinting] = useState(false);
+  const [showRegModal, setShowRegModal] = useState(false);
   const batchPrintRef = useRef<HTMLDivElement>(null);
 
   const isMl = lang === 'ml';
@@ -191,7 +193,15 @@ export const BulkReportsPrint: React.FC = () => {
         </div>
 
         {safeReports.length > 0 && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowRegModal(true)}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition shadow-2xs cursor-pointer"
+            >
+              <Hash className="w-3.5 h-3.5 text-emerald-700" />
+              Assign Exam Register Nos
+            </button>
             <button
               type="button"
               onClick={handleExportCsv}
@@ -244,13 +254,20 @@ export const BulkReportsPrint: React.FC = () => {
           </select>
         </div>
 
-        <div className="pt-4">
+        <div className="pt-4 flex items-center gap-2">
           <button
             onClick={() => fetchClassReports(selectedClassId, selectedExamId)}
             disabled={fetching}
             className="px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs disabled:opacity-50 cursor-pointer"
           >
             {fetching ? 'Loading Reports...' : 'Load Class Reports'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowRegModal(true)}
+            className="px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 border border-emerald-300 rounded-xl transition cursor-pointer"
+          >
+            Edit Exam Reg Nos
           </button>
         </div>
       </div>
@@ -276,7 +293,8 @@ export const BulkReportsPrint: React.FC = () => {
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                  <th className="py-2.5 px-3 w-14">Roll</th>
+                  <th className="py-2.5 px-3 w-12 text-center">Roll</th>
+                  <th className="py-2.5 px-3 w-28">Exam Reg No</th>
                   <th className="py-2.5 px-3 w-24">Adm No</th>
                   <th className="py-2.5 px-3">Student Name</th>
                   <th className="py-2.5 px-3 text-center">Marks Obtained</th>
@@ -290,46 +308,71 @@ export const BulkReportsPrint: React.FC = () => {
               <tbody className="divide-y divide-slate-200">
                 {safeReports.map(rep => {
                   const s = rep?.student;
-                  const rankDisplay = rep.denseRankText || (rep.classRank ? `Rank ${rep.classRank}` : '—');
                   const attDays = rep.attendance?.daysAttended ?? s?.attendance?.daysAttended ?? 88;
                   const attTotal = rep.attendance?.totalWorkingDays ?? s?.attendance?.totalWorkingDays ?? 88;
+                  const examRegNo = rep.examRegisterNo || s?.examRegisterNumbers?.[selectedExamId] || s?.rollNo || '—';
+
+                  // Marks Obtained calculation:
+                  // Even if student was absent for one or more subjects, calculate and display total marks obtained for attended subjects.
+                  // Do not replace overall total with "null" or "Absent".
+                  const attendedObtained = rep.attendedObtainedMarks ?? rep.totalObtainedMarks ?? 0;
+                  const attendedMax = rep.attendedMaxMarks ?? rep.totalMaxMarks ?? 0;
+
+                  // Percentage calculation: (Attended Marks / Attended Max) * 100, formatted to 2 decimals.
+                  // Never display "N/A" if marks exist.
+                  const pctVal = attendedMax > 0
+                    ? ((attendedObtained / attendedMax) * 100).toFixed(2)
+                    : (rep.percentage !== null && rep.percentage !== undefined ? rep.percentage.toFixed(2) : '0.00');
+
+                  // Clear distinction between Dense Rank and Result Status:
+                  // Rank is awarded strictly to students who passed all subjects without any absence or withheld status.
+                  // Exclude failed/absent students from dense rank column.
+                  const isRankAwarded = rep.resultStatus === 'Passed' && !rep.hasAbsentSubjects && !rep.hasWithheldCe && rep.classRank !== null;
+
+                  let resultBadgeColor = 'bg-emerald-100 text-emerald-800 border-emerald-200';
+                  let displayResultStatus: string = rep.resultStatus === 'Needs Improvement' ? 'Need Improvement' : rep.resultStatus;
+
+                  if (rep.hasAbsentSubjects) {
+                    displayResultStatus = 'Absent';
+                    resultBadgeColor = 'bg-slate-100 text-slate-800 border-slate-200';
+                  } else if (rep.hasWithheldCe) {
+                    displayResultStatus = 'Withheld';
+                    resultBadgeColor = 'bg-amber-100 text-amber-900 border-amber-200';
+                  } else if (displayResultStatus === 'Need Improvement') {
+                    resultBadgeColor = 'bg-rose-100 text-rose-800 border-rose-200';
+                  } else {
+                    resultBadgeColor = 'bg-emerald-100 text-emerald-800 border-emerald-200';
+                  }
 
                   return (
                     <tr key={s?.id || Math.random()} className="hover:bg-slate-50/80 transition">
-                      <td className="py-2.5 px-3 font-mono font-bold text-slate-700">{s?.rollNo}</td>
+                      <td className="py-2.5 px-3 font-mono font-bold text-slate-700 text-center">{s?.rollNo}</td>
+                      <td className="py-2.5 px-3 font-mono font-bold text-emerald-950">{examRegNo}</td>
                       <td className="py-2.5 px-3 font-mono font-medium text-slate-600">{s?.admissionNo}</td>
                       <td className="py-2.5 px-3">
                         <span className="font-bold text-slate-900 block">{s?.nameEn}</span>
                       </td>
                       <td className="py-2.5 px-3 text-center font-mono font-bold text-emerald-950">
-                        {rep.hasAbsentSubjects ? (
-                          <span className="text-amber-700 font-normal">Absent</span>
-                        ) : (
-                          `${rep.totalObtainedMarks} / ${rep.totalMaxMarks}`
-                        )}
+                        {attendedObtained} / {attendedMax}
                       </td>
                       <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-800">
-                        {rep.percentage !== null ? `${rep.percentage}%` : 'N/A'}
+                        {pctVal}%
                       </td>
                       <td className="py-2.5 px-3 text-center font-mono text-slate-600">
                         {attDays} / {attTotal}
                       </td>
                       <td className="py-2.5 px-3 text-center font-bold">
-                        <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-50 text-emerald-900 border border-emerald-200">
-                          {rankDisplay}
-                        </span>
+                        {isRankAwarded ? (
+                          <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-50 text-emerald-900 border border-emerald-200 font-black">
+                            Rank {rep.classRank}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 font-mono text-xs">—</span>
+                        )}
                       </td>
                       <td className="py-2.5 px-3 text-center">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            rep.resultStatus === 'Passed'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : rep.resultStatus === 'Needs Improvement'
-                              ? 'bg-rose-100 text-rose-800'
-                              : 'bg-amber-100 text-amber-900'
-                          }`}
-                        >
-                          {rep.resultStatus}
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${resultBadgeColor}`}>
+                          {displayResultStatus}
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-right">
@@ -371,6 +414,18 @@ export const BulkReportsPrint: React.FC = () => {
           ))}
         </div>
       </div>
+
+      {/* Exam Register Number Assignment Modal */}
+      {showRegModal && selectedClassId && selectedExamId && (
+        <ExamRegisterModal
+          classId={selectedClassId}
+          className={currentClass?.name || 'Class'}
+          examinationId={selectedExamId}
+          examinationName={currentExam ? (isMl ? currentExam.nameMl : currentExam.nameEn) : 'Examination'}
+          onClose={() => setShowRegModal(false)}
+          onSaved={() => fetchClassReports(selectedClassId, selectedExamId)}
+        />
+      )}
     </div>
   );
 };

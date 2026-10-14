@@ -73,58 +73,92 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
 
     components.forEach((c) => {
       const k = c.key.toLowerCase();
+      const val = c.obtainedMarks !== null && c.obtainedMarks !== undefined ? c.obtainedMarks : '—';
       if (k === 'omr' || k === 'written' || k === 'tilawah' || k === 'new_portion' || k === 'salawat') {
-        omrVal = c.obtainedMarks !== null ? c.obtainedMarks : '—';
+        omrVal = val;
         omrMax = c.maxMarks;
       } else if (k === 'descriptive' || k === 'tajweed' || k === 'tilawati' || k === 'revision' || k === 'duas' || k === 'oral') {
-        ocrVal = c.obtainedMarks !== null ? c.obtainedMarks : '—';
+        ocrVal = val;
         ocrMax = c.maxMarks;
       } else if (k === 'ce' || k === 'diary') {
-        cieVal = c.obtainedMarks !== null ? c.obtainedMarks : '—';
+        cieVal = val;
         cieMax = c.maxMarks;
       }
     });
 
     // Fallback if component keys were mapped generically
     if (omrMax === 0 && components[0]) {
-      omrVal = components[0].obtainedMarks !== null ? components[0].obtainedMarks : '—';
+      omrVal = components[0].obtainedMarks !== null && components[0].obtainedMarks !== undefined ? components[0].obtainedMarks : '—';
       omrMax = components[0].maxMarks;
     }
     if (ocrMax === 0 && components[1]) {
-      ocrVal = components[1].obtainedMarks !== null ? components[1].obtainedMarks : '—';
+      ocrVal = components[1].obtainedMarks !== null && components[1].obtainedMarks !== undefined ? components[1].obtainedMarks : '—';
       ocrMax = components[1].maxMarks;
     }
     if (cieMax === 0 && components[2]) {
-      cieVal = components[2].obtainedMarks !== null ? components[2].obtainedMarks : '—';
+      cieVal = components[2].obtainedMarks !== null && components[2].obtainedMarks !== undefined ? components[2].obtainedMarks : '—';
       cieMax = components[2].maxMarks;
     }
 
     return { omrVal, ocrVal, cieVal, omrMax, ocrMax, cieMax };
   };
 
-  // Grand total calculations
-  let grandOmrObtained = 0;
-  let grandOmrMax = 0;
-  let grandOcrObtained = 0;
-  let grandOcrMax = 0;
-  let grandCieObtained = 0;
-  let grandCieMax = 0;
+  // Strictly English class name (e.g., "Class 7", strip any Malayalam text)
+  const cleanClassName = (report?.classNameEn || 'Class')
+    .replace(/\s*\(.*?\)\s*/g, '')
+    .replace(/[\u0D00-\u0D7F]+/g, '')
+    .trim();
+
+  // Grand total calculations for attended subjects
+  let grandAttendedObtained = 0;
+  let grandAttendedMax = 0;
 
   (report.subjects || []).forEach((sub) => {
     const { omrVal, ocrVal, cieVal, omrMax, ocrMax, cieMax } = extractColumns(sub.components || []);
-    grandOmrMax += omrMax;
-    grandOcrMax += ocrMax;
-    grandCieMax += cieMax;
-    if (typeof omrVal === 'number') grandOmrObtained += omrVal;
-    if (typeof ocrVal === 'number') grandOcrObtained += ocrVal;
-    if (typeof cieVal === 'number') grandCieObtained += cieVal;
+    if (!sub.isAbsent) {
+      const numOmr = typeof omrVal === 'number' ? omrVal : 0;
+      const numOcr = typeof ocrVal === 'number' ? ocrVal : 0;
+      const numCie = typeof cieVal === 'number' ? cieVal : 0;
+      const subTotal = (sub.obtainedMarks !== null && sub.obtainedMarks !== undefined)
+        ? sub.obtainedMarks
+        : (numOmr + numOcr + numCie);
+      grandAttendedObtained += subTotal;
+      grandAttendedMax += (sub.maxMarks || (omrMax + ocrMax + cieMax) || 50);
+    }
   });
+
+  const displayGrandObtained = report.attendedObtainedMarks ?? report.totalObtainedMarks ?? grandAttendedObtained;
+  const displayGrandMax = report.attendedMaxMarks ?? report.totalMaxMarks ?? grandAttendedMax;
+
+  // Percentage for attended subjects: never display N/A if marks exist
+  const calculatedPercentage = displayGrandMax > 0
+    ? ((displayGrandObtained / displayGrandMax) * 100).toFixed(2)
+    : (report?.percentage !== null && report?.percentage !== undefined ? report.percentage.toFixed(2) : '0.00');
 
   const attendanceDays = report.attendance?.daysAttended ?? report?.student?.attendance?.daysAttended ?? 88;
   const attendanceTotal = report.attendance?.totalWorkingDays ?? report?.student?.attendance?.totalWorkingDays ?? 88;
 
-  // Format rank strictly as "Rank 1", "Rank 2" (no total denominator) or academic status
-  const formattedRank = report.denseRankText || (report.classRank ? `Rank ${report.classRank}` : (report.resultStatus === 'Passed' ? 'Passed' : report.resultStatus));
+  // Exam Register Number
+  const examRegisterNo = report.examRegisterNo || report.student?.examRegisterNumbers?.[report.examination?.id] || report.student?.rollNo || '—';
+
+  // Academic Rank Box logic:
+  // Rank is awarded ONLY if all subjects are Passed, with zero withheld subjects and zero absences.
+  // Otherwise, show "Need Improvement", "Withheld", or "Absent".
+  const isRankAwarded = report.resultStatus === 'Passed' && !report.hasAbsentSubjects && !report.hasWithheldCe && report.classRank !== null;
+  let academicRankBoxText = 'Passed';
+  if (report.hasAbsentSubjects || report.resultStatus === 'Absent') {
+    academicRankBoxText = 'Absent';
+  } else if (report.hasWithheldCe || report.resultStatus === 'Withheld') {
+    academicRankBoxText = 'Withheld';
+  } else if (report.resultStatus === 'Need Improvement' || report.resultStatus === 'Needs Improvement') {
+    academicRankBoxText = 'Need Improvement';
+  } else if (isRankAwarded) {
+    academicRankBoxText = `Rank ${report.classRank}`;
+  } else if (report.denseRankText && report.denseRankText.startsWith('Rank')) {
+    academicRankBoxText = report.denseRankText;
+  } else {
+    academicRankBoxText = 'Need Improvement';
+  }
 
   return (
     <div className="space-y-6">
@@ -141,10 +175,10 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
           )}
           <div>
             <h3 className="font-bold text-slate-900 text-sm">
-              {isMl && report?.student?.nameMl ? report.student.nameMl : report?.student?.nameEn}
+              {report?.student?.nameEn || (report?.student as any)?.name || 'Student'}
             </h3>
             <p className="text-xs text-slate-500 font-mono">
-              {report?.classNameEn} • {t.rollNo}: {report?.student?.rollNo} • Adm: {report?.student?.admissionNo}
+              {report?.classNameEn} • Exam Register No: {examRegisterNo} • Adm: {report?.student?.admissionNo}
             </p>
           </div>
         </div>
@@ -226,48 +260,84 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
               <div>
                 <span className="text-[11px] font-semibold text-slate-500 uppercase block">Student Name:</span>
                 <span className="font-bold text-slate-900 text-sm block leading-tight">
-                  {report?.student?.nameEn || '—'}
+                  {report?.student?.nameEn || (report?.student as any)?.name || '—'}
                 </span>
                 {report?.student?.nameMl && (
-                  <span className="text-[11px] text-slate-600 font-medium">{report.student.nameMl}</span>
+                  <span className="text-[11px] text-slate-600 font-medium block">{report.student.nameMl}</span>
                 )}
               </div>
               <div>
                 <span className="text-[11px] font-semibold text-slate-500 uppercase block">Class:</span>
                 <span className="font-bold text-emerald-950 text-sm block">
-                  {report?.classNameEn || '—'} {report?.classNameMl && `(${report.classNameMl})`}
+                  {cleanClassName || '—'}
                 </span>
-                <span className="text-[11px] text-slate-500 font-mono">Roll #{report?.student?.rollNo || '—'}</span>
+                <span className="text-[11px] text-slate-700 font-mono font-semibold block">
+                  Exam Register No: {examRegisterNo}
+                </span>
               </div>
               <div>
                 <span className="text-[11px] font-semibold text-slate-500 uppercase block">Admission No:</span>
                 <span className="font-mono font-bold text-slate-900 text-sm block">
                   {report?.student?.admissionNo || '—'}
                 </span>
-                {report?.student?.parentNameEn && (
-                  <span className="text-[11px] text-slate-500 truncate block">Parent: {report.student.parentNameEn}</span>
-                )}
+                <span className="text-[11px] text-slate-600 truncate block">
+                  Parent: <span style={{ color: '#000000' }} className="font-bold text-black">{report?.student?.parentNameEn || '—'}</span>
+                </span>
               </div>
             </div>
           </div>
 
-          {/* 3. MARKS TABLE COLUMNS: [ Subject | OMR | OCR | CIE | Total ] */}
+          {/* 3. MARKS TABLE COLUMNS: [ # | Subject | OMR | OCR | CIE | Total | Result ] */}
           <div className="mb-3 overflow-hidden border border-emerald-900/30 rounded-xl">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-emerald-900 text-white font-bold text-center border-b border-emerald-950">
                   <th className="py-2.5 px-3 text-left w-10">#</th>
                   <th className="py-2.5 px-3 text-left">Subject</th>
-                  <th className="py-2.5 px-3 w-20">OMR</th>
-                  <th className="py-2.5 px-3 w-20">OCR</th>
-                  <th className="py-2.5 px-3 w-20">CIE</th>
-                  <th className="py-2.5 px-3 w-24">Total</th>
+                  <th className="py-2.5 px-3 w-16">OMR</th>
+                  <th className="py-2.5 px-3 w-16">OCR</th>
+                  <th className="py-2.5 px-3 w-16">CIE</th>
+                  <th className="py-2.5 px-3 w-20">Total</th>
+                  <th className="py-2.5 px-3 w-28 text-center">Result</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
                 {(report?.subjects || []).map((sub, idx) => {
-                  const { omrVal, ocrVal, cieVal } = extractColumns(sub.components || []);
+                  const { omrVal, ocrVal, cieVal, omrMax, ocrMax, cieMax } = extractColumns(sub.components || []);
                   const isSubAbsent = sub.isAbsent;
+                  const numOmr = typeof omrVal === 'number' ? omrVal : 0;
+                  const numOcr = typeof ocrVal === 'number' ? ocrVal : 0;
+                  const numCie = typeof cieVal === 'number' ? cieVal : 0;
+                  // Total calculated correctly: OMR + OCR + CIE
+                  const subTotal = (sub.obtainedMarks !== null && sub.obtainedMarks !== undefined)
+                    ? sub.obtainedMarks
+                    : (numOmr + numOcr + numCie);
+                  const teMax = omrMax + ocrMax;
+                  const teObtained = numOmr + numOcr;
+                  const isCeZero = (typeof cieVal === 'number' && cieVal === 0) || sub.hasMissingCe;
+
+                  // Subject Result logic:
+                  // A. Passed: If (OMR + OCR) >= 35% of TE Max marks AND CIE > 0.
+                  // B. Need Improvement: If (OMR + OCR) < 35% of TE Max marks.
+                  // C. Withheld: If CIE === 0.
+                  // Absent: If student was absent.
+                  let subjectResult = 'Passed';
+                  let subjectBadgeStyle = 'bg-emerald-100 text-emerald-800';
+
+                  if (isSubAbsent) {
+                    subjectResult = 'Absent';
+                    subjectBadgeStyle = 'bg-amber-100 text-amber-900';
+                  } else if (isCeZero) {
+                    subjectResult = 'Withheld';
+                    subjectBadgeStyle = 'bg-amber-100 text-amber-900';
+                  } else if (teMax > 0 && teObtained < teMax * 0.35) {
+                    subjectResult = 'Need Improvement';
+                    subjectBadgeStyle = 'bg-rose-100 text-rose-800';
+                  } else {
+                    subjectResult = 'Passed';
+                    subjectBadgeStyle = 'bg-emerald-100 text-emerald-800';
+                  }
+
                   return (
                     <tr key={sub.subjectId || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/70'}>
                       <td className="py-2 px-3 text-slate-500 font-mono text-center">{idx + 1}</td>
@@ -275,49 +345,68 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
                         {sub.subjectNameMl || sub.subjectNameEn}
                       </td>
                       <td className="py-2 px-3 text-center font-mono font-medium text-slate-700">
-                        {isSubAbsent ? '—' : omrVal}
+                        {isSubAbsent ? (
+                          <span className="text-amber-800 font-semibold text-[11px]">Absent</span>
+                        ) : (
+                          omrVal
+                        )}
                       </td>
                       <td className="py-2 px-3 text-center font-mono font-medium text-slate-700">
-                        {isSubAbsent ? '—' : ocrVal}
+                        {isSubAbsent ? (
+                          <span className="text-amber-800 font-semibold text-[11px]">Absent</span>
+                        ) : (
+                          ocrVal
+                        )}
                       </td>
                       <td className="py-2 px-3 text-center font-mono font-medium text-slate-700">
-                        {isSubAbsent ? '—' : sub.hasMissingCe ? 'Withheld' : cieVal}
+                        {isSubAbsent ? (
+                          <span className="text-amber-800 font-semibold text-[11px]">Absent</span>
+                        ) : isCeZero ? (
+                          <span className="text-amber-800 font-bold text-[11px]">0</span>
+                        ) : (
+                          cieVal
+                        )}
                       </td>
                       <td className="py-2 px-3 text-center font-bold font-mono text-emerald-950">
                         {isSubAbsent ? (
-                          <span className="text-amber-700 font-semibold text-[11px]">Absent</span>
-                        ) : sub.hasMissingCe ? (
-                          <span className="text-amber-800 font-bold text-[11px]">Withheld</span>
-                        ) : sub.obtainedMarks !== null ? (
-                          sub.obtainedMarks
+                          <span className="text-amber-800 font-bold text-[11px]">Absent</span>
                         ) : (
-                          '—'
+                          subTotal
                         )}
+                      </td>
+                      <td className="py-2 px-3 text-center">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${subjectBadgeStyle}`}>
+                          {subjectResult}
+                        </span>
                       </td>
                     </tr>
                   );
                 })}
 
                 {/* DISTINCT GRAND TOTAL ROW AT THE BOTTOM */}
+                {/* Remove individual component totals for OMR, OCR, and CIE columns; display ONLY Grand Total of Total column */}
                 <tr className="bg-emerald-950 text-white font-black text-center border-t-2 border-emerald-900">
                   <td colSpan={2} className="py-3 px-3 text-left uppercase tracking-wider text-xs">
                     GRAND TOTAL
                   </td>
-                  <td className="py-3 px-3 font-mono text-xs text-emerald-200">
-                    {report?.hasAbsentSubjects ? '—' : grandOmrObtained} / {grandOmrMax}
+                  <td className="py-3 px-3 text-center text-xs text-emerald-300/40">—</td>
+                  <td className="py-3 px-3 text-center text-xs text-emerald-300/40">—</td>
+                  <td className="py-3 px-3 text-center text-xs text-emerald-300/40">—</td>
+                  <td className="py-3 px-3 font-mono text-sm text-amber-300 font-bold whitespace-nowrap">
+                    {displayGrandObtained} / {displayGrandMax}
                   </td>
-                  <td className="py-3 px-3 font-mono text-xs text-emerald-200">
-                    {report?.hasAbsentSubjects ? '—' : grandOcrObtained} / {grandOcrMax}
-                  </td>
-                  <td className="py-3 px-3 font-mono text-xs text-emerald-200">
-                    {report?.hasAbsentSubjects ? '—' : grandCieObtained} / {grandCieMax}
-                  </td>
-                  <td className="py-3 px-3 font-mono text-sm text-amber-300">
-                    {report?.hasAbsentSubjects ? (
-                      <span className="text-amber-400">Absent</span>
-                    ) : (
-                      `${report?.totalObtainedMarks || 0} / ${report?.totalMaxMarks || 0}`
-                    )}
+                  <td className="py-3 px-3 text-center">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      academicRankBoxText.startsWith('Rank') || academicRankBoxText === 'Passed'
+                        ? 'bg-emerald-100 text-emerald-900'
+                        : academicRankBoxText === 'Withheld'
+                        ? 'bg-amber-100 text-amber-950'
+                        : academicRankBoxText === 'Absent'
+                        ? 'bg-amber-100 text-amber-950'
+                        : 'bg-rose-100 text-rose-950'
+                    }`}>
+                      {report.resultStatus === 'Needs Improvement' ? 'Need Improvement' : report.resultStatus}
+                    </span>
                   </td>
                 </tr>
               </tbody>
@@ -335,13 +424,13 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
           {/* 4. ACADEMIC METRICS BOX: [ Percentage | Attendance | Rank ] */}
           <div className="bg-emerald-900 text-white rounded-xl p-4 mb-8 shadow-xs">
             <div className="grid grid-cols-3 gap-4 text-center divide-x divide-emerald-800/80">
-              {/* Percentage */}
+              {/* Percentage (exact, never display N/A) */}
               <div>
                 <span className="text-[11px] font-bold text-emerald-200 uppercase tracking-wider block">
                   Percentage (%)
                 </span>
                 <span className="text-2xl font-black font-mono mt-1 block">
-                  {report?.percentage !== null && report?.percentage !== undefined ? `${report.percentage}%` : 'N/A'}
+                  {calculatedPercentage}%
                 </span>
               </div>
 
@@ -355,7 +444,7 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
                 </span>
               </div>
 
-              {/* Rank (Strictly Rank 1, Rank 2 - No denominator) */}
+              {/* Rank Box: Rank is awarded ONLY if all subjects are Passed with zero withheld and zero absences. Otherwise show Need Improvement, Withheld, or Absent */}
               <div>
                 <span className="text-[11px] font-bold text-emerald-200 uppercase tracking-wider block">
                   Academic Rank
@@ -363,7 +452,7 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
                 <div className="flex items-center justify-center gap-1.5 mt-1">
                   <Award className="w-5 h-5 text-amber-400 shrink-0" />
                   <span className="text-xl md:text-2xl font-black font-mono text-amber-300">
-                    {formattedRank}
+                    {academicRankBoxText}
                   </span>
                 </div>
               </div>
@@ -373,13 +462,13 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
             {report?.hasWithheldCe && (
               <div className="mt-3 pt-2 border-t border-emerald-800 text-[11px] text-amber-300 font-semibold flex items-center justify-center gap-1.5">
                 <ShieldAlert className="w-4 h-4 shrink-0" />
-                <span>Result Withheld: Continuous Evaluation (CE) is incomplete for one or more subjects.</span>
+                <span>Result Withheld: Continuous Evaluation (CE) is incomplete or 0 for one or more subjects.</span>
               </div>
             )}
             {report?.hasAbsentSubjects && (
               <div className="mt-3 pt-2 border-t border-emerald-800 text-[11px] text-amber-300 font-semibold flex items-center justify-center gap-1.5">
                 <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>Student marked absent in examination components. Excluded from rank calculation.</span>
+                <span>Student marked absent in examination components. Excluded from academic rank calculation.</span>
               </div>
             )}
           </div>

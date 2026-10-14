@@ -16,6 +16,7 @@ import {
   sortStudentsBoysFirst,
   FeePayment,
   ClassAttendanceConfig,
+  DEFAULT_ADMIN_PERMISSIONS,
 } from '../types';
 import { firestoreSync } from './firestoreSync';
 
@@ -1510,7 +1511,7 @@ export class ClientStorageApi {
       nonCeDiaryObtained,
       percentage,
       classRank: hasWithheldCe || hasIncompleteSubjects || hasAbsentSubjects || !passedNonCeCriteria ? null : rankInfo.rank,
-      denseRankText: rankInfo.denseRankText || (resultStatus === 'Passed' && rankInfo.rank ? `Rank ${rankInfo.rank}` : resultStatus),
+      denseRankText: (rankInfo as any)?.denseRankText || (resultStatus === 'Passed' && rankInfo.rank ? `Rank ${rankInfo.rank}` : resultStatus),
       attendance: {
         daysAttended,
         totalWorkingDays,

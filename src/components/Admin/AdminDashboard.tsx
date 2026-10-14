@@ -183,7 +183,7 @@ export const AdminDashboard: React.FC = () => {
           {t.navDashboard}
         </button>
 
-        {(!user?.permissions || user.permissions.marks?.view !== false) && (
+        {(!user?.permissions || user.permissions.marksReports?.view !== false) && (
           <button
             onClick={() => setActiveTab('monitoring')}
             className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
@@ -196,7 +196,7 @@ export const AdminDashboard: React.FC = () => {
           </button>
         )}
 
-        {(!user?.permissions || user.permissions.marks?.view !== false) && (
+        {(!user?.permissions || user.permissions.marksReports?.view !== false) && (
           <button
             onClick={() => setActiveTab('reports')}
             className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
@@ -209,7 +209,7 @@ export const AdminDashboard: React.FC = () => {
           </button>
         )}
 
-        {(!user?.permissions || user.permissions.exams?.view !== false) && (
+        {(!user?.permissions || user.permissions.academicExams?.view !== false) && (
           <button
             onClick={() => setActiveTab('exams')}
             className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
@@ -222,7 +222,7 @@ export const AdminDashboard: React.FC = () => {
           </button>
         )}
 
-        {(!user?.permissions || user.permissions.exams?.view !== false) && (
+        {(!user?.permissions || user.permissions.academicExams?.view !== false) && (
           <button
             onClick={() => setActiveTab('classes_subjects')}
             className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
@@ -274,7 +274,7 @@ export const AdminDashboard: React.FC = () => {
           </button>
         )}
 
-        {(!user?.permissions || user.permissions.fees?.view !== false) && (
+        {(!user?.permissions || user.permissions.feesCollections?.view !== false) && (
           <button
             onClick={() => setActiveTab('fees')}
             className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${

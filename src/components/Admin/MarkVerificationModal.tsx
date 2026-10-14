@@ -255,17 +255,62 @@ export const MarkVerificationModal: React.FC<Props> = ({
 
   if (loading || !sheetData) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-        <div className="bg-white p-6 rounded-2xl shadow-xl text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-700 mx-auto"></div>
-          <p className="mt-3 text-xs text-slate-600 font-medium">Loading mark sheet...</p>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+        <div className="bg-white rounded-2xl p-6 shadow-2xl max-w-md w-full text-center space-y-4">
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-emerald-700 mx-auto"></div>
+          <div>
+            <h3 className="text-sm font-bold text-slate-800">Loading Mark Verification Data...</h3>
+            <p className="text-xs text-slate-500 mt-1">Fetching student marks, components, and teacher submissions</p>
+          </div>
+          <div className="space-y-2 pt-2">
+            <div className="h-4 bg-slate-100 rounded animate-pulse"></div>
+            <div className="h-4 bg-slate-100 rounded animate-pulse w-5/6 mx-auto"></div>
+            <div className="h-4 bg-slate-100 rounded animate-pulse w-3/4 mx-auto"></div>
+          </div>
         </div>
       </div>
     );
   }
 
-  const { markSheet, subject, class: cls, examination: exam, components, students } = sheetData;
+  const markSheet = sheetData?.markSheet || {};
+  const subject = sheetData?.subject || {};
+  const cls = sheetData?.class || {};
+  const exam = sheetData?.examination || {};
+  const components: SubjectAssessmentRule[] = Array.isArray(sheetData?.components) ? sheetData.components : [];
+  const submission = sheetData?.submission || sheetData;
   const status = markSheet?.status || 'not_started';
+
+  // Safe headers for Teacher & Subject per requirements
+  const teacherHeader = submission?.teacher?.name || submission?.teacherName || sheetData?.teacher?.name || sheetData?.teacherName || 'Teacher';
+  const subjectHeader = submission?.subject?.name || submission?.subjectName || (cls?.numericGrade === 9 && (subject?.id === 'sub_history_buhuth' || subject?.code === 'HST')
+    ? 'ബുഹൂസ്'
+    : subject?.displayNameMl || subject?.nameMl || subject?.nameEn || subject?.name || 'Subject');
+
+  // Build safe student lookup map
+  const studentMap: Record<string, any> = {};
+  if (Array.isArray(sheetData?.students)) {
+    sheetData.students.forEach((s: any) => {
+      if (s?.id) studentMap[s.id] = s;
+    });
+  }
+
+  // Build marks array safely
+  const marksList = Array.isArray(sheetData?.marks)
+    ? sheetData.marks
+    : Array.isArray(sheetData?.students)
+      ? sheetData.students.map((st: any) => {
+          const studentId = st?.id;
+          const entry = markSheet?.studentMarks?.[studentId] || {};
+          return {
+            student: st,
+            studentId,
+            studentName: st?.nameEn || st?.name,
+            rollNo: st?.rollNo,
+            admissionNo: st?.admissionNo,
+            ...entry,
+          };
+        })
+      : [];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
@@ -275,16 +320,14 @@ export const MarkVerificationModal: React.FC<Props> = ({
           <div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900">
-                {isMl ? cls.nameMl : cls.name}
+                {isMl ? (cls?.nameMl || cls?.name || 'ക്ലാസ്') : (cls?.name || cls?.nameMl || 'Class')}
               </span>
               <h2 className="text-lg font-bold text-slate-900">
-                {cls.numericGrade === 9 && (subject.id === 'sub_history_buhuth' || subject.code === 'HST')
-                  ? 'ബുഹൂസ്'
-                  : subject.displayNameMl || subject.nameMl || subject.nameEn}
+                {subjectHeader}
               </h2>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              {isMl ? exam.nameMl : exam.nameEn} • Al-Madrasathul Islamiya Pallikkuth
+              {isMl ? (exam?.nameMl || exam?.nameEn) : (exam?.nameEn || exam?.nameMl)} • Usthad: <span className="font-semibold text-slate-700">{teacherHeader}</span> • Al-Madrasathul Islamiya Pallikkuth
             </p>
           </div>
 
@@ -386,7 +429,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
           </div>
         )}
 
-        {/* Marks Table */}
+        {/* Marks Table with Fallback Guards */}
         <div className="border border-slate-200 rounded-xl overflow-x-auto w-full scrollbar-thin">
           <table className="w-full min-w-[560px] text-xs text-left">
             <thead className="bg-slate-100 font-bold text-slate-700 border-b">
@@ -403,17 +446,25 @@ export const MarkVerificationModal: React.FC<Props> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {students.map((student: Student) => {
-                const entry: StudentMarkEntry = markSheet?.studentMarks?.[student.id];
+              {marksList.filter(Boolean).map((entry: any, index: number) => {
+                const student = entry?.student || studentMap[entry?.studentId] || {};
+                const studentName = (entry?.student?.name || entry?.studentName || studentMap[entry?.studentId]?.name || student?.nameEn || student?.name || 'Student');
+                const bilingualName = entry?.student?.nameMl || entry?.student?.nameEn || entry?.student?.name || student?.nameMl || student?.nameEn || '';
+                const rollNo = entry?.rollNo ?? student?.rollNo ?? (index + 1);
+                const admissionNo = entry?.admissionNo ?? student?.admissionNo ?? '—';
                 const isAbsent = entry?.isAbsent;
+
                 return (
-                  <tr key={student.id} className={isAbsent ? 'bg-amber-50/50' : 'hover:bg-slate-50'}>
+                  <tr key={entry?.studentId || student?.id || index} className={isAbsent ? 'bg-amber-50/50' : 'hover:bg-slate-50'}>
                     <td className="p-2.5 text-center font-mono font-bold text-slate-600">
-                      {student.rollNo}
+                      {rollNo}
                     </td>
                     <td className="p-2.5 font-medium">
-                      <div className="font-bold text-slate-900">{student.nameEn}</div>
-                      <div className="text-[11px] text-slate-400 font-mono">{student.admissionNo}</div>
+                      <div className="font-bold text-slate-900">{studentName}</div>
+                      {bilingualName && bilingualName !== studentName && (
+                        <div className="text-[11px] text-slate-500">{bilingualName}</div>
+                      )}
+                      <div className="text-[11px] text-slate-400 font-mono">{admissionNo}</div>
                     </td>
 
                     {components.map((c: SubjectAssessmentRule) => (
@@ -442,8 +493,10 @@ export const MarkVerificationModal: React.FC<Props> = ({
                       <button
                         onClick={() => {
                           setCorrectingStudent(student);
-                          setSelectedCompKey(components[0].componentKey);
-                          setNewMarkVal(String(entry?.componentMarks?.[components[0].componentKey] ?? '0'));
+                          if (components[0]) {
+                            setSelectedCompKey(components[0].componentKey);
+                            setNewMarkVal(String(entry?.componentMarks?.[components[0].componentKey] ?? '0'));
+                          }
                         }}
                         className="p-1 rounded text-purple-700 hover:bg-purple-50 transition"
                         title="Principal Mark Correction"
@@ -464,7 +517,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
             <div className="flex items-center justify-between">
               <h4 className="font-bold text-purple-950 text-sm flex items-center gap-1.5">
                 <ShieldAlert className="w-4 h-4 text-purple-700" />
-                Principal Authorized Mark Correction for {correctingStudent.nameEn}
+                Principal Authorized Mark Correction for {correctingStudent?.nameEn || (correctingStudent as any)?.name || (correctingStudent ? studentMap[correctingStudent.id]?.name : '') || 'Student'}
               </h4>
               <button
                 onClick={() => setCorrectingStudent(null)}
