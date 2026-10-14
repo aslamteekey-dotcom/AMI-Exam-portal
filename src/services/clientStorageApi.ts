@@ -14,6 +14,8 @@ import {
   StudentProgressReport,
   SubjectAssessmentRule,
   sortStudentsBoysFirst,
+  assignClassSequentialRollNumbers,
+  isBoyStudent,
   FeePayment,
   ClassAttendanceConfig,
   DEFAULT_ADMIN_PERMISSIONS,
@@ -611,7 +613,7 @@ export function getInitialClientSeedData(): MadrasaDatabase {
     subjects,
     academicYears: [academicYear],
     examinations,
-    students,
+    students: assignClassSequentialRollNumbers(students),
     teacherAssignments,
     markSheets,
     auditLogs,
@@ -651,13 +653,34 @@ export class ClientStorageApi {
     this.initFirestoreSync();
   }
 
+  /**
+   * Resequences roll numbers class-wise strictly starting from 1 onward
+   * based on the unified sorting rule:
+   * 1st: Boys ('male' / 'boy') alphabetically (A to Z) -> Roll 1, 2, 3...
+   * 2nd: Girls ('female' / 'girl') alphabetically (A to Z) -> Roll n+1, n+2...
+   */
+  public resequenceClassRollNumbers(targetClassId?: string): void {
+    const classIds = targetClassId
+      ? [targetClassId]
+      : Array.from(new Set(this.db.students.map(s => s.classId)));
+
+    classIds.forEach(cId => {
+      const classStudents = this.db.students.filter(s => s.classId === cId && s.status !== 'inactive');
+      const sorted = sortStudentsBoysFirst(classStudents);
+      sorted.forEach((student, index) => {
+        student.rollNo = index + 1;
+      });
+    });
+  }
+
   private initFirestoreSync(): void {
     if (typeof window === 'undefined') return;
     try {
       firestoreSync.subscribeToCollections({
         onStudents: (remoteStudents) => {
           if (Array.isArray(remoteStudents)) {
-            this.db.students = remoteStudents;
+            const resequenced = assignClassSequentialRollNumbers(remoteStudents);
+            this.db.students = resequenced;
             try {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
             } catch {}
@@ -829,7 +852,9 @@ export class ClientStorageApi {
           parsed.subjects = Array.isArray(parsed.subjects) ? parsed.subjects : [];
           parsed.academicYears = Array.isArray(parsed.academicYears) ? parsed.academicYears : [];
           parsed.examinations = Array.isArray(parsed.examinations) ? parsed.examinations : [];
-          parsed.students = Array.isArray(parsed.students) ? parsed.students : [];
+          parsed.students = Array.isArray(parsed.students)
+            ? assignClassSequentialRollNumbers(parsed.students)
+            : [];
           parsed.teacherAssignments = Array.isArray(parsed.teacherAssignments) ? parsed.teacherAssignments : [];
           parsed.markSheets = Array.isArray(parsed.markSheets) ? parsed.markSheets : [];
           parsed.auditLogs = Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [];
@@ -1898,11 +1923,29 @@ export class ClientStorageApi {
       // 4. Students
       if (path === '/api/students' && method === 'GET') {
         const classId = params.get('classId');
+        if (classId) {
+          this.resequenceClassRollNumbers(classId);
+        } else {
+          this.resequenceClassRollNumbers();
+        }
         let students = this.db.students;
         if (classId) {
           students = students.filter(s => s.classId === classId);
         }
         return this.jsonResponse(sortStudentsBoysFirst(students));
+      }
+
+      if (path === '/api/students/resequence-rolls' && method === 'POST') {
+        const targetClassId = bodyData?.classId || params.get('classId');
+        this.resequenceClassRollNumbers(targetClassId || undefined);
+        this.saveDB();
+        const affected = targetClassId
+          ? this.db.students.filter(s => s.classId === targetClassId)
+          : this.db.students;
+        for (const st of affected) {
+          firestoreSync.syncStudent(st).catch(() => {});
+        }
+        return this.jsonResponse({ success: true, count: affected.length, students: sortStudentsBoysFirst(affected) });
       }
 
       if (path === '/api/students' && method === 'POST') {
@@ -1948,18 +1991,24 @@ export class ClientStorageApi {
         }
 
         this.db.students.push(newStudent);
+        this.resequenceClassRollNumbers(newStudent.classId);
         this.saveDB();
 
-        firestoreSync.syncStudent(newStudent).catch(e => {
-          console.warn('Firestore syncStudent error:', e);
-        });
+        // Sync affected class students with their updated sequential roll numbers
+        const classStudents = this.db.students.filter(s => s.classId === newStudent.classId);
+        for (const st of classStudents) {
+          firestoreSync.syncStudent(st).catch(e => {
+            console.warn('Firestore syncStudent error:', e);
+          });
+        }
         if (createdParent) {
           firestoreSync.syncParent(createdParent).catch(e => {
             console.warn('Firestore syncParent error:', e);
           });
         }
 
-        return this.jsonResponse(newStudent);
+        const savedStudent = this.db.students.find(s => s.id === studentId) || newStudent;
+        return this.jsonResponse(savedStudent);
       }
 
       const studentIdMatch = path.match(/^\/api\/students\/([^/]+)$/);
@@ -1968,19 +2017,36 @@ export class ClientStorageApi {
         const student = this.db.students.find(s => s.id === sId);
         if (!student) return this.jsonResponse({ error: 'Student not found' }, 404);
 
+        const prevClassId = student.classId;
         Object.assign(student, bodyData);
+        this.resequenceClassRollNumbers(student.classId);
+        if (prevClassId && prevClassId !== student.classId) {
+          this.resequenceClassRollNumbers(prevClassId);
+        }
         this.saveDB();
 
-        firestoreSync.syncStudent(student).catch(e => {
-          console.warn('Firestore syncStudent PUT error:', e);
-        });
+        const affected = this.db.students.filter(s => s.classId === student.classId || s.classId === prevClassId);
+        for (const st of affected) {
+          firestoreSync.syncStudent(st).catch(e => {
+            console.warn('Firestore syncStudent PUT error:', e);
+          });
+        }
 
         return this.jsonResponse(student);
       }
 
       if (studentIdMatch && method === 'DELETE') {
         const sId = studentIdMatch[1];
+        const targetStudent = this.db.students.find(s => s.id === sId);
+        const targetClassId = targetStudent?.classId;
         this.db.students = this.db.students.filter(s => s.id !== sId);
+        if (targetClassId) {
+          this.resequenceClassRollNumbers(targetClassId);
+          const affected = this.db.students.filter(s => s.classId === targetClassId);
+          for (const st of affected) {
+            firestoreSync.syncStudent(st).catch(() => {});
+          }
+        }
         this.saveDB();
 
         firestoreSync.deleteStudent(sId).catch(e => {
@@ -2270,14 +2336,11 @@ export class ClientStorageApi {
           }
         });
 
+        this.resequenceClassRollNumbers();
         this.saveDB();
         // Sync imported students to Firestore (strictly using admission number as document key)
-        itemsToProcess.forEach((item: any) => {
-          const admNo = String(item.admissionNo || '').trim();
-          const st = this.db.students.find(s => s.admissionNo === admNo);
-          if (st) {
-            firestoreSync.syncStudent(st).catch(e => console.warn('Firestore syncStudent on import error:', e));
-          }
+        this.db.students.forEach((st) => {
+          firestoreSync.syncStudent(st).catch(e => console.warn('Firestore syncStudent on import error:', e));
         });
         this.db.users.filter(u => u.role === 'parent').forEach(p => {
           firestoreSync.syncParent(p).catch(e => console.warn('Firestore syncParent on import error:', e));
@@ -2791,11 +2854,12 @@ export class ClientStorageApi {
       const regNosMatch = path.match(/^\/api\/examinations\/([^/]+)\/classes\/([^/]+)\/register-numbers$/);
       if (regNosMatch && method === 'GET') {
         const [, eId, cId] = regNosMatch;
+        this.resequenceClassRollNumbers(cId);
         const students = sortStudentsBoysFirst(this.db.students.filter(s => s.classId === cId && s.status === 'active'));
-        const list = students.map(s => ({
+        const list = students.map((s, idx) => ({
           studentId: s.id,
           admissionNo: s.admissionNo,
-          rollNo: s.rollNo,
+          rollNo: idx + 1,
           nameEn: s.nameEn,
           nameMl: s.nameMl,
           gender: s.gender || 'M',

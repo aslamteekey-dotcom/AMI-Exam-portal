@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { ClassItem, Examination, StudentProgressReport, InstitutionSettings } from '../../types';
+import { ClassItem, Examination, StudentProgressReport, InstitutionSettings, sortStudentsBoysFirst } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
 import { Printer, Download, Eye, Table, Award, AlertCircle, FileText, Hash } from 'lucide-react';
 import jsPDF from 'jspdf';
@@ -179,7 +179,21 @@ export const BulkReportsPrint: React.FC = () => {
 
   const currentClass = classes.find(c => c.id === selectedClassId);
   const currentExam = examinations.find(e => e.id === selectedExamId);
-  const safeReports = (reportsData?.reports || []).filter(r => r && r.student);
+  const rawReports = (reportsData?.reports || []).filter(r => r && r.student);
+  const safeReports = sortStudentsBoysFirst(
+    rawReports.map(r => ({
+      ...r,
+      gender: r.student?.gender,
+      nameEn: r.student?.nameEn,
+      name: (r.student as any)?.name,
+    }))
+  ).map((r, idx) => ({
+    ...r,
+    student: {
+      ...r.student,
+      rollNo: idx + 1,
+    },
+  }));
 
   return (
     <div className="space-y-6">

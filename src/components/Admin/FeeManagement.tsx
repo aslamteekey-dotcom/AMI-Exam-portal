@@ -208,17 +208,19 @@ export const FeeManagement: React.FC = () => {
     }
   };
 
-  // Filtering
-  const filteredStudents = students.filter(s => {
-    const matchClass = selectedClassId ? s.classId === selectedClassId : true;
-    const q = searchQuery.toLowerCase().trim();
-    if (!q) return matchClass;
-    const matchQuery =
-      s.nameEn.toLowerCase().includes(q) ||
-      s.admissionNo.toLowerCase().includes(q) ||
-      (s.parentNameEn && s.parentNameEn.toLowerCase().includes(q));
-    return matchClass && matchQuery;
-  });
+  // Filtering with strict Boys first, then Girls alphabetical sorting
+  const filteredStudents = sortStudentsBoysFirst(
+    students.filter(s => {
+      const matchClass = selectedClassId ? s.classId === selectedClassId : true;
+      const q = searchQuery.toLowerCase().trim();
+      if (!q) return matchClass;
+      const matchQuery =
+        s.nameEn.toLowerCase().includes(q) ||
+        s.admissionNo.toLowerCase().includes(q) ||
+        (s.parentNameEn && s.parentNameEn.toLowerCase().includes(q));
+      return matchClass && matchQuery;
+    })
+  );
 
   const filteredPayments = payments.filter(p => {
     const matchClass = selectedClassId ? p.classId === selectedClassId : true;

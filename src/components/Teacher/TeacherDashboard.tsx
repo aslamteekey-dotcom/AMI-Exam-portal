@@ -367,7 +367,10 @@ export const TeacherDashboard: React.FC = () => {
   const inChargeClassId = currentTeacherInChargeClassId !== undefined ? currentTeacherInChargeClassId : user?.inChargeClassId;
   const inChargeClass = inChargeClassId ? classes.find(c => c.id === inChargeClassId) : null;
   const inChargeStudents = inChargeClass
-    ? sortStudentsBoysFirst(allStudents.filter(s => s.classId === inChargeClass.id && s.status === 'active'))
+    ? sortStudentsBoysFirst(allStudents.filter(s => s.classId === inChargeClass.id && s.status === 'active')).map((s, idx) => ({
+        ...s,
+        rollNo: idx + 1,
+      }))
     : [];
   const inChargeSubjects = inChargeClass
     ? subjects.filter(s => s.applicableClasses.includes(inChargeClass.numericGrade))

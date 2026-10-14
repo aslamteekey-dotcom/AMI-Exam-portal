@@ -17,6 +17,7 @@ import {
   X,
   FileSpreadsheet,
   Loader2,
+  Hash,
 } from 'lucide-react';
 
 export const StudentManagement: React.FC = () => {
@@ -486,6 +487,22 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
     }
   };
 
+  const handleResequenceRollNumbers = async () => {
+    try {
+      const res = await fetchWithAuth('/api/students/resequence-rolls', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ classId: selectedClassId || undefined }),
+      });
+      if (res.ok) {
+        await loadData();
+        alert('Class roll numbers successfully resequenced (Boys A-Z: 1, 2, 3... followed by Girls A-Z).');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error resequencing roll numbers');
+    }
+  };
+
   // Filter students with strict sorting: Boys first, then Girls; alphabetical A to Z within each
   const filteredStudents = sortStudentsBoysFirst(
     students.filter(s => {
@@ -555,6 +572,16 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
           >
             <Trash2 className="w-3.5 h-3.5 text-rose-700" />
             Delete All Students
+          </button>
+
+          <button
+            type="button"
+            onClick={handleResequenceRollNumbers}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-300 rounded-xl transition shadow-2xs cursor-pointer"
+            title="Auto-resequence class roll numbers strictly (Boys A-Z first: 1, 2, 3... then Girls A-Z)"
+          >
+            <Hash className="w-3.5 h-3.5 text-teal-700" />
+            Resequence Roll Nos
           </button>
 
           <button
@@ -628,6 +655,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
           <table className="w-full min-w-[760px] text-xs text-left">
             <thead className="bg-slate-100 text-slate-700 font-bold border-b">
               <tr>
+                <th className="p-3 text-center w-14 font-mono whitespace-nowrap">Roll No</th>
                 <th className="p-3 font-mono whitespace-nowrap">Admission No</th>
                 <th className="p-3 whitespace-nowrap">Name</th>
                 <th className="p-3 whitespace-nowrap">Class</th>
@@ -640,7 +668,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
             <tbody className="divide-y divide-slate-100">
               {filteredStudents.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-slate-400">
+                  <td colSpan={8} className="p-8 text-center text-slate-400">
                     No students found. Add a student or import via CSV.
                   </td>
                 </tr>
@@ -649,6 +677,9 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
                   const cls = classes.find(c => c.id === student.classId);
                   return (
                     <tr key={student.id} className="hover:bg-slate-50 transition">
+                      <td className="p-3 text-center font-mono font-bold text-slate-700 whitespace-nowrap">
+                        {student.rollNo}
+                      </td>
                       <td className="p-3 font-mono font-semibold text-slate-700 whitespace-nowrap">
                         {student.admissionNo}
                       </td>
@@ -732,6 +763,9 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
                     className="w-full p-2 border rounded-lg font-mono"
                     required
                   />
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Auto-sequenced: Boys A-Z (1, 2, 3...) then Girls A-Z.
+                  </p>
                 </div>
               </div>
 

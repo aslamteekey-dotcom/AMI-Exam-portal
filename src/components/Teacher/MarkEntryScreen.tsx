@@ -69,7 +69,10 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
       setSubject(data.subject);
       setExam(data.examination || data.exam);
       setComponents(data.components || []);
-      const sortedStudents = sortStudentsBoysFirst<Student>(data.students || []);
+      const sortedStudents = sortStudentsBoysFirst<Student>(data.students || []).map((s, idx) => ({
+        ...s,
+        rollNo: idx + 1,
+      }));
       setStudents(sortedStudents);
       setMarkSheet(data.markSheet);
 

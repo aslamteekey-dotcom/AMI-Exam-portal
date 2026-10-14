@@ -290,19 +290,65 @@ export interface ClassAttendanceConfig {
 }
 
 /**
- * Student Sorting Order:
- * 1. Primary Sort: Gender — Boys/Male ('M') first, then Girls/Female ('F')
+ * Helper to determine if a student is male/boy.
+ * Handles 'M', 'male', 'boy', 'Male', 'Boy', etc.
+ */
+export function isBoyStudent(gender?: string): boolean {
+  if (!gender) return true;
+  const g = String(gender).trim().toLowerCase();
+  if (g === 'f' || g === 'female' || g === 'girl' || g.startsWith('fem') || g.startsWith('gir')) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Unified Student Sorting Order:
+ * 1. Primary Sort: Gender — Boys ('male' / 'boy' / 'M') first, followed by Girls ('female' / 'girl' / 'F')
  * 2. Secondary Sort: Alphabetical order by Student Name (A to Z) within each gender group
  */
-export function sortStudentsBoysFirst<T extends { gender?: string; nameEn?: string; name?: string }>(students: T[]): T[] {
+export function sortStudentsBoysFirst<T extends { gender?: string; nameEn?: string; name?: string; rollNo?: number }>(students: T[]): T[] {
   return [...students].sort((a, b) => {
-    const isGirlA = (a.gender || 'M').toUpperCase().startsWith('F');
-    const isGirlB = (b.gender || 'M').toUpperCase().startsWith('F');
-    if (isGirlA !== isGirlB) {
-      return isGirlA ? 1 : -1; // Boys/Male first (-1), Girls/Female second (1)
+    const isBoyA = isBoyStudent(a.gender);
+    const isBoyB = isBoyStudent(b.gender);
+    if (isBoyA !== isBoyB) {
+      return isBoyA ? -1 : 1; // Boys first (-1), Girls second (1)
     }
     const nameA = String(a.nameEn || a.name || '').trim().toLowerCase();
     const nameB = String(b.nameEn || b.name || '').trim().toLowerCase();
-    return nameA.localeCompare(nameB);
+    const comp = nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+    if (comp !== 0) return comp;
+    return (a.rollNo || 0) - (b.rollNo || 0);
   });
+}
+
+/**
+ * Class-wise Sequential Roll Numbers (1, 2, 3...):
+ * For every class, assigns sequential Roll Numbers starting strictly from 1 onward
+ * based on the unified sorted order (all boys alphabetically first: Roll 1, 2, 3...
+ * followed directly by all girls alphabetically: Roll n+1, n+2...).
+ * Does not use random, admission-based, or non-sequential roll numbers.
+ */
+export function assignClassSequentialRollNumbers<T extends { id?: string; gender?: string; nameEn?: string; name?: string; rollNo?: number; classId?: string }>(students: T[]): T[] {
+  const classMap = new Map<string, T[]>();
+  students.forEach(s => {
+    const cId = s.classId || 'default';
+    if (!classMap.has(cId)) {
+      classMap.set(cId, []);
+    }
+    classMap.get(cId)!.push(s);
+  });
+
+  const updatedStudents: T[] = [];
+  classMap.forEach(classStudents => {
+    const sorted = sortStudentsBoysFirst(classStudents);
+    sorted.forEach((student, index) => {
+      updatedStudents.push({
+        ...student,
+        rollNo: index + 1,
+      });
+    });
+  });
+
+  return updatedStudents;
 }

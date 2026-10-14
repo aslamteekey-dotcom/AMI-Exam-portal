@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Hash, Sparkles, Check, X, Loader2, GripHorizontal, Users } from 'lucide-react';
+import { sortStudentsBoysFirst, isBoyStudent } from '../../types';
 
 interface Props {
   classId: string;
@@ -94,13 +95,11 @@ export const ExamRegisterModal: React.FC<Props> = ({
       );
       if (res.ok) {
         const data: StudentRegItem[] = await res.json();
-        // Sort: Boys first, then rollNo ascending
-        const sorted = [...data].sort((a, b) => {
-          const isGirlA = (a.gender || 'M').toUpperCase().startsWith('F');
-          const isGirlB = (b.gender || 'M').toUpperCase().startsWith('F');
-          if (isGirlA !== isGirlB) return isGirlA ? 1 : -1;
-          return a.rollNo - b.rollNo;
-        });
+        // Strict Unified Sort: Boys (male/boy) A-Z first, then Girls (female/girl) A-Z
+        const sorted = sortStudentsBoysFirst(data).map((s, idx) => ({
+          ...s,
+          rollNo: idx + 1,
+        }));
 
         setStudents(sorted);
         const initialMap: Record<string, string> = {};
@@ -124,7 +123,7 @@ export const ExamRegisterModal: React.FC<Props> = ({
     let girlIndex = 1;
 
     students.forEach((s) => {
-      const isGirl = (s.gender || 'M').toUpperCase().startsWith('F');
+      const isGirl = !isBoyStudent(s.gender);
       if (isGirl) {
         const numStr = String(girlIndex).padStart(2, '0');
         newMap[s.studentId] = `${girlPrefix}${numStr}`;
@@ -279,7 +278,7 @@ export const ExamRegisterModal: React.FC<Props> = ({
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {students.map((student) => {
-                  const isGirl = (student.gender || 'M').toUpperCase().startsWith('F');
+                  const isGirl = !isBoyStudent(student.gender);
                   return (
                     <tr key={student.studentId} className="hover:bg-slate-50">
                       <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-600">

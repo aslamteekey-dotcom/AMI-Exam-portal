@@ -55,7 +55,10 @@ export const MarkVerificationModal: React.FC<Props> = ({
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.students)) {
-          data.students = sortStudentsBoysFirst(data.students);
+          data.students = sortStudentsBoysFirst(data.students).map((s: any, idx: number) => ({
+            ...s,
+            rollNo: idx + 1,
+          }));
         }
         setSheetData(data);
       }
@@ -298,14 +301,14 @@ export const MarkVerificationModal: React.FC<Props> = ({
   const marksList = Array.isArray(sheetData?.marks)
     ? sheetData.marks
     : Array.isArray(sheetData?.students)
-      ? sheetData.students.map((st: any) => {
+      ? sortStudentsBoysFirst(sheetData.students).map((st: any, idx: number) => {
           const studentId = st?.id;
           const entry = markSheet?.studentMarks?.[studentId] || {};
           return {
             student: st,
             studentId,
             studentName: st?.nameEn || st?.name,
-            rollNo: st?.rollNo,
+            rollNo: idx + 1,
             admissionNo: st?.admissionNo,
             ...entry,
           };
