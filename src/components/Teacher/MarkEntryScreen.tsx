@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
 import { cleanForFirestore } from '../../services/firestoreSync';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
 import {
   ClassItem,
   SubjectItem,
@@ -113,6 +113,78 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
 
   useEffect(() => {
     loadData();
+
+    // Real-time Firestore listener for student updates (including Exam Register Numbers)
+    let unsub: (() => void) | undefined;
+    try {
+      unsub = onSnapshot(collection(db, 'students'), (snapshot: any) => {
+        if (!snapshot.empty) {
+          const remoteList: Student[] = snapshot.docs.map((d: any) => ({ ...d.data(), id: d.id } as Student));
+          setStudents(prev =>
+            prev.map(p => {
+              const remote = remoteList.find((r: Student) => r.id === p.id || r.admissionNo === p.admissionNo);
+              if (remote) {
+                const regNos = {
+                  ...(p.examRegisterNumbers || {}),
+                  ...((remote as any).examRegisterNumbers || {}),
+                  ...((remote as any).examRegisterNos || {}),
+                };
+                return {
+                  ...p,
+                  ...remote,
+                  examRegisterNumbers: regNos,
+                  examRegisterNos: regNos,
+                  examRegNo:
+                    (remote as any).examRegNo ||
+                    (remote as any).examRegisterNos?.[examinationId] ||
+                    regNos[examinationId] ||
+                    '',
+                };
+              }
+              return p;
+            })
+          );
+        }
+      });
+    } catch (e) {
+      console.warn('Real-time students listener error in MarkEntryScreen:', e);
+    }
+
+    const handleStudentsUpdated = (e: any) => {
+      const list = e.detail;
+      if (Array.isArray(list)) {
+        setStudents(prev =>
+          prev.map(p => {
+            const found = list.find((s: Student) => s.id === p.id || s.admissionNo === p.admissionNo);
+            if (found) {
+              const regNos = {
+                ...(p.examRegisterNumbers || {}),
+                ...((found as any).examRegisterNumbers || {}),
+                ...((found as any).examRegisterNos || {}),
+              };
+              return {
+                ...p,
+                ...found,
+                examRegisterNumbers: regNos,
+                examRegisterNos: regNos,
+                examRegNo:
+                  (found as any).examRegNo ||
+                  (found as any).examRegisterNos?.[examinationId] ||
+                  regNos[examinationId] ||
+                  '',
+              };
+            }
+            return p;
+          })
+        );
+      }
+    };
+    window.addEventListener('madrasa_students_updated', handleStudentsUpdated);
+
+    return () => {
+      if (unsub) unsub();
+      window.removeEventListener('madrasa_students_updated', handleStudentsUpdated);
+    };
   }, [classId, subjectId, examinationId]);
 
   const handleMarkChange = (studentId: string, compKey: string, val: string, maxMarks: number) => {
@@ -407,7 +479,8 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
           <table className="w-full text-left border-collapse text-sm">
             <thead>
               <tr className="bg-slate-100 text-slate-700 text-xs uppercase tracking-wider border-b border-slate-200">
-                <th className="py-3 px-4 w-16 text-center">Roll No</th>
+                <th className="py-3 px-3 w-14 text-center">Roll No</th>
+                <th className="py-3 px-3 w-28 text-center font-mono">Exam Reg No</th>
                 <th className="py-3 px-4 w-52">Student Name</th>
                 <th className="py-3 px-4 w-28 text-center">Status</th>
                 {effectiveComponents.map(comp => (
@@ -429,6 +502,11 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                 const sEntry = marks[student.id] || { isAbsent: false, componentMarks: {}, remarks: '' };
                 const isAbsent = sEntry.isAbsent;
                 const total = calculateStudentTotal(student.id);
+                const regNo =
+                  student.examRegisterNumbers?.[examinationId] ||
+                  (student as any).examRegisterNos?.[examinationId] ||
+                  (student as any).examRegNo ||
+                  '—';
 
                 return (
                   <tr
@@ -437,8 +515,11 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                       isAbsent ? 'bg-amber-50/40' : idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'
                     }`}
                   >
-                    <td className="py-3 px-4 text-center font-bold font-mono text-slate-600">
+                    <td className="py-3 px-3 text-center font-bold font-mono text-slate-600">
                       {student.rollNo}
+                    </td>
+                    <td className="py-3 px-3 text-center font-mono font-bold text-emerald-950 bg-emerald-50/40">
+                      {regNo}
                     </td>
                     <td className="py-3 px-4">
                       <div className="font-bold text-slate-900 whitespace-nowrap text-xs">
@@ -569,7 +650,8 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
             <table className="w-full text-xs border border-slate-200 divide-y divide-slate-200">
               <thead className="bg-slate-100 font-bold">
                 <tr>
-                  <th className="p-2 text-center">Roll</th>
+                  <th className="p-2 text-center w-12">Roll</th>
+                  <th className="p-2 text-center font-mono w-24">Exam Reg No</th>
                   <th className="p-2 text-left">Student Name</th>
                   {components.map(c => (
                     <th key={c.componentKey} className="p-2 text-center">
@@ -582,9 +664,15 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
               <tbody className="divide-y divide-slate-100">
                 {students.map(s => {
                   const entry = marks[s.id];
+                  const regNo =
+                    s.examRegisterNumbers?.[examinationId] ||
+                    (s as any).examRegisterNos?.[examinationId] ||
+                    (s as any).examRegNo ||
+                    '—';
                   return (
                     <tr key={s.id}>
                       <td className="p-2 text-center font-mono">{s.rollNo}</td>
+                      <td className="p-2 text-center font-mono font-bold text-emerald-950">{regNo}</td>
                       <td className="p-2 font-medium">{s.nameEn}</td>
                       {components.map(c => (
                         <td key={c.componentKey} className="p-2 text-center font-mono">

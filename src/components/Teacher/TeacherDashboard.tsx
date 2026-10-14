@@ -221,7 +221,27 @@ export const TeacherDashboard: React.FC = () => {
         collection(db, 'students'),
         snapshot => {
           if (!snapshot.empty) {
-            const remoteStu = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Student));
+            const remoteStu = snapshot.docs.map(d => {
+              const data = d.data();
+              const regNos = {
+                ...((data as any).examRegisterNumbers || {}),
+                ...((data as any).examRegisterNos || {}),
+              };
+              if ((data as any).examRegNo && Object.keys(regNos).length === 0) {
+                regNos[selectedExamId || 'default'] = (data as any).examRegNo;
+              }
+              return {
+                ...data,
+                id: d.id,
+                examRegisterNumbers: regNos,
+                examRegisterNos: regNos,
+                examRegNo:
+                  (data as any).examRegNo ||
+                  (data as any).examRegisterNos?.[selectedExamId] ||
+                  regNos[selectedExamId] ||
+                  '',
+              } as Student;
+            });
             setAllStudents(sortStudentsBoysFirst(remoteStu));
           }
         },
@@ -231,6 +251,15 @@ export const TeacherDashboard: React.FC = () => {
         }
       );
       unsubs.push(unsubStu);
+
+      const handleStudentsUpdated = (e: any) => {
+        const list = e.detail;
+        if (Array.isArray(list)) {
+          setAllStudents(sortStudentsBoysFirst(list));
+        }
+      };
+      window.addEventListener('madrasa_students_updated', handleStudentsUpdated);
+      unsubs.push(() => window.removeEventListener('madrasa_students_updated', handleStudentsUpdated));
 
       // Real-time teacher assignments listener
       const unsubTeachers = onSnapshot(
@@ -632,9 +661,17 @@ export const TeacherDashboard: React.FC = () => {
                   </div>
                   <div className="bg-emerald-50 px-4 py-2.5 rounded-xl border border-emerald-200 text-center">
                     <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">
-                      Class Subjects
+                      Exam Reg Nos
                     </span>
                     <span className="text-lg font-black font-mono text-emerald-900">
+                      {inChargeStudents.filter(s => s.examRegisterNumbers?.[selectedExamId] || (s as any).examRegisterNos?.[selectedExamId] || (s as any).examRegNo).length} / {inChargeStudents.length}
+                    </span>
+                  </div>
+                  <div className="bg-slate-50 px-4 py-2.5 rounded-xl border text-center">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Class Subjects
+                    </span>
+                    <span className="text-lg font-black font-mono text-slate-800">
                       {inChargeSubjects.length}
                     </span>
                   </div>
@@ -800,6 +837,7 @@ export const TeacherDashboard: React.FC = () => {
                       <thead className="bg-slate-100 text-slate-700 font-bold border-b">
                         <tr>
                           <th className="p-3 w-14 text-center font-mono">Roll</th>
+                          <th className="p-3 font-mono text-center w-28">Exam Reg No</th>
                           <th className="p-3 font-mono">Adm No</th>
                           <th className="p-3">Student Name</th>
                           <th className="p-3 text-center">Gender</th>
@@ -813,11 +851,19 @@ export const TeacherDashboard: React.FC = () => {
                           const currentDays = studentDaysAttendedMap[st.id] !== undefined
                             ? studentDaysAttendedMap[st.id]
                             : (st.attendance?.daysAttended ?? attendanceTotalWorkingDays);
+                          const regNo =
+                            st.examRegisterNumbers?.[selectedExamId] ||
+                            (st as any).examRegisterNos?.[selectedExamId] ||
+                            (st as any).examRegNo ||
+                            '—';
 
                           return (
                             <tr key={st.id} className="hover:bg-slate-50 transition">
                               <td className="p-3 text-center font-mono font-bold text-slate-600">
                                 {st.rollNo}
+                              </td>
+                              <td className="p-3 text-center font-mono font-bold text-emerald-950 bg-emerald-50/40">
+                                {regNo}
                               </td>
                               <td className="p-3 font-mono font-semibold text-slate-700">
                                 {st.admissionNo}
@@ -887,6 +933,7 @@ export const TeacherDashboard: React.FC = () => {
                     <thead className="bg-slate-100 text-slate-700 font-bold border-b">
                       <tr>
                         <th className="p-2.5 w-12 text-center font-mono">Roll</th>
+                        <th className="p-2.5 font-mono text-center w-24">Exam Reg No</th>
                         <th className="p-2.5 font-mono w-24">Adm No</th>
                         <th className="p-2.5 min-w-[150px]">Student Name</th>
                         {TUITION_FEE_MONTHS.map(m => (
@@ -906,11 +953,19 @@ export const TeacherDashboard: React.FC = () => {
                             (p.tuitionFeeMonths || []).forEach(m => paidMonths.add(m));
                           });
                         const count = paidMonths.size;
+                        const regNo =
+                          st.examRegisterNumbers?.[selectedExamId] ||
+                          (st as any).examRegisterNos?.[selectedExamId] ||
+                          (st as any).examRegNo ||
+                          '—';
 
                         return (
                           <tr key={st.id} className="hover:bg-slate-50 transition">
                             <td className="p-2 text-center font-mono font-bold text-slate-600">
                               {st.rollNo}
+                            </td>
+                            <td className="p-2 text-center font-mono font-bold text-emerald-950 bg-emerald-50/40">
+                              {regNo}
                             </td>
                             <td className="p-2 font-mono font-semibold text-slate-700">
                               {st.admissionNo}

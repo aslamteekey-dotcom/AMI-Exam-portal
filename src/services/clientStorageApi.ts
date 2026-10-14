@@ -679,11 +679,29 @@ export class ClientStorageApi {
       firestoreSync.subscribeToCollections({
         onStudents: (remoteStudents) => {
           if (Array.isArray(remoteStudents)) {
-            const resequenced = assignClassSequentialRollNumbers(remoteStudents);
+            const mapped = remoteStudents.map(st => {
+              const regNos = {
+                ...((st as any).examRegisterNumbers || {}),
+                ...((st as any).examRegisterNos || {}),
+              };
+              if ((st as any).examRegNo && Object.keys(regNos).length === 0) {
+                regNos[this.db.settings?.activeExamId || 'default'] = (st as any).examRegNo;
+              }
+              return {
+                ...st,
+                examRegisterNumbers: regNos,
+                examRegisterNos: regNos,
+                examRegNo: (st as any).examRegNo || Object.values(regNos)[0] || '',
+              };
+            });
+            const resequenced = assignClassSequentialRollNumbers(mapped);
             this.db.students = resequenced;
             try {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
             } catch {}
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: resequenced }));
+            }
           }
         },
         getInitialStudents: () => {
@@ -1527,7 +1545,11 @@ export class ClientStorageApi {
     const attConfig = this.db.attendanceConfigs?.find(a => a.classId === student.classId);
     const daysAttended = attConfig?.studentDaysAttended?.[student.id] ?? student.attendance?.daysAttended ?? 88;
     const totalWorkingDays = attConfig?.totalWorkingDays ?? student.attendance?.totalWorkingDays ?? 88;
-    const examRegisterNo = student.examRegisterNumbers?.[examId] || String(student.rollNo);
+    const examRegisterNo =
+      student.examRegisterNumbers?.[examId] ||
+      (student as any).examRegisterNos?.[examId] ||
+      (student as any).examRegNo ||
+      String(student.rollNo);
     const classInCharge = this.db.users.find(u => u.role === 'teacher' && (u as any).inChargeClassId === student.classId);
     const classTeacherName = classInCharge ? ((classInCharge as any).nameEn || classInCharge.name) : undefined;
 
@@ -2863,7 +2885,7 @@ export class ClientStorageApi {
           nameEn: s.nameEn,
           nameMl: s.nameMl,
           gender: s.gender || 'M',
-          examRegisterNo: s.examRegisterNumbers?.[eId] || '',
+          examRegisterNo: s.examRegisterNumbers?.[eId] || (s as any).examRegisterNos?.[eId] || (s as any).examRegNo || '',
         }));
         return this.jsonResponse(list);
       }
@@ -2874,15 +2896,40 @@ export class ClientStorageApi {
         if (!registerNumbers || typeof registerNumbers !== 'object') {
           return this.jsonResponse({ error: 'registerNumbers map is required' }, 400);
         }
+        const updatedStudents: Student[] = [];
         Object.entries(registerNumbers).forEach(([sId, regNo]) => {
-          const st = this.db.students.find(s => s.id === sId && s.classId === cId);
+          const st = this.db.students.find(s => (s.id === sId || s.admissionNo === sId) && s.classId === cId);
           if (st) {
+            const regVal = String(regNo || '').trim();
             if (!st.examRegisterNumbers) st.examRegisterNumbers = {};
-            st.examRegisterNumbers[eId] = String(regNo).trim();
+            st.examRegisterNumbers[eId] = regVal;
+
+            if (!(st as any).examRegisterNos) (st as any).examRegisterNos = {};
+            (st as any).examRegisterNos[eId] = regVal;
+
+            (st as any).examRegNo = regVal;
+            updatedStudents.push(st);
           }
         });
         this.saveDB();
-        return this.jsonResponse({ success: true, message: 'Register numbers saved' });
+
+        // 1. Immediate Firestore Cloud Persistence across schema formats
+        firestoreSync.updateExamRegisterNumbers(eId, registerNumbers, updatedStudents).catch(e => {
+          console.warn('Firestore updateExamRegisterNumbers error on POST:', e);
+        });
+
+        for (const st of updatedStudents) {
+          firestoreSync.syncStudent(st).catch(e => {
+            console.warn('Firestore syncStudent error for reg number on POST:', e);
+          });
+        }
+
+        // 2. Dispatch real-time update event for open tabs and components
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: this.db.students }));
+        }
+
+        return this.jsonResponse({ success: true, message: 'Register numbers saved permanently to Firestore and local storage' });
       }
 
       // Monitoring Matrix

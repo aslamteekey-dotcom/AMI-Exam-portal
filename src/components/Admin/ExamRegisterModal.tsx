@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Hash, Sparkles, Check, X, Loader2, GripHorizontal, Users } from 'lucide-react';
+import { Hash, Sparkles, Check, X, Loader2, GripHorizontal, Users, CheckCircle, AlertCircle } from 'lucide-react';
 import { sortStudentsBoysFirst, isBoyStudent } from '../../types';
+import { firestoreSync } from '../../services/firestoreSync';
 
 interface Props {
   classId: string;
@@ -33,6 +34,8 @@ export const ExamRegisterModal: React.FC<Props> = ({
   const { fetchWithAuth } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savedSuccess, setSavedSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [students, setStudents] = useState<StudentRegItem[]>([]);
   const [regMap, setRegMap] = useState<Record<string, string>>({});
 
@@ -140,7 +143,16 @@ export const ExamRegisterModal: React.FC<Props> = ({
 
   const handleSave = async () => {
     setSaving(true);
+    setError(null);
     try {
+      // 1. Direct Cloud Persistence to Firestore
+      await firestoreSync.updateExamRegisterNumbers(
+        examinationId,
+        regMap,
+        students.map(s => ({ id: s.studentId, admissionNo: s.admissionNo } as any))
+      );
+
+      // 2. Also execute through API to update local state and broadcast
       const res = await fetchWithAuth(
         `/api/examinations/${examinationId}/classes/${classId}/register-numbers`,
         {
@@ -149,16 +161,19 @@ export const ExamRegisterModal: React.FC<Props> = ({
           body: JSON.stringify({ registerNumbers: regMap }),
         }
       );
+
       if (res.ok) {
-        alert('Exam register numbers successfully assigned and saved!');
-        onSaved();
-        onClose();
+        setSavedSuccess(true);
+        setTimeout(() => {
+          onSaved();
+          onClose();
+        }, 800);
       } else {
         const err = await res.json();
-        alert(err.error || 'Failed to save register numbers');
+        setError(err.error || 'Failed to save register numbers');
       }
     } catch (err: any) {
-      alert(err.message || 'Error saving register numbers');
+      setError(err.message || 'Error saving register numbers');
     } finally {
       setSaving(false);
     }
@@ -318,6 +333,22 @@ export const ExamRegisterModal: React.FC<Props> = ({
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {savedSuccess && (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span className="font-semibold">
+              Exam register numbers successfully synced to Firestore and saved permanently!
+            </span>
+          </div>
+        )}
+
+        {error && (
+          <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{error}</span>
           </div>
         )}
 

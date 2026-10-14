@@ -493,14 +493,55 @@ export class FirestoreSyncService {
     this.unsubscribers = [];
   }
 
-  // Sync single student (strictly deduplicated using sanitized Admission No)
+  // Sync single student (strictly deduplicated across student.id and sanitized Admission No)
   public async syncStudent(student: Student): Promise<void> {
     try {
-      const docKey = String(student.admissionNo || student.id).trim();
-      await setDoc(doc(db, 'students', docKey), cleanForFirestore({ ...student, id: docKey }), { merge: true });
+      const cleanData = cleanForFirestore({ ...student });
+      if (student.id) {
+        await setDoc(doc(db, 'students', student.id), cleanData, { merge: true });
+      }
+      const admKey = String(student.admissionNo || '').trim();
+      if (admKey && admKey !== student.id) {
+        await setDoc(doc(db, 'students', admKey), cleanData, { merge: true });
+      }
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `students/${student.admissionNo || student.id}`);
       throw e;
+    }
+  }
+
+  // Direct persistence for Exam Register Numbers in Firestore across schema variations
+  public async updateExamRegisterNumbers(
+    examId: string,
+    registerNumbers: Record<string, string>,
+    students: Student[]
+  ): Promise<void> {
+    try {
+      for (const [sId, regNo] of Object.entries(registerNumbers)) {
+        const targetStudent = students.find(s => s.id === sId || s.admissionNo === sId);
+        const regVal = String(regNo || '').trim();
+        const updatePayload: Record<string, any> = {
+          examRegNo: regVal,
+          [`examRegisterNos.${examId}`]: regVal,
+          [`examRegisterNumbers.${examId}`]: regVal,
+        };
+
+        const targetIds = new Set<string>();
+        targetIds.add(sId);
+        if (targetStudent) {
+          if (targetStudent.id) targetIds.add(targetStudent.id);
+          if (targetStudent.admissionNo) targetIds.add(String(targetStudent.admissionNo).trim());
+        }
+
+        for (const docId of targetIds) {
+          if (docId) {
+            await setDoc(doc(db, 'students', docId), cleanForFirestore(updatePayload), { merge: true });
+          }
+        }
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'students/examRegisterNumbers');
+      console.warn('Error syncing exam register numbers to Firestore:', e);
     }
   }
 

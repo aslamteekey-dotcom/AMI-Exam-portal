@@ -108,6 +108,8 @@ export interface Student {
   dob?: string;
   gender?: 'M' | 'F';
   examRegisterNumbers?: Record<string, string>; // examinationId -> exam register number
+  examRegisterNos?: Record<string, string>; // examinationId -> exam register number (cloud persistence schema alias)
+  examRegNo?: string; // current active exam register number (cloud persistence schema alias)
   attendance?: {
     daysAttended: number;
     totalWorkingDays: number;

@@ -158,8 +158,14 @@ export const ProgressReportCard: React.FC<Props> = ({
   const attendanceDays = report.attendance?.daysAttended ?? report?.student?.attendance?.daysAttended ?? 88;
   const attendanceTotal = report.attendance?.totalWorkingDays ?? report?.student?.attendance?.totalWorkingDays ?? 88;
 
-  // Exam Register Number
-  const examRegisterNo = report.examRegisterNo || report.student?.examRegisterNumbers?.[report.examination?.id] || report.student?.rollNo || '—';
+  // Exam Register Number (supports multi-portal cloud sync across schema variations)
+  const examRegisterNo =
+    report.examRegisterNo ||
+    report.student?.examRegisterNumbers?.[report.examination?.id] ||
+    (report.student as any)?.examRegisterNos?.[report.examination?.id] ||
+    (report.student as any)?.examRegNo ||
+    report.student?.rollNo ||
+    '—';
 
   // Academic Rank Box logic:
   // Rank is awarded ONLY if all subjects are Passed, with zero withheld subjects and zero absences.

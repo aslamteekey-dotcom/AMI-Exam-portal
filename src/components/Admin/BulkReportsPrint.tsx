@@ -32,7 +32,7 @@ export const BulkReportsPrint: React.FC = () => {
     settings: InstitutionSettings;
   } | null>(null);
   const [fetching, setFetching] = useState(false);
-  const [viewMode, setViewMode] = useState<'bulk_cards' | 'ledger_table'>('bulk_cards');
+  const [viewMode, setViewMode] = useState<'bulk_cards' | 'ledger_table'>('ledger_table');
   const [activeSingleReport, setActiveSingleReport] = useState<StudentProgressReport | null>(null);
   const [isBatchPrinting, setIsBatchPrinting] = useState(false);
   const [pdfProgress, setPdfProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
@@ -119,10 +119,22 @@ export const BulkReportsPrint: React.FC = () => {
 
   useEffect(() => {
     loadInitial();
-  }, []);
+
+    const handleStudentsUpdated = () => {
+      if (selectedClassId && selectedExamId) {
+        fetchClassReports(selectedClassId, selectedExamId);
+      }
+    };
+    window.addEventListener('madrasa_students_updated', handleStudentsUpdated);
+    return () => {
+      window.removeEventListener('madrasa_students_updated', handleStudentsUpdated);
+    };
+  }, [selectedClassId, selectedExamId]);
 
   const handleClassChange = (cId: string) => {
     setSelectedClassId(cId);
+    // Explicit requirement: Set default view strictly to Result Ledger Table
+    setViewMode('ledger_table');
     if (selectedExamId) {
       fetchClassReports(cId, selectedExamId);
     }
@@ -130,6 +142,8 @@ export const BulkReportsPrint: React.FC = () => {
 
   const handleExamChange = (eId: string) => {
     setSelectedExamId(eId);
+    // Explicit requirement: Set default view strictly to Result Ledger Table
+    setViewMode('ledger_table');
     if (selectedClassId) {
       fetchClassReports(selectedClassId, eId);
     }
@@ -138,7 +152,8 @@ export const BulkReportsPrint: React.FC = () => {
   const handleLoadClassReportsClick = async () => {
     if (!selectedClassId || !selectedExamId) return;
     await fetchClassReports(selectedClassId, selectedExamId);
-    setViewMode('bulk_cards');
+    // Explicit requirement: Render "Result Ledger Table" first by default
+    setViewMode('ledger_table');
   };
 
   const handleExportCsv = async () => {
@@ -168,27 +183,39 @@ export const BulkReportsPrint: React.FC = () => {
     setViewMode('bulk_cards');
     setTimeout(() => {
       window.print();
-    }, 150);
+    }, 250);
   };
 
   const handleBatchPdfDownload = async () => {
-    // If not in bulk cards view, switch to bulk cards view first
+    // 1. Ensure bulk cards view is active so cards are present in DOM
     if (viewMode !== 'bulk_cards') {
       setViewMode('bulk_cards');
-      await new Promise(r => setTimeout(r, 200));
-    }
-
-    if (!bulkCardsContainerRef.current) return;
-    const cardElements = bulkCardsContainerRef.current.querySelectorAll<HTMLElement>('.report-print-sheet');
-    if (!cardElements || cardElements.length === 0) {
-      alert('No report cards found to export.');
-      return;
     }
 
     setIsBatchPrinting(true);
-    setPdfProgress({ current: 0, total: cardElements.length });
+    setPdfProgress({ current: 0, total: safeReports.length });
 
     try {
+      // Allow DOM to update and render student cards
+      let cardElements: HTMLElement[] = [];
+      let attempts = 0;
+      while (attempts < 20) {
+        await new Promise(r => setTimeout(r, 120));
+        const elements = document.querySelectorAll<HTMLElement>('.report-print-sheet');
+        if (elements && elements.length > 0) {
+          cardElements = Array.from(elements);
+          break;
+        }
+        attempts++;
+      }
+
+      if (cardElements.length === 0) {
+        throw new Error('No printable report cards found in DOM');
+      }
+
+      setPdfProgress({ current: 0, total: cardElements.length });
+
+      // Initialize pure jsPDF for A4 portrait batch compilation
       const pdf = new jsPDF({
         orientation: 'portrait',
         unit: 'mm',
@@ -198,19 +225,22 @@ export const BulkReportsPrint: React.FC = () => {
       const pdfWidth = pdf.internal.pageSize.getWidth(); // 210mm
       const pdfHeight = pdf.internal.pageSize.getHeight(); // 297mm
 
+      // Sequentially rasterize each student card container with scale: 2
       for (let i = 0; i < cardElements.length; i++) {
         setPdfProgress({ current: i + 1, total: cardElements.length });
         const cardEl = cardElements[i];
 
         const canvas = await html2canvas(cardEl, {
-          scale: 1.6,
+          scale: 2,
           useCORS: true,
           logging: false,
           backgroundColor: '#ffffff',
+          allowTaint: true,
         });
 
         const imgData = canvas.toDataURL('image/jpeg', 0.95);
 
+        // Subsequent cards start on a fresh page
         if (i > 0) {
           pdf.addPage('a4', 'portrait');
         }
@@ -231,8 +261,13 @@ export const BulkReportsPrint: React.FC = () => {
       const eName = (currentExam?.nameEn || 'Exam').replace(/\s+/g, '_');
       pdf.save(`${cName}_${eName}_All_Progress_Reports.pdf`);
     } catch (err) {
-      console.error('Batch PDF generation failed:', err);
-      alert('Failed to compile batch PDF. Please use the Print option and choose "Save as PDF".');
+      console.warn('Client batch PDF compilation encountered an issue. Gracefully triggering print fallback:', err);
+      // Fallback Print Route:
+      // Gracefully trigger window.print() targeting isolated printable cards layout with @media print { page-break-after: always; }
+      setViewMode('bulk_cards');
+      setTimeout(() => {
+        window.print();
+      }, 350);
     } finally {
       setIsBatchPrinting(false);
       setPdfProgress({ current: 0, total: 0 });
@@ -388,20 +423,9 @@ export const BulkReportsPrint: React.FC = () => {
           </button>
         </div>
 
-        {/* View Mode Switcher Toggle */}
+        {/* View Mode Switcher Toggle: Result Ledger Table first by default */}
         {safeReports.length > 0 && (
           <div className="pt-4 ml-auto flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
-            <button
-              onClick={() => setViewMode('bulk_cards')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
-                viewMode === 'bulk_cards'
-                  ? 'bg-emerald-800 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5" />
-              Full-Class Cards ({safeReports.length})
-            </button>
             <button
               onClick={() => setViewMode('ledger_table')}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
@@ -412,6 +436,17 @@ export const BulkReportsPrint: React.FC = () => {
             >
               <Table className="w-3.5 h-3.5" />
               Result Ledger Table
+            </button>
+            <button
+              onClick={() => setViewMode('bulk_cards')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
+                viewMode === 'bulk_cards'
+                  ? 'bg-emerald-800 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Full-Class Cards ({safeReports.length})
             </button>
           </div>
         )}
@@ -450,7 +485,7 @@ export const BulkReportsPrint: React.FC = () => {
                   {isBatchPrinting ? (
                     <>
                       <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-800" />
-                      Saving PDF...
+                      Generating PDF ({pdfProgress.current}/{pdfProgress.total})...
                     </>
                   ) : (
                     <>
@@ -530,6 +565,15 @@ export const BulkReportsPrint: React.FC = () => {
                 <span className="text-xs font-semibold px-2.5 py-1 bg-emerald-100 text-emerald-900 rounded-lg">
                   {currentExam?.nameEn}
                 </span>
+                <button
+                  type="button"
+                  onClick={handleBatchPdfDownload}
+                  disabled={isBatchPrinting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-800 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition cursor-pointer disabled:opacity-50 shadow-2xs"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-800" />
+                  Download Batch PDF
+                </button>
                 <button
                   onClick={() => setViewMode('bulk_cards')}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition cursor-pointer"
@@ -663,6 +707,34 @@ export const BulkReportsPrint: React.FC = () => {
           onClose={() => setShowRegModal(false)}
           onSaved={() => fetchClassReports(selectedClassId, selectedExamId)}
         />
+      )}
+
+      {/* Batch PDF Export Progress Indicator Overlay */}
+      {isBatchPrinting && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full text-center shadow-2xl border border-slate-200 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-800 mx-auto flex items-center justify-center">
+              <Loader2 className="w-6 h-6 animate-spin" />
+            </div>
+            <div>
+              <h3 className="font-bold text-slate-900 text-base">Compiling Batch PDF</h3>
+              <p className="text-xs text-emerald-800 font-bold mt-1">
+                Generating PDF (Card {pdfProgress.current} of {pdfProgress.total})...
+              </p>
+            </div>
+            <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+              <div
+                className="bg-emerald-700 h-full transition-all duration-300"
+                style={{
+                  width: `${pdfProgress.total > 0 ? (pdfProgress.current / pdfProgress.total) * 100 : 5}%`,
+                }}
+              />
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Rasterizing individual A4 student cards with high-definition vector scaling.
+            </p>
+          </div>
+        </div>
       )}
     </div>
   );

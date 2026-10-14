@@ -24,7 +24,10 @@ import {
   CreditCard,
   Printer,
   X,
+  Hash,
 } from 'lucide-react';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { db } from '../../services/firebase';
 
 export const ParentDashboard: React.FC = () => {
   const { user, fetchWithAuth, lang, t } = useAuth();
@@ -90,7 +93,79 @@ export const ParentDashboard: React.FC = () => {
 
   useEffect(() => {
     loadInitialData();
-  }, [lang]);
+
+    // Real-time Firestore listener for student register numbers
+    let unsub: (() => void) | undefined;
+    try {
+      unsub = onSnapshot(collection(db, 'students'), snapshot => {
+        if (!snapshot.empty) {
+          const remoteList = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Student));
+          setChildren(prev =>
+            prev.map(child => {
+              const remote = remoteList.find(r => r.id === child.id || r.admissionNo === child.admissionNo);
+              if (remote) {
+                const regNos = {
+                  ...(child.examRegisterNumbers || {}),
+                  ...((remote as any).examRegisterNumbers || {}),
+                  ...((remote as any).examRegisterNos || {}),
+                };
+                return {
+                  ...child,
+                  ...remote,
+                  examRegisterNumbers: regNos,
+                  examRegisterNos: regNos,
+                  examRegNo:
+                    (remote as any).examRegNo ||
+                    (remote as any).examRegisterNos?.[selectedExamId] ||
+                    regNos[selectedExamId] ||
+                    '',
+                };
+              }
+              return child;
+            })
+          );
+        }
+      });
+    } catch (e) {
+      console.warn('Real-time students listener error in ParentDashboard:', e);
+    }
+
+    const handleStudentsUpdated = (e: any) => {
+      const list = e.detail;
+      if (Array.isArray(list)) {
+        setChildren(prev =>
+          prev.map(child => {
+            const found = list.find((s: Student) => s.id === child.id || s.admissionNo === child.admissionNo);
+            if (found) {
+              const regNos = {
+                ...(child.examRegisterNumbers || {}),
+                ...((found as any).examRegisterNumbers || {}),
+                ...((found as any).examRegisterNos || {}),
+              };
+              return {
+                ...child,
+                ...found,
+                examRegisterNumbers: regNos,
+                examRegisterNos: regNos,
+                examRegNo:
+                  (found as any).examRegNo ||
+                  (found as any).examRegisterNos?.[selectedExamId] ||
+                  regNos[selectedExamId] ||
+                  '',
+              };
+            }
+            return child;
+          })
+        );
+      }
+    };
+    window.addEventListener('madrasa_students_updated', handleStudentsUpdated);
+
+    return () => {
+      if (unsub) unsub();
+      window.removeEventListener('madrasa_students_updated', handleStudentsUpdated);
+    };
+  }, [lang, selectedExamId]);
 
   // Automatically fetch and load progress report card whenever selected student or examination changes
   const loadReport = async (childId: string, examId: string) => {
@@ -172,6 +247,27 @@ export const ParentDashboard: React.FC = () => {
             <p className="text-xs text-emerald-200 mt-1">
               {t.parentRole} • Al-Madrasathul Islamiya Pallikkuth
             </p>
+            {selectedChild && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="bg-emerald-950/80 border border-emerald-400/50 text-emerald-200 px-3 py-1 rounded-full text-xs font-mono font-bold flex items-center gap-1.5 shadow-2xs">
+                  <Hash className="w-3.5 h-3.5 text-emerald-300" />
+                  <span className="text-[10px] uppercase font-sans text-emerald-300 font-bold">Exam Reg No:</span>
+                  <span className="text-white text-sm">
+                    {selectedChild.examRegisterNumbers?.[selectedExamId] ||
+                      (selectedChild as any).examRegisterNos?.[selectedExamId] ||
+                      (selectedChild as any).examRegNo ||
+                      reportData?.report?.examRegisterNo ||
+                      '—'}
+                  </span>
+                </span>
+                <span className="bg-white/10 text-emerald-100 px-2.5 py-1 rounded-full text-xs font-mono">
+                  Roll: {selectedChild.rollNo} • Adm: {selectedChild.admissionNo}
+                </span>
+                <span className="bg-white/15 text-white px-2.5 py-1 rounded-full text-xs font-semibold">
+                  Class: {classesMap[selectedChild.classId] || selectedChild.classId}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Exam Selector Pill/Dropdown in Banner */}
@@ -231,11 +327,17 @@ export const ParentDashboard: React.FC = () => {
                   onChange={e => setSelectedChildId(e.target.value)}
                   className="w-full p-2.5 pr-8 border border-emerald-300 rounded-xl bg-emerald-50/60 font-bold text-slate-800 text-xs focus:ring-2 focus:ring-emerald-700 focus:outline-none cursor-pointer appearance-none"
                 >
-                  {children.map(child => (
-                    <option key={child.id} value={child.id}>
-                      {child.nameEn} {child.nameMl ? `(${child.nameMl})` : ''} — Class {classesMap[child.classId] || child.classId} (Adm: {child.admissionNo})
-                    </option>
-                  ))}
+                  {children.map(child => {
+                    const childRegNo =
+                      child.examRegisterNumbers?.[selectedExamId] ||
+                      (child as any).examRegisterNos?.[selectedExamId] ||
+                      (child as any).examRegNo;
+                    return (
+                      <option key={child.id} value={child.id}>
+                        {child.nameEn} {child.nameMl ? `(${child.nameMl})` : ''} — Class {classesMap[child.classId] || child.classId} (Adm: {child.admissionNo}{childRegNo ? `, Reg: ${childRegNo}` : ''})
+                      </option>
+                    );
+                  })}
                 </select>
                 <ChevronDown className="w-4 h-4 text-emerald-800 absolute right-3 top-3 pointer-events-none" />
               </div>
@@ -245,6 +347,11 @@ export const ParentDashboard: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {children.map(child => {
                 const isSelected = child.id === selectedChildId;
+                const childRegNo =
+                  child.examRegisterNumbers?.[selectedExamId] ||
+                  (child as any).examRegisterNos?.[selectedExamId] ||
+                  (child as any).examRegNo;
+
                 return (
                   <button
                     type="button"
@@ -270,8 +377,15 @@ export const ParentDashboard: React.FC = () => {
                         <h3 className="font-bold text-slate-900 text-sm">
                           {isMl && child.nameMl ? child.nameMl : child.nameEn}
                         </h3>
-                        <p className="text-xs text-slate-500 font-medium">
-                          {classesMap[child.classId] || child.classId} • Adm: <span className="font-mono">{child.admissionNo}</span>
+                        <p className="text-xs text-slate-500 font-medium flex flex-wrap items-center gap-1.5 mt-0.5">
+                          <span>{classesMap[child.classId] || child.classId}</span>
+                          <span>•</span>
+                          <span>Adm: <span className="font-mono">{child.admissionNo}</span></span>
+                          {childRegNo && (
+                            <span className="font-mono text-emerald-900 font-bold bg-emerald-100/90 border border-emerald-300/60 px-1.5 py-0.5 rounded text-[10px]">
+                              Reg: {childRegNo}
+                            </span>
+                          )}
                         </p>
                       </div>
                     </div>
