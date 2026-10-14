@@ -107,7 +107,7 @@ export const LoginForm: React.FC = () => {
           <div className="mt-6 pt-4 border-t border-slate-100 flex items-start gap-2 text-slate-400 text-[11px] leading-relaxed">
             <Shield className="w-4 h-4 text-emerald-800 shrink-0 mt-0.5" />
             <span>
-              Authorized institutional access only. Principal, Usthad teachers, and parents should use their designated credentials to sign in.
+              Authorized institutional access only. Principal, Teachers, and parents should use their designated credentials to sign in.
             </span>
           </div>
         </div>

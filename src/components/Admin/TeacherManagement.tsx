@@ -59,6 +59,16 @@ export const TeacherManagement: React.FC = () => {
   const [assignClassId, setAssignClassId] = useState('');
   const [assignSubjectId, setAssignSubjectId] = useState('');
 
+  // Toast Notification
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => setToastMessage(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
+
   const isMl = lang === 'ml';
 
   const loadData = async () => {
@@ -394,7 +404,7 @@ export const TeacherManagement: React.FC = () => {
   const handleAddAssignment = async () => {
     if (!assignTeacher || !assignClassId || !assignSubjectId) return;
 
-    // Prevent assigning the same subject of a specific class to more than one teacher
+    // Check for conflicting assignment with another teacher
     const conflictingAllocation = assignments.find(
       a => a.classId === assignClassId && a.subjectId === assignSubjectId && a.teacherId !== assignTeacher.id
     );
@@ -402,21 +412,53 @@ export const TeacherManagement: React.FC = () => {
       const conflictingTeacher = teachers.find(t => t.id === conflictingAllocation.teacherId);
       const targetClass = classes.find(c => c.id === assignClassId);
       const targetSubject = subjects.find(s => s.id === assignSubjectId);
-      alert(
-        `Assignment Conflict Warning:\n\nThe subject "${targetSubject?.nameMl || targetSubject?.nameEn}" for "${targetClass?.name}" is already allocated to teacher "${conflictingTeacher?.name || 'another teacher'}".\n\nDuplicate allocation is blocked. Please remove the existing allocation first.`
+      const confirmReassign = window.confirm(
+        `The subject "${targetSubject?.nameMl || targetSubject?.nameEn}" for "${targetClass?.name}" is currently allocated to teacher "${conflictingTeacher?.name || 'another teacher'}".\n\nDo you want to reassign this subject to "${assignTeacher.name}"?`
       );
-      return;
+      if (!confirmReassign) {
+        return;
+      }
     }
 
-    try {
-      const newAsg = {
-        id: `asg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        teacherId: assignTeacher.id,
-        classId: assignClassId,
-        subjectId: assignSubjectId,
-      };
+    const newAsg: TeacherAssignment = {
+      id: `asg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      teacherId: assignTeacher.id,
+      classId: assignClassId,
+      subjectId: assignSubjectId,
+    };
 
-      // 1. Commit directly to Firestore 'teachers' collection
+    // 1. Instant local state update for zero lag
+    setAssignments(prev => [
+      ...prev.filter(a => !(a.classId === assignClassId && a.subjectId === assignSubjectId)),
+      newAsg,
+    ]);
+
+    setTeachers(prev => prev.map(t => {
+      const isTarget = t.id === assignTeacher.id;
+      const currentList = Array.isArray((t as any).assignedSubjects)
+        ? (t as any).assignedSubjects
+        : (Array.isArray(t.assignments) ? t.assignments : []);
+      const filtered = currentList.filter((a: any) => !(a.classId === assignClassId && a.subjectId === assignSubjectId));
+      if (isTarget) {
+        return {
+          ...t,
+          assignments: [...filtered, newAsg],
+          assignedSubjects: [...filtered, newAsg],
+        };
+      }
+      return {
+        ...t,
+        assignments: filtered,
+        assignedSubjects: filtered,
+      };
+    }));
+
+    // Close modal immediately and show success toast
+    setAssignTeacher(null);
+    setToastMessage('Subject assigned successfully');
+
+    try {
+      // 2. Commit directly to Firestore 'teachers' collection
       try {
         const existingAsgs = Array.isArray(assignTeacher.assignedSubjects)
           ? assignTeacher.assignedSubjects
@@ -435,27 +477,38 @@ export const TeacherManagement: React.FC = () => {
           cleanForFirestore(updatedTeacher),
           { merge: true }
         );
+
+        // Also clean up conflicting teacher in Firestore if reassigned
+        if (conflictingAllocation) {
+          const prevTeacherObj = teachers.find(t => t.id === conflictingAllocation.teacherId);
+          if (prevTeacherObj) {
+            const prevExisting = (prevTeacherObj.assignments || prevTeacherObj.assignedSubjects || []).filter(
+              (a: any) => !(a.classId === assignClassId && a.subjectId === assignSubjectId)
+            );
+            await setDoc(
+              doc(db, 'teachers', prevTeacherObj.id),
+              cleanForFirestore({ ...prevTeacherObj, assignments: prevExisting, assignedSubjects: prevExisting }),
+              { merge: true }
+            );
+          }
+        }
       } catch (fErr: any) {
         console.error('Firestore assignment write error:', fErr);
         handleFirestoreError(fErr, OperationType.WRITE, `teachers/${assignTeacher.id}`);
       }
 
-      // 2. Local storage / backend API
+      // 3. Local storage / backend API
       const res = await fetchWithAuth('/api/teacher-assignments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newAsg),
+        body: JSON.stringify({ ...newAsg, reassign: true, force: true }),
       });
-      if (res.ok) {
-        setAssignTeacher(null);
-        await loadData();
-      } else {
+      if (!res.ok) {
         const err = await res.json();
-        alert(err.error || 'Failed to assign teacher');
+        console.warn('API assignment warning:', err);
       }
     } catch (err: any) {
       console.error('Error adding teacher assignment:', err);
-      alert('Failed to assign teacher');
     }
   };
 
@@ -515,6 +568,15 @@ export const TeacherManagement: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed top-6 right-6 z-50 flex items-center gap-2 bg-emerald-800 text-white px-4 py-2.5 rounded-xl shadow-xl text-xs font-bold border border-emerald-600 animate-in fade-in slide-in-from-top-2 duration-200">
+          <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-lg font-bold text-slate-900">{t.navTeachers} ({teachers.length})</h2>
@@ -537,7 +599,7 @@ export const TeacherManagement: React.FC = () => {
           <Users className="w-10 h-10 mx-auto text-slate-400 mb-2" />
           <h3 className="font-bold text-slate-800 text-sm">No Teachers Added Yet</h3>
           <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-            The database is in a fresh clean state. Click the "Create Teacher Account" button above to add Usthad teachers and assign them to classes and subjects.
+            The database is in a fresh clean state. Click the "Create Teacher Account" button above to add teachers and assign them to classes and subjects.
           </p>
         </div>
       ) : (
@@ -559,7 +621,7 @@ export const TeacherManagement: React.FC = () => {
                 <div>
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full">
-                      Usthad Account
+                      Teacher Account
                     </span>
                     <div className="flex items-center gap-1">
                       <button
@@ -643,40 +705,53 @@ export const TeacherManagement: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Assigned Subjects List - Strictly in Malayalam */}
+                  {/* Assigned Subjects List - Sorted ascending Class 1 to Class 9 */}
                   <div className="mt-3 pt-3 border-t border-slate-100 space-y-1.5">
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                       Assigned Classes & Subjects ({tAssignments.length}):
                     </span>
-                    {tAssignments.length === 0 ? (
-                      <span className="text-xs text-slate-400 italic">No classes assigned yet</span>
-                    ) : (
-                      <div className="space-y-1 max-h-36 overflow-y-auto">
-                        {tAssignments.map((a: TeacherAssignment) => {
-                          const cls = classes.find(c => c.id === a.classId);
-                          const sub = subjects.find(s => s.id === a.subjectId);
-                          const subMlName = sub ? getSubjectMalayalamName(sub, cls?.numericGrade) : '—';
+                    {(() => {
+                      const sortedAssignments = [...tAssignments].sort((a: TeacherAssignment, b: TeacherAssignment) => {
+                        const gradeA = classes.find(c => c.id === a.classId)?.numericGrade ?? 999;
+                        const gradeB = classes.find(c => c.id === b.classId)?.numericGrade ?? 999;
+                        if (gradeA !== gradeB) return gradeA - gradeB;
+                        const subA = subjects.find(s => s.id === a.subjectId)?.nameEn || '';
+                        const subB = subjects.find(s => s.id === b.subjectId)?.nameEn || '';
+                        return subA.localeCompare(subB);
+                      });
 
-                          return (
-                            <div
-                              key={a.id}
-                              className="flex items-center justify-between text-xs bg-slate-50 p-2 rounded-lg border border-slate-200"
-                            >
-                              <span className="font-semibold text-slate-800">
-                                {cls?.name} • <span className="text-emerald-950 font-bold">{subMlName}</span>
-                              </span>
-                              <button
-                                onClick={() => handleRemoveAssignment(a.id, teacher.id)}
-                                className="text-slate-400 hover:text-rose-600 p-0.5 transition cursor-pointer"
-                                title="Remove assignment"
+                      if (sortedAssignments.length === 0) {
+                        return <span className="text-xs text-slate-400 italic">No classes assigned yet</span>;
+                      }
+
+                      return (
+                        <div className="space-y-1 max-h-36 overflow-y-auto">
+                          {sortedAssignments.map((a: TeacherAssignment) => {
+                            const cls = classes.find(c => c.id === a.classId);
+                            const sub = subjects.find(s => s.id === a.subjectId);
+                            const subMlName = sub ? getSubjectMalayalamName(sub, cls?.numericGrade) : '—';
+
+                            return (
+                              <div
+                                key={a.id}
+                                className="flex items-center justify-between text-xs bg-slate-50 p-2 rounded-lg border border-slate-200"
                               >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                                <span className="font-semibold text-slate-800">
+                                  {cls?.name} • <span className="text-emerald-950 font-bold">{subMlName}</span>
+                                </span>
+                                <button
+                                  onClick={() => handleRemoveAssignment(a.id, teacher.id)}
+                                  className="text-slate-400 hover:text-rose-600 p-0.5 transition cursor-pointer"
+                                  title="Remove assignment"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -716,7 +791,7 @@ export const TeacherManagement: React.FC = () => {
                   type="text"
                   value={tName}
                   onChange={e => setTName(e.target.value)}
-                  placeholder="e.g. Usthad Ibrahim Moulavi"
+                  placeholder="e.g. Ibrahim Moulavi"
                   className="w-full p-2 border rounded-lg focus:outline-emerald-700"
                   required
                 />

@@ -244,9 +244,9 @@ export function getInitialClientSeedData(): MadrasaDatabase {
     },
     {
       id: 'usr_t1',
-      username: 'usthad.abdulrahman',
-      name: 'Usthad Abdul Rahman',
-      nameMl: 'ഉസ്താദ് അബ്ദുൽ റഹ്മാൻ',
+      username: 'teacher.abdulrahman',
+      name: 'Abdul Rahman',
+      nameMl: 'അബ്ദുൽ റഹ്മാൻ',
       role: 'teacher',
       plainPassword: 'teacher123',
       active: true,
@@ -256,9 +256,9 @@ export function getInitialClientSeedData(): MadrasaDatabase {
     },
     {
       id: 'usr_t2',
-      username: 'usthad.muhammad',
-      name: 'Usthad Muhammad Faizy',
-      nameMl: 'ഉസ്താദ് മുഹമ്മദ് ഫൈസി',
+      username: 'teacher.muhammad',
+      name: 'Muhammad Faizy',
+      nameMl: 'മുഹമ്മദ് ഫൈസി',
       role: 'teacher',
       plainPassword: 'teacher123',
       active: true,
@@ -268,9 +268,9 @@ export function getInitialClientSeedData(): MadrasaDatabase {
     },
     {
       id: 'usr_t3',
-      username: 'usthad.usman',
-      name: 'Usthad Usman Musliyar',
-      nameMl: 'ഉസ്താദ് ഉസ്മാൻ മുസ്ലിയാർ',
+      username: 'teacher.usman',
+      name: 'Usman Musliyar',
+      nameMl: 'ഉസ്മാൻ മുസ്ലിയാർ',
       role: 'teacher',
       plainPassword: 'teacher123',
       active: true,
@@ -1349,6 +1349,9 @@ export class ClientStorageApi {
     let hasWithheldCe = false;
     let anySubjectFailed = false;
 
+    let totalAttendedMaxMarks = 0;
+    let totalAttendedObtainedMarks = 0;
+
     const reportSubjects: ProgressReportSubject[] = applicableSubjects.map(sub => {
       const displayName = this.getSubjectDisplayName(sub, cls.numericGrade);
       const configuredComponents = this.getComponentsForClass(sub, cls.numericGrade);
@@ -1421,6 +1424,8 @@ export class ClientStorageApi {
       }
 
       totalObtainedMarks += entry.subjectTotal;
+      totalAttendedObtainedMarks += entry.subjectTotal;
+      totalAttendedMaxMarks += maxSubMarks;
 
       let subNonCeMax = 0;
       let subNonCeObtained = 0;
@@ -1470,9 +1475,9 @@ export class ClientStorageApi {
     });
 
     const percentage =
-      !hasIncompleteSubjects && !hasAbsentSubjects && totalMaxMarks > 0
-        ? Number(((totalObtainedMarks / totalMaxMarks) * 100).toFixed(2))
-        : null;
+      totalAttendedMaxMarks > 0
+        ? Number(((totalAttendedObtainedMarks / totalAttendedMaxMarks) * 100).toFixed(2))
+        : 0;
 
     const overallNonCeThreshold = nonCeDiaryMax * 0.35;
     const passedNonCeCriteria = nonCeDiaryMax > 0 && nonCeDiaryObtained >= overallNonCeThreshold && !anySubjectFailed;
@@ -1497,6 +1502,9 @@ export class ClientStorageApi {
     const attConfig = this.db.attendanceConfigs?.find(a => a.classId === student.classId);
     const daysAttended = attConfig?.studentDaysAttended?.[student.id] ?? student.attendance?.daysAttended ?? 88;
     const totalWorkingDays = attConfig?.totalWorkingDays ?? student.attendance?.totalWorkingDays ?? 88;
+    const examRegisterNo = student.examRegisterNumbers?.[examId] || String(student.rollNo);
+    const classInCharge = this.db.users.find(u => u.role === 'teacher' && (u as any).inChargeClassId === student.classId);
+    const classTeacherName = classInCharge ? ((classInCharge as any).nameEn || classInCharge.name) : undefined;
 
     return {
       student,
@@ -1505,8 +1513,11 @@ export class ClientStorageApi {
       classNameEn: cls.name,
       classNameMl: cls.nameMl,
       subjects: reportSubjects,
-      totalMaxMarks,
-      totalObtainedMarks,
+      totalMaxMarks: totalAttendedMaxMarks > 0 ? totalAttendedMaxMarks : totalMaxMarks,
+      totalObtainedMarks: totalAttendedObtainedMarks,
+      attendedObtainedMarks: totalAttendedObtainedMarks,
+      attendedMaxMarks: totalAttendedMaxMarks > 0 ? totalAttendedMaxMarks : totalMaxMarks,
+      examRegisterNo,
       nonCeDiaryMax,
       nonCeDiaryObtained,
       percentage,
@@ -1523,6 +1534,7 @@ export class ClientStorageApi {
       resultStatus,
       resultStatusMl,
       isPublished: exam.isPublished,
+      classTeacherName,
     };
   }
 
@@ -1824,27 +1836,28 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/teacher-assignments' && method === 'POST') {
-        const { teacherId, classId, subjectId, id } = bodyData;
+        const { teacherId, classId, subjectId, id, force, reassign } = bodyData;
         
-        // Prevent assigning the same subject of a specific class to more than one teacher
+        // Check if allocated to a different teacher
         const conflictingAsg = this.db.teacherAssignments.find(
           a => a.classId === classId && a.subjectId === subjectId && a.teacherId !== teacherId
         );
-        if (conflictingAsg) {
+        if (conflictingAsg && !force && !reassign) {
           const conflictingTeacher = this.db.users.find(u => u.id === conflictingAsg.teacherId);
           const targetCls = this.db.classes.find(c => c.id === classId);
           const targetSub = this.db.subjects.find(s => s.id === subjectId);
           return this.jsonResponse({
-            error: `This subject slot (${targetSub?.nameMl || targetSub?.nameEn || 'Subject'} in ${targetCls?.name || 'Class'}) is already allocated to teacher "${conflictingTeacher?.name || 'another teacher'}". Please remove that assignment first.`,
+            error: `This subject slot (${targetSub?.nameMl || targetSub?.nameEn || 'Subject'} in ${targetCls?.name || 'Class'}) is already allocated to teacher "${conflictingTeacher?.name || 'another teacher'}". Please confirm re-assignment or remove that assignment first.`,
+            hasConflict: true,
+            prevTeacherName: conflictingTeacher?.name,
           }, 400);
         }
 
-        const exists = this.db.teacherAssignments.some(
-          a => a.teacherId === teacherId && a.classId === classId && a.subjectId === subjectId
+        // Clean out any prior assignment for this class-subject slot
+        this.db.teacherAssignments = this.db.teacherAssignments.filter(
+          a => !(a.classId === classId && a.subjectId === subjectId)
         );
-        if (exists) {
-          return this.jsonResponse({ error: 'Assignment already exists' }, 400);
-        }
+
         const newAssignment: TeacherAssignment = {
           id: id || `asg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
           teacherId,
@@ -2773,6 +2786,39 @@ export class ClientStorageApi {
         const report = this.generateStudentProgressReport(sId, eId);
         if (!report) return this.jsonResponse({ error: 'Report could not be generated' }, 404);
         return this.jsonResponse(report);
+      }
+
+      const regNosMatch = path.match(/^\/api\/examinations\/([^/]+)\/classes\/([^/]+)\/register-numbers$/);
+      if (regNosMatch && method === 'GET') {
+        const [, eId, cId] = regNosMatch;
+        const students = sortStudentsBoysFirst(this.db.students.filter(s => s.classId === cId && s.status === 'active'));
+        const list = students.map(s => ({
+          studentId: s.id,
+          admissionNo: s.admissionNo,
+          rollNo: s.rollNo,
+          nameEn: s.nameEn,
+          nameMl: s.nameMl,
+          gender: s.gender || 'M',
+          examRegisterNo: s.examRegisterNumbers?.[eId] || '',
+        }));
+        return this.jsonResponse(list);
+      }
+
+      if (regNosMatch && method === 'POST') {
+        const [, eId, cId] = regNosMatch;
+        const { registerNumbers } = bodyData;
+        if (!registerNumbers || typeof registerNumbers !== 'object') {
+          return this.jsonResponse({ error: 'registerNumbers map is required' }, 400);
+        }
+        Object.entries(registerNumbers).forEach(([sId, regNo]) => {
+          const st = this.db.students.find(s => s.id === sId && s.classId === cId);
+          if (st) {
+            if (!st.examRegisterNumbers) st.examRegisterNumbers = {};
+            st.examRegisterNumbers[eId] = String(regNo).trim();
+          }
+        });
+        this.saveDB();
+        return this.jsonResponse({ success: true, message: 'Register numbers saved' });
       }
 
       // Monitoring Matrix

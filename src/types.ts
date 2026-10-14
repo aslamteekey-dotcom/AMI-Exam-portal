@@ -229,6 +229,7 @@ export interface StudentProgressReport {
     totalWorkingDays: number;
   };
   denseRankText?: string; // e.g. "Rank 1", "Need Improvement", "Withheld", "Absent"
+  classTeacherName?: string;
 }
 
 export const TUITION_FEE_MONTHS = [

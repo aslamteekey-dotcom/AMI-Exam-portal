@@ -181,7 +181,7 @@ export const MarkMonitoring: React.FC = () => {
               <tr>
                 <th className="p-3 w-28 whitespace-nowrap">Class</th>
                 <th className="p-3 whitespace-nowrap">Subject</th>
-                <th className="p-3 whitespace-nowrap">Assigned Usthad (Teacher)</th>
+                <th className="p-3 whitespace-nowrap">Assigned Teacher</th>
                 <th className="p-3 text-center w-24 whitespace-nowrap">Students</th>
                 <th className="p-3 text-center w-36 whitespace-nowrap">Status</th>
                 <th className="p-3 text-center w-32 whitespace-nowrap">Action</th>

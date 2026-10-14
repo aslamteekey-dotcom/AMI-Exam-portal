@@ -330,7 +330,7 @@ export const AdminDashboard: React.FC = () => {
               <span className="text-2xl font-black text-blue-900 font-mono mt-1 block">
                 {overviewData?.totalTeachers ?? 0}
               </span>
-              <span className="text-[10px] text-slate-400">Usthads Assigned</span>
+              <span className="text-[10px] text-slate-400">Teachers Assigned</span>
             </div>
 
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">

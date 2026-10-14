@@ -48,9 +48,15 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
       const imgProps = pdf.getImageProperties(imgData);
-      const imgHeight = (imgProps.height * pdfWidth) / imgProps.width;
 
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, Math.min(imgHeight, pdfHeight));
+      // Fit card proportionally onto single crisp A4 page
+      const ratio = Math.min(pdfWidth / imgProps.width, pdfHeight / imgProps.height);
+      const finalWidth = imgProps.width * ratio;
+      const finalHeight = imgProps.height * ratio;
+      const posX = (pdfWidth - finalWidth) / 2;
+      const posY = (pdfHeight - finalHeight) / 2;
+
+      pdf.addImage(imgData, 'PNG', posX, posY, finalWidth, finalHeight, undefined, 'FAST');
       const safeStudentName = (report?.student?.nameEn || 'student').replace(/\s+/g, '_');
       const safeExamName = (report?.examination?.nameEn || 'exam').replace(/\s+/g, '_');
       pdf.save(`Progress_Report_${safeStudentName}_${safeExamName}.pdf`);
@@ -108,6 +114,12 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
     .replace(/\s*\(.*?\)\s*/g, '')
     .replace(/[\u0D00-\u0D7F]+/g, '')
     .trim();
+
+  // Numeral value for class field (e.g., label "Class:", value "7")
+  const classNumeral = cleanClassName.replace(/[^0-9]/g, '') || cleanClassName || '—';
+
+  // Dynamically resolve Class In-charge Teacher name
+  const classInChargeName = report?.classTeacherName || (report as any)?.classInChargeName || 'Class In-Charge';
 
   // Grand total calculations for attended subjects
   let grandAttendedObtained = 0;
@@ -207,8 +219,8 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
         <div
           ref={reportRef}
           id="report-print-sheet"
-          className="w-full max-w-[820px] bg-white text-slate-900 border-2 border-emerald-900/30 p-8 md:p-10 shadow-lg print:shadow-none print:border-none print:p-4 print:max-w-none print:w-full font-sans relative"
-          style={{ minHeight: '1080px' }}
+          className="w-full max-w-[820px] bg-white text-slate-900 border-2 border-emerald-900/30 p-6 md:p-8 shadow-lg print:shadow-none print:border-none print:p-0 print:max-w-none print:w-full font-sans relative print:min-h-0 print:h-auto"
+          style={{ minHeight: '940px' }}
         >
           {/* Subtle Islamic Geometric Corner Motifs */}
           <div className="absolute top-3 left-3 text-emerald-800/25 text-xs font-serif select-none pointer-events-none">
@@ -254,34 +266,34 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
             </div>
           </div>
 
-          {/* 2. DEDICATED STUDENT DETAILS BOX */}
+          {/* 2. DEDICATED STUDENT DETAILS BOX - Typography & Sentence Case Rules */}
           <div className="bg-emerald-50/60 border border-emerald-900/30 rounded-xl p-3.5 mb-4 text-xs">
-            <div className="grid grid-cols-3 gap-4 text-left">
-              <div>
-                <span className="text-[11px] font-semibold text-slate-500 uppercase block">Student Name:</span>
-                <span className="font-bold text-slate-900 text-sm block leading-tight">
-                  {report?.student?.nameEn || (report?.student as any)?.name || '—'}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-left items-start">
+              <div className="space-y-0.5">
+                <span className="text-[11px] font-semibold text-slate-600 block">Student name:</span>
+                <span className="font-bold text-black text-sm block leading-tight uppercase tracking-tight">
+                  {(report?.student?.nameEn || (report?.student as any)?.name || '—').toUpperCase()}
                 </span>
-                {report?.student?.nameMl && (
-                  <span className="text-[11px] text-slate-600 font-medium block">{report.student.nameMl}</span>
-                )}
-              </div>
-              <div>
-                <span className="text-[11px] font-semibold text-slate-500 uppercase block">Class:</span>
-                <span className="font-bold text-emerald-950 text-sm block">
-                  {cleanClassName || '—'}
-                </span>
-                <span className="text-[11px] text-slate-700 font-mono font-semibold block">
-                  Exam Register No: {examRegisterNo}
+                <span className="text-[11px] text-slate-600 truncate block pt-0.5">
+                  Parent: <span style={{ color: '#000000' }} className="font-bold text-black uppercase">{(report?.student?.parentNameEn || '—').toUpperCase()}</span>
                 </span>
               </div>
               <div>
-                <span className="text-[11px] font-semibold text-slate-500 uppercase block">Admission No:</span>
-                <span className="font-mono font-bold text-slate-900 text-sm block">
-                  {report?.student?.admissionNo || '—'}
+                <span className="text-[11px] font-semibold text-slate-600 block">Class:</span>
+                <span className="font-bold text-black text-sm block uppercase font-mono">
+                  {classNumeral}
                 </span>
-                <span className="text-[11px] text-slate-600 truncate block">
-                  Parent: <span style={{ color: '#000000' }} className="font-bold text-black">{report?.student?.parentNameEn || '—'}</span>
+              </div>
+              <div>
+                <span className="text-[11px] font-semibold text-slate-600 block">Admission no:</span>
+                <span className="font-mono font-bold text-black text-sm block uppercase">
+                  {String(report?.student?.admissionNo || '—').toUpperCase()}
+                </span>
+              </div>
+              <div>
+                <span className="text-[11px] font-semibold text-slate-600 block">Exam reg no:</span>
+                <span className="font-mono font-bold text-black text-sm block uppercase">
+                  {String(examRegisterNo || '—').toUpperCase()}
                 </span>
               </div>
             </div>

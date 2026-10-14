@@ -327,7 +327,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
               </h2>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              {isMl ? (exam?.nameMl || exam?.nameEn) : (exam?.nameEn || exam?.nameMl)} • Usthad: <span className="font-semibold text-slate-700">{teacherHeader}</span> • Al-Madrasathul Islamiya Pallikkuth
+              {isMl ? (exam?.nameMl || exam?.nameEn) : (exam?.nameEn || exam?.nameMl)} • Teacher: <span className="font-semibold text-slate-700">{teacherHeader}</span> • Al-Madrasathul Islamiya Pallikkuth
             </p>
           </div>
 
