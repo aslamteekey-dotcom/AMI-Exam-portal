@@ -137,7 +137,7 @@ export const AdminDashboard: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Principal Header Banner */}
-      <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-emerald-800 text-white rounded-2xl p-6 shadow-md">
+      <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-emerald-800 text-white rounded-2xl p-6 shadow-md print:hidden">
         <div className="text-center font-serif text-emerald-300 text-sm mb-3" dir="rtl">
           بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
         </div>
@@ -171,7 +171,7 @@ export const AdminDashboard: React.FC = () => {
       </div>
 
       {/* Navigation Tabs Bar */}
-      <div className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-1 overflow-x-auto text-xs font-bold scrollbar-none">
+      <div className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-1 overflow-x-auto text-xs font-bold scrollbar-none print:hidden">
         <button
           onClick={() => setActiveTab('overview')}
           className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${

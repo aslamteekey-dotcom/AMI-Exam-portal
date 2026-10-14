@@ -9,9 +9,17 @@ interface Props {
   report: StudentProgressReport;
   settings: InstitutionSettings;
   onBack?: () => void;
+  hideToolbar?: boolean;
+  isBatchItem?: boolean;
 }
 
-export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }) => {
+export const ProgressReportCard: React.FC<Props> = ({
+  report,
+  settings,
+  onBack,
+  hideToolbar = false,
+  isBatchItem = false,
+}) => {
   const { lang, t } = useAuth();
   const reportRef = useRef<HTMLDivElement>(null);
   const [isExporting, setIsExporting] = useState(false);
@@ -173,72 +181,74 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
   }
 
   return (
-    <div className="space-y-6">
-      {/* Top Action Toolbar (Hidden in Print) */}
-      <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs print:hidden">
-        <div className="flex items-center gap-3">
-          {onBack && (
+    <div className={hideToolbar ? '' : 'space-y-6'}>
+      {/* Top Action Toolbar (Hidden in Print & in Batch View) */}
+      {!hideToolbar && (
+        <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs print:hidden">
+          <div className="flex items-center gap-3">
+            {onBack && (
+              <button
+                onClick={onBack}
+                className="px-3.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer"
+              >
+                ← {t.back}
+              </button>
+            )}
+            <div>
+              <h3 className="font-bold text-slate-900 text-sm">
+                {report?.student?.nameEn || (report?.student as any)?.name || 'Student'}
+              </h3>
+              <p className="text-xs text-slate-500 font-mono">
+                {report?.classNameEn} • Exam Register No: {examRegisterNo} • Adm: {report?.student?.admissionNo}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
             <button
-              onClick={onBack}
-              className="px-3.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer"
+              onClick={handleDownloadPdf}
+              disabled={isExporting}
+              className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer"
             >
-              ← {t.back}
+              <Download className="w-3.5 h-3.5" />
+              {isExporting ? 'Generating PDF...' : 'Download PDF'}
             </button>
-          )}
-          <div>
-            <h3 className="font-bold text-slate-900 text-sm">
-              {report?.student?.nameEn || (report?.student as any)?.name || 'Student'}
-            </h3>
-            <p className="text-xs text-slate-500 font-mono">
-              {report?.classNameEn} • Exam Register No: {examRegisterNo} • Adm: {report?.student?.admissionNo}
-            </p>
+            <button
+              onClick={handlePrint}
+              className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              {t.printReport}
+            </button>
           </div>
         </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleDownloadPdf}
-            disabled={isExporting}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer"
-          >
-            <Download className="w-3.5 h-3.5" />
-            {isExporting ? 'Generating PDF...' : 'Download PDF'}
-          </button>
-          <button
-            onClick={handlePrint}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition cursor-pointer"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            {t.printReport}
-          </button>
-        </div>
-      </div>
+      )}
 
       {/* Progress Report Sheet - A4 Document Container */}
-      <div className="overflow-x-auto flex justify-center pb-8 print:p-0 print:m-0">
+      <div className="overflow-x-auto flex justify-center pb-8 print:p-0 print:m-0 print:pb-0">
         <div
           ref={reportRef}
           id="report-print-sheet"
-          className="w-full max-w-[820px] bg-white text-slate-900 border-2 border-emerald-900/30 p-6 md:p-8 shadow-lg print:shadow-none print:border-none print:p-0 print:max-w-none print:w-full font-sans relative print:min-h-0 print:h-auto"
-          style={{ minHeight: '940px' }}
+          className="report-print-sheet w-full max-w-[820px] bg-white text-slate-900 border-2 border-emerald-900/30 p-6 md:p-8 shadow-lg print:shadow-none print:border-none print:p-0 print:max-w-none print:w-full font-sans relative print:min-h-0 print:h-auto"
+          style={{ minHeight: isBatchItem ? undefined : '920px' }}
         >
           {/* Subtle Islamic Geometric Corner Motifs */}
-          <div className="absolute top-3 left-3 text-emerald-800/25 text-xs font-serif select-none pointer-events-none">
+          <div className="absolute top-3 left-3 text-emerald-800/25 text-xs font-serif select-none pointer-events-none print:hidden">
             ❖ ❖ ❖
           </div>
-          <div className="absolute top-3 right-3 text-emerald-800/25 text-xs font-serif select-none pointer-events-none">
+          <div className="absolute top-3 right-3 text-emerald-800/25 text-xs font-serif select-none pointer-events-none print:hidden">
             ❖ ❖ ❖
           </div>
-          <div className="absolute bottom-3 left-3 text-emerald-800/25 text-xs font-serif select-none pointer-events-none">
+          <div className="absolute bottom-3 left-3 text-emerald-800/25 text-xs font-serif select-none pointer-events-none print:hidden">
             ❖ ❖ ❖
           </div>
-          <div className="absolute bottom-3 right-3 text-emerald-800/25 text-xs font-serif select-none pointer-events-none">
+          <div className="absolute bottom-3 right-3 text-emerald-800/25 text-xs font-serif select-none pointer-events-none print:hidden">
             ❖ ❖ ❖
           </div>
 
           {/* 1. INSTITUTION HEADER */}
-          <div className="text-center border-b-2 border-emerald-800 pb-4 mb-4">
-            <div className="font-serif text-emerald-900 text-lg md:text-xl font-bold tracking-wide mb-1 text-center" dir="rtl">
+          <div className="text-center border-b-2 border-emerald-800 pb-3 mb-3 print:pb-1.5 print:mb-1.5">
+            <div className="font-serif text-emerald-900 text-lg md:text-xl print:text-base font-bold tracking-wide mb-1 print:mb-0.5 text-center" dir="rtl">
               {settings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
             </div>
             <div className="flex items-center justify-center gap-3 my-1">
@@ -434,36 +444,36 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
           </div>
 
           {/* 4. ACADEMIC METRICS BOX: [ Percentage | Attendance | Rank ] */}
-          <div className="bg-emerald-900 text-white rounded-xl p-4 mb-8 shadow-xs">
+          <div className="bg-emerald-900 text-white rounded-xl p-3.5 mb-4 print:p-2 print:mb-2 shadow-xs">
             <div className="grid grid-cols-3 gap-4 text-center divide-x divide-emerald-800/80">
               {/* Percentage (exact, never display N/A) */}
               <div>
-                <span className="text-[11px] font-bold text-emerald-200 uppercase tracking-wider block">
+                <span className="text-[11px] print:text-[9pt] font-bold text-emerald-200 uppercase tracking-wider block">
                   Percentage (%)
                 </span>
-                <span className="text-2xl font-black font-mono mt-1 block">
+                <span className="text-2xl print:text-lg font-black font-mono mt-0.5 block">
                   {calculatedPercentage}%
                 </span>
               </div>
 
               {/* Attendance */}
               <div>
-                <span className="text-[11px] font-bold text-emerald-200 uppercase tracking-wider block">
+                <span className="text-[11px] print:text-[9pt] font-bold text-emerald-200 uppercase tracking-wider block">
                   Attendance
                 </span>
-                <span className="text-2xl font-black font-mono mt-1 block">
+                <span className="text-2xl print:text-lg font-black font-mono mt-0.5 block">
                   {attendanceDays} / {attendanceTotal}
                 </span>
               </div>
 
               {/* Rank Box: Rank is awarded ONLY if all subjects are Passed with zero withheld and zero absences. Otherwise show Need Improvement, Withheld, or Absent */}
               <div>
-                <span className="text-[11px] font-bold text-emerald-200 uppercase tracking-wider block">
+                <span className="text-[11px] print:text-[9pt] font-bold text-emerald-200 uppercase tracking-wider block">
                   Academic Rank
                 </span>
-                <div className="flex items-center justify-center gap-1.5 mt-1">
-                  <Award className="w-5 h-5 text-amber-400 shrink-0" />
-                  <span className="text-xl md:text-2xl font-black font-mono text-amber-300">
+                <div className="flex items-center justify-center gap-1.5 mt-0.5">
+                  <Award className="w-5 h-5 print:w-4 print:h-4 text-amber-400 shrink-0" />
+                  <span className="text-xl md:text-2xl print:text-lg font-black font-mono text-amber-300">
                     {academicRankBoxText}
                   </span>
                 </div>
@@ -472,46 +482,46 @@ export const ProgressReportCard: React.FC<Props> = ({ report, settings, onBack }
 
             {/* Status alerts */}
             {report?.hasWithheldCe && (
-              <div className="mt-3 pt-2 border-t border-emerald-800 text-[11px] text-amber-300 font-semibold flex items-center justify-center gap-1.5">
-                <ShieldAlert className="w-4 h-4 shrink-0" />
+              <div className="mt-2 pt-1.5 border-t border-emerald-800 text-[10px] text-amber-300 font-semibold flex items-center justify-center gap-1.5">
+                <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
                 <span>Result Withheld: Continuous Evaluation (CE) is incomplete or 0 for one or more subjects.</span>
               </div>
             )}
             {report?.hasAbsentSubjects && (
-              <div className="mt-3 pt-2 border-t border-emerald-800 text-[11px] text-amber-300 font-semibold flex items-center justify-center gap-1.5">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
+              <div className="mt-2 pt-1.5 border-t border-emerald-800 text-[10px] text-amber-300 font-semibold flex items-center justify-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                 <span>Student marked absent in examination components. Excluded from academic rank calculation.</span>
               </div>
             )}
           </div>
 
           {/* 5. CENTERED 3-SIGNATURE BLOCK AT BOTTOM */}
-          <div className="mt-14 pt-6 border-t border-slate-300">
-            <div className="grid grid-cols-3 gap-8 text-center text-xs text-slate-800">
+          <div className="mt-8 pt-4 print:mt-2.5 print:pt-1.5 border-t border-slate-300">
+            <div className="grid grid-cols-3 gap-6 print:gap-4 text-center text-xs print:text-[9pt] text-slate-800">
               {/* Parent */}
               <div>
-                <div className="h-16 border-b border-slate-400"></div>
-                <span className="font-bold mt-2 block">Signature of Parent</span>
+                <div className="h-12 print:h-8 border-b border-slate-400"></div>
+                <span className="font-bold mt-1.5 block">Signature of Parent</span>
               </div>
 
               {/* Principal */}
               <div>
-                <div className="h-16 border-b border-slate-400 flex items-end justify-center pb-1 font-serif italic text-emerald-950 font-bold">
+                <div className="h-12 print:h-8 border-b border-slate-400 flex items-end justify-center pb-0.5 font-serif italic text-emerald-950 font-bold">
                   {settings?.principalNameEn || 'ASLAM TK'}
                 </div>
-                <span className="font-bold mt-2 block">Signature of Principal</span>
+                <span className="font-bold mt-1.5 block">Signature of Principal</span>
               </div>
 
               {/* Class Teacher */}
               <div>
-                <div className="h-16 border-b border-slate-400 flex items-end justify-center pb-1 font-serif italic text-slate-500">
+                <div className="h-12 print:h-8 border-b border-slate-400 flex items-end justify-center pb-0.5 font-serif italic text-slate-500">
                   (Class In-Charge)
                 </div>
-                <span className="font-bold mt-2 block">Signature of Class Teacher</span>
+                <span className="font-bold mt-1.5 block">Signature of Class Teacher</span>
               </div>
             </div>
 
-            <div className="text-center text-[10px] text-slate-400 mt-8">
+            <div className="text-center text-[10px] print:text-[7.5pt] text-slate-400 mt-4 print:mt-1">
               Al-Madrasathul Islamiya Pallikkuth • Examination & Progress Verification Record • Generated {new Date().toLocaleDateString('en-GB')}
             </div>
           </div>
