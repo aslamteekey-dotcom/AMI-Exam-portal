@@ -117,19 +117,28 @@ export const BulkReportsPrint: React.FC = () => {
     }
   };
 
+  const selectedClassIdRef = useRef(selectedClassId);
+  const selectedExamIdRef = useRef(selectedExamId);
+  selectedClassIdRef.current = selectedClassId;
+  selectedExamIdRef.current = selectedExamId;
+
+  // Run initial data loading strictly once on mount
   useEffect(() => {
     loadInitial();
+  }, []);
 
+  // Listen to background student updates and refresh current class
+  useEffect(() => {
     const handleStudentsUpdated = () => {
-      if (selectedClassId && selectedExamId) {
-        fetchClassReports(selectedClassId, selectedExamId);
+      if (selectedClassIdRef.current && selectedExamIdRef.current) {
+        fetchClassReports(selectedClassIdRef.current, selectedExamIdRef.current);
       }
     };
     window.addEventListener('madrasa_students_updated', handleStudentsUpdated);
     return () => {
       window.removeEventListener('madrasa_students_updated', handleStudentsUpdated);
     };
-  }, [selectedClassId, selectedExamId]);
+  }, []);
 
   const handleClassChange = (cId: string) => {
     setSelectedClassId(cId);
@@ -289,7 +298,9 @@ export const BulkReportsPrint: React.FC = () => {
     );
   }
 
-  const currentClass = classes.find(c => c.id === selectedClassId);
+  const currentClass = classes.find(
+    c => c.id === selectedClassId || String(c.numericGrade) === selectedClassId || c.name === selectedClassId
+  );
   const currentExam = examinations.find(e => e.id === selectedExamId);
   const rawReports = (reportsData?.reports || []).filter(r => r && r.student);
   const safeReports = sortStudentsBoysFirst(
