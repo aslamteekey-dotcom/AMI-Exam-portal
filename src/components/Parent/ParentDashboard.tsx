@@ -40,6 +40,7 @@ export const ParentDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'report' | 'fees'>('report');
   const [childPayments, setChildPayments] = useState<FeePayment[]>([]);
   const [activeReceipt, setActiveReceipt] = useState<FeePayment | null>(null);
+  const [settings, setSettings] = useState<InstitutionSettings | null>(null);
 
   // Selected Report Data
   const [reportData, setReportData] = useState<{
@@ -55,15 +56,18 @@ export const ParentDashboard: React.FC = () => {
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      const [resAuth, resClasses, resExams] = await Promise.all([
+      const [resAuth, resClasses, resExams, resSettings] = await Promise.all([
         fetchWithAuth('/api/auth/me'),
         fetchWithAuth('/api/classes'),
         fetchWithAuth('/api/examinations'),
+        fetchWithAuth('/api/settings'),
       ]);
 
       const authData = await resAuth.json();
       const classesData = await resClasses.json();
       const examsData: Examination[] = await resExams.json();
+      const settingsData: InstitutionSettings = await resSettings.json();
+      setSettings(settingsData);
 
       const cMap: Record<string, string> = {};
       classesData.forEach((c: any) => {
@@ -80,8 +84,11 @@ export const ParentDashboard: React.FC = () => {
         setSelectedChildId(sortedKids[0].id);
       }
       if (examsData.length > 0) {
-        // Prefer published exam first, otherwise first exam
-        const publishedExam = examsData.find(e => e.isPublished) || examsData[0];
+        // Prefer published/approved exam first, otherwise first exam
+        const publishedExam =
+          examsData.find(
+            e => e.isPublished || e.status === 'published' || e.status === 'approved' || e.status === 'completed'
+          ) || examsData[0];
         setSelectedExamId(publishedExam.id);
       }
     } catch (err) {
@@ -94,10 +101,11 @@ export const ParentDashboard: React.FC = () => {
   useEffect(() => {
     loadInitialData();
 
-    // Real-time Firestore listener for student register numbers
-    let unsub: (() => void) | undefined;
+    const unsubs: (() => void)[] = [];
+
+    // 1. Real-time Firestore listener for student register numbers & details
     try {
-      unsub = onSnapshot(collection(db, 'students'), snapshot => {
+      const unsubStu = onSnapshot(collection(db, 'students'), snapshot => {
         if (!snapshot.empty) {
           const remoteList = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Student));
           setChildren(prev =>
@@ -126,8 +134,47 @@ export const ParentDashboard: React.FC = () => {
           );
         }
       });
+      unsubs.push(unsubStu);
     } catch (e) {
       console.warn('Real-time students listener error in ParentDashboard:', e);
+    }
+
+    // 2. Real-time Firestore listener for published examinations
+    try {
+      const unsubExams = onSnapshot(collection(db, 'exams'), snapshot => {
+        if (!snapshot.empty) {
+          const remoteExams = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Examination));
+          setExaminations(remoteExams);
+        }
+      });
+      unsubs.push(unsubExams);
+    } catch (e) {
+      console.warn('Real-time exams listener error in ParentDashboard:', e);
+    }
+
+    // 3. Real-time Firestore listener for marks: listen to published/approved marks for active child
+    try {
+      const unsubMarks = onSnapshot(collection(db, 'marks'), snapshot => {
+        if (!snapshot.empty && selectedChildId && selectedExamId) {
+          const activeChild = children.find(c => c.id === selectedChildId);
+          if (activeChild) {
+            const marksDocs = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as any));
+            const studentMarks = marksDocs.filter(
+              m =>
+                m.studentId === activeChild.id ||
+                m.admissionNo === activeChild.admissionNo ||
+                m.studentMarks?.[activeChild.id] ||
+                (activeChild.admissionNo && m.studentMarks?.[activeChild.admissionNo])
+            );
+            if (studentMarks.length > 0) {
+              loadReport(activeChild.id, selectedExamId);
+            }
+          }
+        }
+      });
+      unsubs.push(unsubMarks);
+    } catch (e) {
+      console.warn('Real-time marks listener error in ParentDashboard:', e);
     }
 
     const handleStudentsUpdated = (e: any) => {
@@ -160,12 +207,28 @@ export const ParentDashboard: React.FC = () => {
       }
     };
     window.addEventListener('madrasa_students_updated', handleStudentsUpdated);
+    unsubs.push(() => window.removeEventListener('madrasa_students_updated', handleStudentsUpdated));
+
+    const handleMarksUpdated = () => {
+      if (selectedChildId && selectedExamId) {
+        loadReport(selectedChildId, selectedExamId);
+      }
+    };
+    window.addEventListener('madrasa_marks_updated', handleMarksUpdated);
+    window.addEventListener('madrasa_exams_updated', handleMarksUpdated);
+    unsubs.push(() => {
+      window.removeEventListener('madrasa_marks_updated', handleMarksUpdated);
+      window.removeEventListener('madrasa_exams_updated', handleMarksUpdated);
+    });
 
     return () => {
-      if (unsub) unsub();
-      window.removeEventListener('madrasa_students_updated', handleStudentsUpdated);
+      unsubs.forEach(u => {
+        try {
+          u();
+        } catch {}
+      });
     };
-  }, [lang, selectedExamId]);
+  }, [lang, selectedExamId, selectedChildId]);
 
   // Automatically fetch and load progress report card whenever selected student or examination changes
   const loadReport = async (childId: string, examId: string) => {
@@ -173,23 +236,51 @@ export const ParentDashboard: React.FC = () => {
     setFetchingReport(true);
     setIsUnpublished(false);
     setReportError(null);
-    setReportData(null);
 
     try {
       const res = await fetchWithAuth(`/api/reports/student/${childId}/exam/${examId}`);
       if (!res.ok) {
-        const errJson = await res.json();
+        const errJson = await res.json().catch(() => ({}));
         if (errJson.isUnpublished) {
           setIsUnpublished(true);
         } else {
           setReportError(errJson.error || 'Unable to retrieve progress report');
         }
+        setReportData(null);
         return;
       }
       const data = await res.json();
-      setReportData(data);
+      // Normalize data: support data directly being the report or data containing { report, settings }
+      const finalReport: StudentProgressReport = data.report || data;
+      const finalSettings: InstitutionSettings = data.settings || settings || {
+        madrasaNameEn: 'Al-Madrasathul Islamiya Pallikkuth',
+        madrasaNameMl: 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്',
+        locationEn: 'Pallikkuth, Kerala',
+        locationMl: 'പള്ളിക്കുത്ത്, കേരളം',
+        registrationNo: 'KEC-8492',
+        principalNameEn: 'ASLAM TK',
+        principalNameMl: 'അസ്‌ലം ടി.കെ.',
+      };
+
+      setReportData({
+        report: finalReport,
+        settings: finalSettings,
+      });
+
+      // Flexible publication status:
+      // Status is published, approved, or completed, or isPublished is true
+      const isPublished = Boolean(
+        data.isPublished ||
+        finalReport.isPublished ||
+        finalReport.examination?.isPublished ||
+        finalReport.examination?.status === 'published' ||
+        finalReport.examination?.status === 'approved' ||
+        finalReport.examination?.status === 'completed'
+      );
+      setIsUnpublished(!isPublished);
     } catch (err: any) {
       setReportError(err.message || 'Network error');
+      setReportData(null);
     } finally {
       setFetchingReport(false);
     }
@@ -231,6 +322,29 @@ export const ParentDashboard: React.FC = () => {
 
   const selectedChild = children.find(c => c.id === selectedChildId);
   const selectedExam = examinations.find(e => e.id === selectedExamId);
+
+  const activeReport = reportData?.report;
+  const isExamPublished = Boolean(
+    selectedExam?.isPublished ||
+    selectedExam?.status === 'published' ||
+    selectedExam?.status === 'approved' ||
+    selectedExam?.status === 'completed' ||
+    activeReport?.isPublished ||
+    activeReport?.examination?.isPublished ||
+    activeReport?.examination?.status === 'published' ||
+    activeReport?.examination?.status === 'approved' ||
+    activeReport?.examination?.status === 'completed'
+  );
+
+  const hasMarks = Boolean(
+    activeReport &&
+    (activeReport.subjects?.some(s => s.obtainedMarks !== null && s.obtainedMarks !== undefined) ||
+     (activeReport.totalObtainedMarks !== undefined && activeReport.totalObtainedMarks > 0) ||
+     (activeReport.percentage !== null && activeReport.percentage !== undefined && Number(activeReport.percentage) > 0))
+  );
+
+  // As long as published status matches OR published marks exist for this student, render immediately
+  const shouldShowReport = Boolean(activeReport && (isExamPublished || hasMarks));
 
   return (
     <div className="space-y-6">
@@ -440,20 +554,6 @@ export const ParentDashboard: React.FC = () => {
                     Fetching evaluation results, rankings, and subject assessments.
                   </p>
                 </div>
-              ) : isUnpublished ? (
-                <div className="bg-white rounded-2xl border border-amber-200 p-8 shadow-xs">
-                  <div className="flex items-start gap-3">
-                    <AlertCircle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
-                    <div>
-                      <h3 className="font-bold text-amber-950 text-base">
-                        {t.unpublishedNoticeTitle}
-                      </h3>
-                      <p className="text-xs text-amber-800 mt-1 leading-relaxed">
-                        The examination results for <strong>{selectedExam?.nameEn}</strong> are currently under evaluation or awaiting final verification and publication by the Principal. Please check back shortly.
-                      </p>
-                    </div>
-                  </div>
-                </div>
               ) : reportError ? (
                 <div className="bg-white rounded-2xl border border-rose-200 p-6 shadow-xs flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3 text-rose-800 text-xs">
@@ -472,14 +572,28 @@ export const ParentDashboard: React.FC = () => {
                     Retry
                   </button>
                 </div>
-              ) : reportData ? (
+              ) : shouldShowReport && reportData?.report ? (
                 <div className="space-y-4">
                   <ProgressReportCard
                     report={reportData.report}
                     settings={reportData.settings}
                   />
                 </div>
-              ) : null}
+              ) : (
+                <div className="bg-white rounded-2xl border border-amber-200 p-8 shadow-xs">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <h3 className="font-bold text-amber-950 text-base">
+                        Progress Report Pending Publication
+                      </h3>
+                      <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                        The progress report for <strong>{selectedExam?.nameEn || 'this examination'}</strong> has not been published yet. Please check back soon.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

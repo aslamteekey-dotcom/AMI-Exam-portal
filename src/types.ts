@@ -87,8 +87,8 @@ export interface Examination {
   isPublished: boolean;
   publishedAt?: string;
   scheduledPublishDate?: string;
-  status: 'draft' | 'ongoing' | 'evaluating' | 'ready_to_publish' | 'published';
-  classesParticipating: string[];
+  status: 'draft' | 'ongoing' | 'evaluating' | 'ready_to_publish' | 'published' | 'approved' | 'completed' | (string & {});
+  classesParticipating?: string[];
   passMarkPercentage: number;
 }
 

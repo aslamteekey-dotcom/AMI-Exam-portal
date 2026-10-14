@@ -1204,17 +1204,23 @@ export class ClientStorageApi {
   }
 
   public calculateClassRanks(classId: string, examId: string): Map<string, { rank: number | null; total: number; max: number; pct: number | null; isIncomplete: boolean }> {
-    const cls = this.db.classes.find(c => c.id === classId);
+    const cls = this.db.classes.find(c => c.id === classId || String(c.numericGrade) === classId || c.name === classId);
     if (!cls) return new Map();
 
-    const studentsInClass = this.db.students.filter(s => s.classId === classId && s.status === 'active');
+    const targetClassId = cls.id;
+    const studentsInClass = this.db.students.filter(
+      s => (s.classId === targetClassId || s.classId === classId || String(s.classId) === String(cls.numericGrade)) && s.status === 'active'
+    );
     const applicableSubjects = this.db.subjects.filter(s => s.applicableClasses.includes(cls.numericGrade));
-    const markSheets = this.db.markSheets.filter(ms => ms.classId === classId && ms.examinationId === examId);
+    const markSheets = this.db.markSheets.filter(
+      ms => (ms.classId === targetClassId || ms.classId === classId || String(ms.classId) === String(cls.numericGrade)) && ms.examinationId === examId
+    );
     const markSheetBySub = new Map<string, MarkSheet>();
     markSheets.forEach(ms => markSheetBySub.set(ms.subjectId, ms));
 
     interface ScoredStudent {
       studentId: string;
+      admissionNo?: string;
       total: number;
       max: number;
       nonCeMax: number;
@@ -1252,10 +1258,10 @@ export class ClientStorageApi {
           }
         });
 
-        if (!ms || !ms.studentMarks || !ms.studentMarks[student.id]) {
+        const entry = ms?.studentMarks?.[student.id] || (student.admissionNo ? ms?.studentMarks?.[student.admissionNo] : undefined);
+        if (!ms || !entry) {
           isIncomplete = true;
         } else {
-          const entry = ms.studentMarks[student.id];
           if (entry.isAbsent) {
             hasAbsent = true;
             isIncomplete = true;
@@ -1362,24 +1368,32 @@ export class ClientStorageApi {
   }
 
   public generateStudentProgressReport(studentId: string, examId: string): StudentProgressReport | null {
-    const student = this.db.students.find(s => s.id === studentId);
+    const student = this.db.students.find(
+      s => s.id === studentId || s.admissionNo === studentId || String(s.admissionNo) === String(studentId)
+    );
     if (!student) return null;
 
     const exam = this.db.examinations.find(e => e.id === examId);
     if (!exam) return null;
 
-    const cls = this.db.classes.find(c => c.id === student.classId);
+    const cls = this.db.classes.find(
+      c => c.id === student.classId || String(c.numericGrade) === String(student.classId) || c.name === student.classId
+    );
     if (!cls) return null;
 
     const ay = this.db.academicYears.find(a => a.id === exam.academicYearId);
     const ayName = ay ? ay.year : '2026–2027';
 
-    const rankMap = this.calculateClassRanks(student.classId, examId);
-    const rankInfo = rankMap.get(studentId) || { rank: null, total: 0, max: 0, pct: null, isIncomplete: true };
-    const totalStudentsInClass = this.db.students.filter(s => s.classId === student.classId && s.status === 'active').length;
+    const rankMap = this.calculateClassRanks(cls.id, examId);
+    const rankInfo = rankMap.get(student.id) || (student.admissionNo ? rankMap.get(student.admissionNo) : undefined) || { rank: null, total: 0, max: 0, pct: null, isIncomplete: true };
+    const totalStudentsInClass = this.db.students.filter(
+      s => (s.classId === cls.id || s.classId === student.classId || String(s.classId) === String(cls.numericGrade)) && s.status === 'active'
+    ).length || 1;
 
     const applicableSubjects = this.db.subjects.filter(s => s.applicableClasses.includes(cls.numericGrade));
-    const markSheets = this.db.markSheets.filter(ms => ms.classId === student.classId && ms.examinationId === examId);
+    const markSheets = this.db.markSheets.filter(
+      ms => (ms.classId === cls.id || ms.classId === student.classId || String(ms.classId) === String(cls.numericGrade)) && ms.examinationId === examId
+    );
     const markSheetBySub = new Map<string, MarkSheet>();
     markSheets.forEach(ms => markSheetBySub.set(ms.subjectId, ms));
 
@@ -1408,7 +1422,7 @@ export class ClientStorageApi {
       });
 
       const ms = markSheetBySub.get(sub.id);
-      const entry = ms?.studentMarks?.[student.id];
+      const entry = ms?.studentMarks?.[student.id] || (student.admissionNo ? ms?.studentMarks?.[student.admissionNo] : undefined);
 
       if (!ms || !entry) {
         hasIncompleteSubjects = true;
@@ -2721,6 +2735,15 @@ export class ClientStorageApi {
           exam.publishedAt = new Date().toISOString();
         }
         this.saveDB();
+
+        firestoreSync.syncExam(exam).catch(e => {
+          console.warn('Firestore syncExam error on publish:', e);
+        });
+
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_exams_updated', { detail: this.db.examinations }));
+        }
+
         return this.jsonResponse({ success: true, exam });
       }
 
@@ -2845,17 +2868,26 @@ export class ClientStorageApi {
         return this.jsonResponse({ success: true, markSheet: sheet });
       }
 
-      // 8. Progress Reports
       const classReportMatch = path.match(/^\/api\/reports\/class\/([^/]+)\/exam\/([^/]+)$/);
       if (classReportMatch && method === 'GET') {
         const [, cId, eId] = classReportMatch;
-        const students = sortStudentsBoysFirst(this.db.students.filter(s => s.classId === cId && s.status === 'active'));
+        const cls = this.db.classes.find(c => c.id === cId || String(c.numericGrade) === cId || c.name === cId);
+        const targetClassId = cls?.id || cId;
+        const targetGrade = cls?.numericGrade;
+        const students = sortStudentsBoysFirst(
+          this.db.students.filter(
+            s =>
+              (s.classId === targetClassId ||
+                (targetGrade !== undefined && (String(s.classId) === String(targetGrade) || s.classId === `cls_${targetGrade}`)) ||
+                (cls?.name && s.classId === cls.name)) &&
+              s.status === 'active'
+          )
+        );
         const reports: StudentProgressReport[] = [];
         students.forEach(st => {
           const r = this.generateStudentProgressReport(st.id, eId);
           if (r) reports.push(r);
         });
-        const cls = this.db.classes.find(c => c.id === cId);
         const exam = this.db.examinations.find(e => e.id === eId);
         return this.jsonResponse({
           reports,
@@ -2868,9 +2900,22 @@ export class ClientStorageApi {
       const studentReportMatch = path.match(/^\/api\/reports\/student\/([^/]+)\/exam\/([^/]+)$/);
       if (studentReportMatch && method === 'GET') {
         const [, sId, eId] = studentReportMatch;
-        const report = this.generateStudentProgressReport(sId, eId);
+        const student = this.db.students.find(s => s.id === sId || s.admissionNo === sId || String(s.admissionNo) === String(sId));
+        const resolvedStudentId = student?.id || sId;
+        const report = this.generateStudentProgressReport(resolvedStudentId, eId);
         if (!report) return this.jsonResponse({ error: 'Report could not be generated' }, 404);
-        return this.jsonResponse(report);
+        const exam = this.db.examinations.find(e => e.id === eId);
+        const isExamPublished = Boolean(
+          exam?.isPublished ||
+          exam?.status === 'published' ||
+          exam?.status === 'approved' ||
+          exam?.status === 'completed'
+        );
+        return this.jsonResponse({
+          report,
+          settings: this.db.settings,
+          isPublished: isExamPublished,
+        });
       }
 
       const regNosMatch = path.match(/^\/api\/examinations\/([^/]+)\/classes\/([^/]+)\/register-numbers$/);
