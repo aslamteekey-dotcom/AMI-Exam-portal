@@ -9,6 +9,7 @@ import { MarkMonitoring } from './MarkMonitoring';
 import { BulkReportsPrint } from './BulkReportsPrint';
 import { AuditLogsView } from './AuditLogsView';
 import { BackupSettings } from './BackupSettings';
+import { FeeManagement } from './FeeManagement';
 import { MarkVerificationModal } from './MarkVerificationModal';
 import {
   Users,
@@ -38,6 +39,7 @@ export const AdminDashboard: React.FC = () => {
     | 'students'
     | 'teachers'
     | 'parents'
+    | 'fees'
     | 'monitoring'
     | 'reports'
     | 'audit_logs'
@@ -181,82 +183,109 @@ export const AdminDashboard: React.FC = () => {
           {t.navDashboard}
         </button>
 
-        <button
-          onClick={() => setActiveTab('monitoring')}
-          className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
-            activeTab === 'monitoring'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-          }`}
-        >
-          {t.navMarkMonitoring}
-        </button>
+        {(!user?.permissions || user.permissions.marks?.view !== false) && (
+          <button
+            onClick={() => setActiveTab('monitoring')}
+            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+              activeTab === 'monitoring'
+                ? 'bg-emerald-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            {t.navMarkMonitoring}
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('reports')}
-          className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
-            activeTab === 'reports'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-          }`}
-        >
-          {t.navProgressReport}
-        </button>
+        {(!user?.permissions || user.permissions.marks?.view !== false) && (
+          <button
+            onClick={() => setActiveTab('reports')}
+            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+              activeTab === 'reports'
+                ? 'bg-emerald-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            {t.navProgressReport}
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('exams')}
-          className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
-            activeTab === 'exams'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-          }`}
-        >
-          {t.navExams}
-        </button>
+        {(!user?.permissions || user.permissions.exams?.view !== false) && (
+          <button
+            onClick={() => setActiveTab('exams')}
+            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+              activeTab === 'exams'
+                ? 'bg-emerald-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            {t.navExams}
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('classes_subjects')}
-          className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
-            activeTab === 'classes_subjects'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-          }`}
-        >
-          {t.navClassesSubjects}
-        </button>
+        {(!user?.permissions || user.permissions.exams?.view !== false) && (
+          <button
+            onClick={() => setActiveTab('classes_subjects')}
+            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+              activeTab === 'classes_subjects'
+                ? 'bg-emerald-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            {t.navClassesSubjects}
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('students')}
-          className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
-            activeTab === 'students'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-          }`}
-        >
-          {t.navStudents}
-        </button>
+        {(!user?.permissions || user.permissions.students?.view !== false) && (
+          <button
+            onClick={() => setActiveTab('students')}
+            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+              activeTab === 'students'
+                ? 'bg-emerald-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            {t.navStudents}
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('teachers')}
-          className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
-            activeTab === 'teachers'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-          }`}
-        >
-          {t.navTeachers}
-        </button>
+        {(!user?.permissions || user.permissions.teachers?.view !== false) && (
+          <button
+            onClick={() => setActiveTab('teachers')}
+            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+              activeTab === 'teachers'
+                ? 'bg-emerald-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            {t.navTeachers}
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('parents')}
-          className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
-            activeTab === 'parents'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-          }`}
-        >
-          {t.navParents}
-        </button>
+        {(!user?.permissions || user.permissions.students?.view !== false) && (
+          <button
+            onClick={() => setActiveTab('parents')}
+            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+              activeTab === 'parents'
+                ? 'bg-emerald-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            {t.navParents}
+          </button>
+        )}
+
+        {(!user?.permissions || user.permissions.fees?.view !== false) && (
+          <button
+            onClick={() => setActiveTab('fees')}
+            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+              activeTab === 'fees'
+                ? 'bg-emerald-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            {t.navFees}
+          </button>
+        )}
 
         <button
           onClick={() => setActiveTab('audit_logs')}
@@ -269,16 +298,18 @@ export const AdminDashboard: React.FC = () => {
           {t.navAuditLogs}
         </button>
 
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
-            activeTab === 'settings'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-          }`}
-        >
-          {t.navSettings}
-        </button>
+        {(!user?.permissions || user.permissions.settings?.view !== false) && (
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+              activeTab === 'settings'
+                ? 'bg-emerald-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            {t.navSettings}
+          </button>
+        )}
       </div>
 
       {/* Tab Contents */}
@@ -451,6 +482,7 @@ export const AdminDashboard: React.FC = () => {
       {activeTab === 'students' && <StudentManagement />}
       {activeTab === 'teachers' && <TeacherManagement />}
       {activeTab === 'parents' && <ParentManagement />}
+      {activeTab === 'fees' && <FeeManagement />}
       {activeTab === 'audit_logs' && <AuditLogsView />}
       {activeTab === 'settings' && <BackupSettings />}
     </div>

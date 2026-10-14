@@ -393,6 +393,21 @@ export const TeacherManagement: React.FC = () => {
 
   const handleAddAssignment = async () => {
     if (!assignTeacher || !assignClassId || !assignSubjectId) return;
+
+    // Prevent assigning the same subject of a specific class to more than one teacher
+    const conflictingAllocation = assignments.find(
+      a => a.classId === assignClassId && a.subjectId === assignSubjectId && a.teacherId !== assignTeacher.id
+    );
+    if (conflictingAllocation) {
+      const conflictingTeacher = teachers.find(t => t.id === conflictingAllocation.teacherId);
+      const targetClass = classes.find(c => c.id === assignClassId);
+      const targetSubject = subjects.find(s => s.id === assignSubjectId);
+      alert(
+        `Assignment Conflict Warning:\n\nThe subject "${targetSubject?.nameMl || targetSubject?.nameEn}" for "${targetClass?.name}" is already allocated to teacher "${conflictingTeacher?.name || 'another teacher'}".\n\nDuplicate allocation is blocked. Please remove the existing allocation first.`
+      );
+      return;
+    }
+
     try {
       const newAsg = {
         id: `asg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -564,12 +579,9 @@ export const TeacherManagement: React.FC = () => {
                     </div>
                   </div>
 
-                  <h3 className="font-bold text-slate-900 text-base mt-2">
+                  <h3 className="font-bold text-slate-900 text-base mt-2 whitespace-nowrap overflow-hidden text-ellipsis">
                     {teacher.name}
                   </h3>
-                  {teacher.nameMl && teacher.nameMl !== teacher.name && (
-                    <p className="text-xs text-slate-600 font-medium">{teacher.nameMl}</p>
-                  )}
                   <p className="text-xs text-slate-500 font-mono">@{teacher.username}</p>
                   {teacher.phone && (
                     <p className="text-xs text-slate-500 mt-0.5">📞 {teacher.phone}</p>

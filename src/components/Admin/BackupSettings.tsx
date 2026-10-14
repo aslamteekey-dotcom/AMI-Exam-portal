@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { InstitutionSettings } from '../../types';
+import { InstitutionSettings, User, AdminPermissions } from '../../types';
+import { SubAdminModal } from './SubAdminModal';
 import {
   Download,
   Upload,
@@ -12,10 +13,13 @@ import {
   KeyRound,
   Eye,
   EyeOff,
-  User,
+  User as UserIcon,
   Shield,
   Trash2,
   RefreshCw,
+  Plus,
+  Edit2,
+  ShieldCheck,
 } from 'lucide-react';
 
 export const BackupSettings: React.FC = () => {
@@ -180,31 +184,68 @@ export const BackupSettings: React.FC = () => {
     reader.readAsText(file);
   };
 
-  const handleClearDemoData = async () => {
-    const confirmed = window.confirm(
-      'Are you sure you want to clear all dummy / demo data?\n\n' +
-      'This action will permanently purge:\n' +
-      '• All demo student records\n' +
-      '• All dummy mark sheets & evaluation entries\n' +
-      '• All sample teacher accounts\n\n' +
-      'The Administrator account (@principal) will remain intact.\n' +
-      'Do you wish to proceed?'
-    );
-    if (!confirmed) return;
+  // Sub-Admin State & Management
+  const [subAdmins, setSubAdmins] = useState<User[]>([]);
+  const [showSubAdminModal, setShowSubAdminModal] = useState(false);
+  const [editingSubAdmin, setEditingSubAdmin] = useState<User | null>(null);
 
+  const loadSubAdmins = async () => {
     try {
-      const res = await fetchWithAuth('/api/admin/clear-demo-data', {
-        method: 'POST',
+      const res = await fetchWithAuth('/api/sub-admins');
+      if (res.ok) {
+        const data = await res.json();
+        setSubAdmins(data);
+      }
+    } catch (err) {
+      console.error('Failed to load sub-admins:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadSubAdmins();
+  }, []);
+
+  const handleSaveSubAdmin = async (adminData: {
+    id?: string;
+    name: string;
+    nameMl?: string;
+    username: string;
+    password?: string;
+    permissions: AdminPermissions;
+  }) => {
+    if (adminData.id) {
+      const res = await fetchWithAuth(`/api/sub-admins/${adminData.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(adminData),
       });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || 'Failed to clear demo data');
+        throw new Error(err.error || 'Failed to update sub-admin');
       }
-      const data = await res.json();
-      alert(data.message || 'Demo data purged successfully!');
-      window.location.reload();
+    } else {
+      const res = await fetchWithAuth('/api/sub-admins', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(adminData),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to create sub-admin');
+      }
+    }
+    await loadSubAdmins();
+    alert('Sub-admin account saved successfully!');
+  };
+
+  const handleDeleteSubAdmin = async (admin: User) => {
+    if (!window.confirm(`Delete sub-admin account "${admin.name}" (@${admin.username})?`)) return;
+    try {
+      const res = await fetchWithAuth(`/api/sub-admins/${admin.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete sub-admin');
+      await loadSubAdmins();
     } catch (err: any) {
-      alert(err.message || 'Failed to clear demo data');
+      alert(err.message || 'Error deleting sub-admin');
     }
   };
 
@@ -358,16 +399,6 @@ export const BackupSettings: React.FC = () => {
               className="hidden"
             />
           </label>
-
-          <button
-            type="button"
-            onClick={handleClearDemoData}
-            className="flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition shadow-2xs cursor-pointer ml-auto"
-            title="Purge sample students, demo marks, and demo teachers while keeping the admin account"
-          >
-            <Trash2 className="w-4 h-4 text-rose-600" />
-            Clear Demo Data
-          </button>
         </div>
       </div>
 
@@ -513,7 +544,7 @@ export const BackupSettings: React.FC = () => {
             <button
               type="submit"
               disabled={isSaving}
-              className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs disabled:opacity-50"
+              className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs disabled:opacity-50 cursor-pointer"
             >
               <Save className="w-4 h-4" />
               {isSaving ? 'Saving...' : 'Save Configuration'}
@@ -521,6 +552,107 @@ export const BackupSettings: React.FC = () => {
           </div>
         </form>
       </div>
+
+      {/* Role-Based Sub-Administrator Delegation Card */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-emerald-800" />
+            <div>
+              <h3 className="text-base font-bold text-slate-900">Sub-Administrator Delegation & Permissions</h3>
+              <p className="text-xs text-slate-500">
+                Create subordinate staff accounts with granular View and Edit permissions across Students, Teachers, Exams, Marks, and Fees.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setEditingSubAdmin(null);
+              setShowSubAdminModal(true);
+            }}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            Add Sub-Admin
+          </button>
+        </div>
+
+        {subAdmins.length === 0 ? (
+          <div className="p-6 text-center text-xs text-slate-500 border border-dashed border-slate-200 rounded-xl">
+            <p className="font-semibold text-slate-700">No Sub-Administrators Configured</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Only the primary Principal account currently has administrative access. Click "Add Sub-Admin" to delegate roles.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {subAdmins.map(admin => (
+              <div
+                key={admin.id}
+                className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col justify-between space-y-3"
+              >
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-900 text-sm">{admin.name}</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          setEditingSubAdmin(admin);
+                          setShowSubAdminModal(true);
+                        }}
+                        className="p-1 text-slate-400 hover:text-emerald-800 rounded-lg transition cursor-pointer"
+                        title="Edit Permissions"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteSubAdmin(admin)}
+                        className="p-1 text-slate-400 hover:text-rose-600 rounded-lg transition cursor-pointer"
+                        title="Delete Sub-Admin"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono mt-0.5">@{admin.username}</div>
+
+                  {/* Active Permission Badges */}
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {admin.permissions && Object.entries(admin.permissions).map(([mod, p]: [string, any]) => {
+                      if (!p.view) return null;
+                      return (
+                        <span
+                          key={mod}
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                            p.edit
+                              ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                              : 'bg-slate-200/70 text-slate-700'
+                          }`}
+                        >
+                          {mod}: {p.edit ? 'Edit' : 'View'}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {showSubAdminModal && (
+        <SubAdminModal
+          initialData={editingSubAdmin}
+          onClose={() => {
+            setShowSubAdminModal(false);
+            setEditingSubAdmin(null);
+          }}
+          onSave={handleSaveSubAdmin}
+        />
+      )}
     </div>
   );
 };

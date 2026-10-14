@@ -1173,9 +1173,12 @@ export class ClientStorageApi {
       studentId: string;
       total: number;
       max: number;
+      nonCeMax: number;
+      nonCeObtained: number;
       isIncomplete: boolean;
       hasAbsent: boolean;
       hasMissingCe: boolean;
+      failedWritten: boolean;
     }
 
     const studentScores: ScoredStudent[] = [];
@@ -1183,15 +1186,27 @@ export class ClientStorageApi {
     studentsInClass.forEach(student => {
       let totalObtained = 0;
       let totalMax = 0;
+      let nonCeMax = 0;
+      let nonCeObtained = 0;
       let isIncomplete = false;
       let hasAbsent = false;
       let hasMissingCe = false;
+      let failedWritten = false;
 
       applicableSubjects.forEach(subject => {
         const ms = markSheetBySub.get(subject.id);
         const components = this.getComponentsForClass(subject, cls.numericGrade);
         const subMax = components.reduce((sum, c) => sum + c.maxMarks, 0);
         totalMax += subMax;
+
+        let subNonCeMax = 0;
+        let subNonCeObtained = 0;
+        components.forEach(c => {
+          if (c.componentKey !== 'ce' && c.componentKey !== 'diary') {
+            subNonCeMax += c.maxMarks;
+            nonCeMax += c.maxMarks;
+          }
+        });
 
         if (!ms || !ms.studentMarks || !ms.studentMarks[student.id]) {
           isIncomplete = true;
@@ -1201,7 +1216,22 @@ export class ClientStorageApi {
             hasAbsent = true;
             isIncomplete = true;
           } else {
-            totalObtained += entry.subjectTotal;
+            totalObtained += (entry.subjectTotal || 0);
+
+            // Calculate TE / non-CE marks
+            components.forEach(c => {
+              if (c.componentKey !== 'ce' && c.componentKey !== 'diary') {
+                const mark = entry.componentMarks?.[c.componentKey] || 0;
+                subNonCeObtained += mark;
+                nonCeObtained += mark;
+              }
+            });
+
+            // Check if student scored below 35% in Written / TE for this subject
+            if (subNonCeMax > 0 && subNonCeObtained < subNonCeMax * 0.35) {
+              failedWritten = true;
+            }
+
             const ceComp = components.find(c => c.componentKey === 'ce');
             if (ceComp) {
               const ceMark = entry.componentMarks?.['ce'];
@@ -1213,30 +1243,44 @@ export class ClientStorageApi {
         }
       });
 
+      // Overall non-CE threshold
+      if (nonCeMax > 0 && nonCeObtained < nonCeMax * 0.35) {
+        failedWritten = true;
+      }
+
       studentScores.push({
         studentId: student.id,
         total: totalObtained,
         max: totalMax,
+        nonCeMax,
+        nonCeObtained,
         isIncomplete: isIncomplete || hasAbsent || hasMissingCe,
         hasAbsent,
         hasMissingCe,
+        failedWritten,
       });
     });
 
-    const validStudents = studentScores.filter(s => !s.isIncomplete);
-    validStudents.sort((a, b) => b.total - a.total);
+    // Ranking population:
+    // - Absent students: excluded from ranking calculation entirely
+    // - Missing CE/assignments: 'Withheld'
+    // - Scored below 35% in TE: 'Need Improvement'
+    // - Valid qualified students: Dense ranking (1, 1, 2, 3...)
+    const qualifiedStudents = studentScores.filter(s => !s.hasAbsent && !s.hasMissingCe && !s.failedWritten && !s.isIncomplete);
+    qualifiedStudents.sort((a, b) => b.total - a.total);
 
-    const rankMap = new Map<string, { rank: number | null; total: number; max: number; pct: number | null; isIncomplete: boolean }>();
+    const rankMap = new Map<string, { rank: number | null; denseRankText: string; total: number; max: number; pct: number | null; isIncomplete: boolean }>();
 
-    let currentRank = 1;
-    for (let i = 0; i < validStudents.length; i++) {
-      if (i > 0 && validStudents[i].total < validStudents[i - 1].total) {
-        currentRank = i + 1;
+    let currentDenseRank = 1;
+    for (let i = 0; i < qualifiedStudents.length; i++) {
+      if (i > 0 && qualifiedStudents[i].total < qualifiedStudents[i - 1].total) {
+        currentDenseRank++;
       }
-      const s = validStudents[i];
+      const s = qualifiedStudents[i];
       const pct = s.max > 0 ? Number(((s.total / s.max) * 100).toFixed(2)) : 0;
       rankMap.set(s.studentId, {
-        rank: currentRank,
+        rank: currentDenseRank,
+        denseRankText: `Rank ${currentDenseRank}`,
         total: s.total,
         max: s.max,
         pct,
@@ -1244,16 +1288,30 @@ export class ClientStorageApi {
       });
     }
 
+    // Set non-qualified students
     studentScores.forEach(s => {
-      if (s.isIncomplete) {
-        rankMap.set(s.studentId, {
-          rank: null,
-          total: s.total,
-          max: s.max,
-          pct: null,
-          isIncomplete: true,
-        });
+      if (rankMap.has(s.studentId)) return;
+
+      const pct = s.max > 0 && !s.hasAbsent ? Number(((s.total / s.max) * 100).toFixed(2)) : null;
+      let text = 'Need Improvement';
+      if (s.hasAbsent) {
+        text = 'Absent';
+      } else if (s.hasMissingCe) {
+        text = 'Withheld';
+      } else if (s.failedWritten) {
+        text = 'Need Improvement';
+      } else if (s.isIncomplete) {
+        text = 'Incomplete';
       }
+
+      rankMap.set(s.studentId, {
+        rank: null,
+        denseRankText: text,
+        total: s.total,
+        max: s.max,
+        pct,
+        isIncomplete: true,
+      });
     });
 
     return rankMap;
@@ -1435,6 +1493,10 @@ export class ClientStorageApi {
       resultStatusMl = 'Needs Improvement';
     }
 
+    const attConfig = this.db.attendanceConfigs?.find(a => a.classId === student.classId);
+    const daysAttended = attConfig?.studentDaysAttended?.[student.id] ?? student.attendance?.daysAttended ?? 88;
+    const totalWorkingDays = attConfig?.totalWorkingDays ?? student.attendance?.totalWorkingDays ?? 88;
+
     return {
       student,
       examination: exam,
@@ -1447,7 +1509,12 @@ export class ClientStorageApi {
       nonCeDiaryMax,
       nonCeDiaryObtained,
       percentage,
-      classRank: hasWithheldCe || hasIncompleteSubjects || hasAbsentSubjects ? null : rankInfo.rank,
+      classRank: hasWithheldCe || hasIncompleteSubjects || hasAbsentSubjects || !passedNonCeCriteria ? null : rankInfo.rank,
+      denseRankText: rankInfo.denseRankText || (resultStatus === 'Passed' && rankInfo.rank ? `Rank ${rankInfo.rank}` : resultStatus),
+      attendance: {
+        daysAttended,
+        totalWorkingDays,
+      },
       totalStudentsInClass,
       hasIncompleteSubjects,
       hasAbsentSubjects,
@@ -1757,6 +1824,20 @@ export class ClientStorageApi {
 
       if (path === '/api/teacher-assignments' && method === 'POST') {
         const { teacherId, classId, subjectId, id } = bodyData;
+        
+        // Prevent assigning the same subject of a specific class to more than one teacher
+        const conflictingAsg = this.db.teacherAssignments.find(
+          a => a.classId === classId && a.subjectId === subjectId && a.teacherId !== teacherId
+        );
+        if (conflictingAsg) {
+          const conflictingTeacher = this.db.users.find(u => u.id === conflictingAsg.teacherId);
+          const targetCls = this.db.classes.find(c => c.id === classId);
+          const targetSub = this.db.subjects.find(s => s.id === subjectId);
+          return this.jsonResponse({
+            error: `This subject slot (${targetSub?.nameMl || targetSub?.nameEn || 'Subject'} in ${targetCls?.name || 'Class'}) is already allocated to teacher "${conflictingTeacher?.name || 'another teacher'}". Please remove that assignment first.`,
+          }, 400);
+        }
+
         const exists = this.db.teacherAssignments.some(
           a => a.teacherId === teacherId && a.classId === classId && a.subjectId === subjectId
         );
@@ -2817,6 +2898,223 @@ export class ClientStorageApi {
             'Content-Disposition': 'attachment; filename="students_list.csv"',
           },
         });
+      }
+
+      // Sub-Admins API
+      if (path === '/api/sub-admins' && method === 'GET') {
+        const subAdmins = this.db.users.filter(u => u.role === 'admin' && u.isSubAdmin);
+        return this.jsonResponse(subAdmins);
+      }
+
+      if (path === '/api/sub-admins' && method === 'POST') {
+        const { name, nameMl, username, password, plainPassword, permissions } = bodyData;
+        if (!name || !username) {
+          return this.jsonResponse({ error: 'Name and Username are required' }, 400);
+        }
+        if (this.db.users.some(u => u.username.toLowerCase() === username.trim().toLowerCase())) {
+          return this.jsonResponse({ error: 'Username already in use' }, 400);
+        }
+        const pwd = (password || plainPassword || 'admin123').trim();
+        const newAdmin: User = {
+          id: `adm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          username: username.trim(),
+          name: name.trim(),
+          nameMl: (nameMl || name).trim(),
+          role: 'admin',
+          isSubAdmin: true,
+          plainPassword: pwd,
+          passwordHash: clientHashPassword(pwd),
+          permissions: permissions || DEFAULT_ADMIN_PERMISSIONS,
+          active: true,
+          createdAt: new Date().toISOString(),
+        };
+        this.db.users.push(newAdmin);
+        this.saveDB();
+        firestoreSync.syncAdmin(newAdmin).catch(e => console.warn('Firestore syncAdmin error:', e));
+        return this.jsonResponse(newAdmin);
+      }
+
+      const subAdminIdMatch = path.match(/^\/api\/sub-admins\/([^/]+)$/);
+      if (subAdminIdMatch && method === 'PUT') {
+        const aId = subAdminIdMatch[1];
+        const admin = this.db.users.find(u => u.id === aId && u.isSubAdmin);
+        if (!admin) return this.jsonResponse({ error: 'Sub-admin not found' }, 404);
+        if (bodyData.name) admin.name = bodyData.name.trim();
+        if (bodyData.nameMl) admin.nameMl = bodyData.nameMl.trim();
+        if (bodyData.username) admin.username = bodyData.username.trim();
+        if (bodyData.password || bodyData.plainPassword) {
+          const pwd = (bodyData.password || bodyData.plainPassword).trim();
+          admin.plainPassword = pwd;
+          admin.passwordHash = clientHashPassword(pwd);
+        }
+        if (bodyData.permissions) admin.permissions = bodyData.permissions;
+        if (bodyData.active !== undefined) admin.active = Boolean(bodyData.active);
+        this.saveDB();
+        firestoreSync.syncAdmin(admin).catch(e => console.warn('Firestore syncAdmin PUT error:', e));
+        return this.jsonResponse(admin);
+      }
+
+      if (subAdminIdMatch && method === 'DELETE') {
+        const aId = subAdminIdMatch[1];
+        this.db.users = this.db.users.filter(u => u.id !== aId);
+        this.saveDB();
+        firestoreSync.deleteAdmin(aId).catch(e => console.warn('Firestore deleteAdmin error:', e));
+        return this.jsonResponse({ success: true });
+      }
+
+      // Fees Management API
+      if (path === '/api/fees/payments' && method === 'GET') {
+        const studentId = params.get('studentId');
+        const classId = params.get('classId');
+        let payments = this.db.feePayments || [];
+        if (studentId) {
+          payments = payments.filter(p => p.studentId === studentId);
+        } else if (classId) {
+          payments = payments.filter(p => p.classId === classId);
+        }
+        payments = [...payments].sort((a, b) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime());
+        return this.jsonResponse(payments);
+      }
+
+      if (path === '/api/fees/payments' && method === 'POST') {
+        let nextNum = 1001;
+        const existingNums = (this.db.feePayments || [])
+          .map(p => parseInt((p.receiptNo || '').replace(/\D/g, ''), 10))
+          .filter(n => !isNaN(n));
+        if (existingNums.length > 0) {
+          nextNum = Math.max(...existingNums) + 1;
+        }
+
+        const pId = bodyData.id || `fee_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const receiptNo = bodyData.receiptNo ? String(bodyData.receiptNo).trim() : `#${nextNum}`;
+        const newPayment: FeePayment = {
+          id: pId,
+          receiptNo,
+          date: bodyData.date || new Date().toISOString().split('T')[0],
+          studentId: bodyData.studentId,
+          studentName: bodyData.studentName,
+          admissionNo: bodyData.admissionNo,
+          classId: bodyData.classId,
+          className: bodyData.className,
+          admissionFee: Number(bodyData.admissionFee) || 0,
+          tuitionFeeMonths: Array.isArray(bodyData.tuitionFeeMonths) ? bodyData.tuitionFeeMonths : [],
+          tuitionFeeAmount: Number(bodyData.tuitionFeeAmount) || (Array.isArray(bodyData.tuitionFeeMonths) ? bodyData.tuitionFeeMonths.length * 300 : 0),
+          specialFeeComponents: bodyData.specialFeeComponents || {},
+          specialFeeAmount: Number(bodyData.specialFeeAmount) || 0,
+          donationAmount: Number(bodyData.donationAmount) || 0,
+          totalAmount: Number(bodyData.totalAmount) || 0,
+          amountInWords: bodyData.amountInWords || '',
+          notes: bodyData.notes || '',
+          collectedBy: bodyData.collectedBy || this.getCurrentUser()?.name || 'Office',
+          createdAt: new Date().toISOString(),
+        };
+
+        if (!this.db.feePayments) this.db.feePayments = [];
+        this.db.feePayments.push(newPayment);
+        this.saveDB();
+        firestoreSync.syncFeePayment(newPayment).catch(e => console.warn('Firestore syncFeePayment error:', e));
+        return this.jsonResponse(newPayment);
+      }
+
+      const feePaymentIdMatch = path.match(/^\/api\/fees\/payments\/([^/]+)$/);
+      if (feePaymentIdMatch && method === 'DELETE') {
+        const feeId = feePaymentIdMatch[1];
+        this.db.feePayments = (this.db.feePayments || []).filter(p => p.id !== feeId);
+        this.saveDB();
+        firestoreSync.deleteFeePayment(feeId).catch(e => console.warn('Firestore deleteFeePayment error:', e));
+        return this.jsonResponse({ success: true });
+      }
+
+      // Attendance API
+      const attendanceClassMatch = path.match(/^\/api\/attendance\/class\/([^/]+)$/);
+      if (attendanceClassMatch && method === 'GET') {
+        const cId = attendanceClassMatch[1];
+        const config = (this.db.attendanceConfigs || []).find(c => c.classId === cId) || {
+          classId: cId,
+          totalWorkingDays: 88,
+          studentDaysAttended: {},
+        };
+        return this.jsonResponse(config);
+      }
+
+      if (attendanceClassMatch && method === 'POST') {
+        const cId = attendanceClassMatch[1];
+        const { totalWorkingDays, studentDaysAttended } = bodyData;
+        if (!this.db.attendanceConfigs) this.db.attendanceConfigs = [];
+        const existingIdx = this.db.attendanceConfigs.findIndex(c => c.classId === cId);
+        const config: ClassAttendanceConfig = {
+          classId: cId,
+          totalWorkingDays: Number(totalWorkingDays) || 0,
+          studentDaysAttended: studentDaysAttended || {},
+          updatedAt: new Date().toISOString(),
+        };
+        if (existingIdx >= 0) {
+          this.db.attendanceConfigs[existingIdx] = config;
+        } else {
+          this.db.attendanceConfigs.push(config);
+        }
+        Object.entries(studentDaysAttended || {}).forEach(([sId, days]) => {
+          const st = this.db.students.find(s => s.id === sId);
+          if (st) {
+            st.attendance = {
+              daysAttended: Number(days) || 0,
+              totalWorkingDays: Number(totalWorkingDays) || 0,
+            };
+          }
+        });
+        this.saveDB();
+        firestoreSync.syncAttendance(config).catch(e => console.warn('Firestore syncAttendance error:', e));
+        return this.jsonResponse(config);
+      }
+
+      // Parent Removal (Class-wise & Bulk)
+      const parentClassDeleteMatch = path.match(/^\/api\/parents\/class\/([^/]+)$/);
+      if (parentClassDeleteMatch && method === 'DELETE') {
+        const cId = parentClassDeleteMatch[1];
+        const classStudents = this.db.students.filter(s => s.classId === cId);
+        const classStudentIds = new Set(classStudents.map(s => s.id));
+        const parentIdsToRemove = new Set<string>();
+
+        this.db.users.filter(u => u.role === 'parent').forEach(p => {
+          const linked = this.db.students.filter(s => s.parentUserId === p.id || s.parentNameEn.toLowerCase() === p.name.toLowerCase());
+          if (linked.some(s => classStudentIds.has(s.id))) {
+            parentIdsToRemove.add(p.id);
+          }
+        });
+
+        const deletedCount = parentIdsToRemove.size;
+        this.db.users = this.db.users.filter(u => !parentIdsToRemove.has(u.id));
+        classStudents.forEach(s => {
+          s.parentUserId = undefined;
+        });
+        this.saveDB();
+
+        parentIdsToRemove.forEach(pId => {
+          firestoreSync.deleteParent(pId).catch(e => console.warn('Firestore deleteParent error:', e));
+        });
+
+        return this.jsonResponse({ success: true, deletedCount });
+      }
+
+      if (path === '/api/parents/bulk-delete' && method === 'POST') {
+        const { parentIds } = bodyData;
+        if (!Array.isArray(parentIds) || parentIds.length === 0) {
+          return this.jsonResponse({ error: 'No parent IDs provided' }, 400);
+        }
+        const idSet = new Set(parentIds);
+        this.db.users = this.db.users.filter(u => !idSet.has(u.id));
+        this.db.students.forEach(s => {
+          if (s.parentUserId && idSet.has(s.parentUserId)) {
+            s.parentUserId = undefined;
+          }
+        });
+        this.saveDB();
+
+        parentIds.forEach(pId => {
+          firestoreSync.deleteParent(pId).catch(e => console.warn('Firestore bulk deleteParent error:', e));
+        });
+
+        return this.jsonResponse({ success: true, deletedCount: parentIds.length });
       }
 
       return this.jsonResponse({ error: `Not found: ${method} ${path}` }, 404);

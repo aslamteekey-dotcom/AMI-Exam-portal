@@ -652,9 +652,8 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
                       <td className="p-3 font-mono font-semibold text-slate-700 whitespace-nowrap">
                         {student.admissionNo}
                       </td>
-                      <td className="p-3 min-w-[140px]">
-                        <div className="font-bold text-slate-900">{student.nameEn}</div>
-                        <div className="text-[11px] text-slate-500">{student.nameMl}</div>
+                      <td className="p-3 min-w-[140px] whitespace-nowrap">
+                        <span className="font-bold text-slate-900">{student.nameEn}</span>
                       </td>
                       <td className="p-3 whitespace-nowrap">
                         <span className="bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md font-semibold">
@@ -672,11 +671,8 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
                           {student.gender || 'M'}
                         </span>
                       </td>
-                      <td className="p-3 min-w-[140px]">
-                        <div className="font-medium text-slate-800">{student.parentNameEn || '—'}</div>
-                        {student.parentNameMl && (
-                          <div className="text-[10px] text-slate-400">{student.parentNameMl}</div>
-                        )}
+                      <td className="p-3 min-w-[140px] whitespace-nowrap">
+                        <span className="font-medium text-slate-800">{student.parentNameEn || '—'}</span>
                       </td>
                       <td className="p-3 font-mono text-slate-600 whitespace-nowrap">
                         {student.parentPhone || '—'}

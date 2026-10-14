@@ -1,6 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { TeacherAssignment, ClassItem, SubjectItem, Examination, MarkSheet, Student, sortStudentsBoysFirst } from '../../types';
+import {
+  TeacherAssignment,
+  ClassItem,
+  SubjectItem,
+  Examination,
+  MarkSheet,
+  Student,
+  sortStudentsBoysFirst,
+  TUITION_FEE_MONTHS,
+  FeePayment,
+} from '../../types';
 import { MarkEntryScreen } from './MarkEntryScreen';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
 import { collection, onSnapshot, doc, getDoc, getDocs } from 'firebase/firestore';
@@ -17,6 +27,8 @@ import {
   GraduationCap,
   Calendar,
   Sparkles,
+  CreditCard,
+  Save,
 } from 'lucide-react';
 
 export const TeacherDashboard: React.FC = () => {
@@ -34,6 +46,13 @@ export const TeacherDashboard: React.FC = () => {
   const [markSheets, setMarkSheets] = useState<MarkSheet[]>([]);
   const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [currentTeacherInChargeClassId, setCurrentTeacherInChargeClassId] = useState<string | undefined>(user?.inChargeClassId);
+
+  // In-charge Class Attendance & Fee Tracking
+  const [attendanceTotalWorkingDays, setAttendanceTotalWorkingDays] = useState<number>(88);
+  const [studentDaysAttendedMap, setStudentDaysAttendedMap] = useState<Record<string, number>>({});
+  const [isSavingAttendance, setIsSavingAttendance] = useState(false);
+  const [attendanceSaved, setAttendanceSaved] = useState(false);
+  const [classFeePayments, setClassFeePayments] = useState<FeePayment[]>([]);
 
   // Active Mark Entry Selection
   const [activeEntry, setActiveEntry] = useState<{
@@ -121,6 +140,27 @@ export const TeacherDashboard: React.FC = () => {
       setAllStudents(sortStudentsBoysFirst(stuData));
       if (authData.user?.inChargeClassId !== undefined) {
         setCurrentTeacherInChargeClassId(authData.user.inChargeClassId);
+      }
+
+      const targetInChargeId = authData.user?.inChargeClassId !== undefined ? authData.user.inChargeClassId : currentAssignments[0]?.classId;
+      if (targetInChargeId) {
+        try {
+          const [resAtt, resFees] = await Promise.all([
+            fetchWithAuth(`/api/attendance/class/${targetInChargeId}`),
+            fetchWithAuth(`/api/fees/payments?classId=${targetInChargeId}`),
+          ]);
+          if (resAtt.ok) {
+            const att = await resAtt.json();
+            if (att.totalWorkingDays) setAttendanceTotalWorkingDays(att.totalWorkingDays);
+            if (att.studentDaysAttended) setStudentDaysAttendedMap(att.studentDaysAttended);
+          }
+          if (resFees.ok) {
+            const fees = await resFees.json();
+            setClassFeePayments(fees);
+          }
+        } catch (fErr) {
+          console.warn('Error loading in-charge attendance & fees:', fErr);
+        }
       }
 
       const activeExam = examData[0];
@@ -275,6 +315,29 @@ export const TeacherDashboard: React.FC = () => {
     }
   };
 
+  const handleSaveAttendance = async (targetClassId: string) => {
+    setIsSavingAttendance(true);
+    setAttendanceSaved(false);
+    try {
+      const res = await fetchWithAuth(`/api/attendance/class/${targetClassId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          totalWorkingDays: attendanceTotalWorkingDays,
+          studentDaysAttended: studentDaysAttendedMap,
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to save attendance');
+      setAttendanceSaved(true);
+      setTimeout(() => setAttendanceSaved(false), 3000);
+      alert('Class attendance roster saved successfully! Total working days and student attendance recorded.');
+    } catch (err: any) {
+      alert(err.message || 'Error saving attendance');
+    } finally {
+      setIsSavingAttendance(false);
+    }
+  };
+
   if (activeEntry) {
     return (
       <MarkEntryScreen
@@ -314,11 +377,11 @@ export const TeacherDashboard: React.FC = () => {
     <div className="space-y-6">
       {/* Welcome Banner */}
       <div className="bg-gradient-to-r from-emerald-900 to-emerald-800 text-white rounded-2xl p-6 shadow-sm">
+        <div className="text-center font-serif text-emerald-300 text-base mb-3" dir="rtl">
+          أهلاً وسهلاً
+        </div>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <div className="font-serif text-emerald-300 text-sm mb-1" dir="rtl">
-              أهلاً وسهلاً
-            </div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl md:text-2xl font-bold font-serif">
                 {isMl && user?.nameMl ? user.nameMl : user?.name}
@@ -686,17 +749,41 @@ export const TeacherDashboard: React.FC = () => {
                 </div>
               </div>
 
-              {/* Section 2: Complete Student List for In-Charge Class */}
+              {/* Section 2: Student Attendance & Working Days Management */}
               <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-3">
                   <div>
                     <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                       <Users className="w-4 h-4 text-emerald-800" />
-                      Student Roster for {inChargeClass.name} ({inChargeStudents.length} students)
+                      Attendance Roster & Working Days ({inChargeStudents.length} Students)
                     </h3>
                     <p className="text-xs text-slate-500">
-                      Roster of students enrolled in your in-charge class.
+                      Configure total working days and update student attendance count for {inChargeClass.name}.
                     </p>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5 text-xs bg-slate-50 p-1.5 rounded-xl border border-slate-200">
+                      <label className="font-bold text-slate-700 whitespace-nowrap">Total Working Days:</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="365"
+                        value={attendanceTotalWorkingDays}
+                        onChange={e => setAttendanceTotalWorkingDays(Number(e.target.value) || 88)}
+                        className="w-16 p-1 text-center font-bold font-mono border rounded-lg bg-white"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleSaveAttendance(inChargeClass.id)}
+                      disabled={isSavingAttendance}
+                      className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs disabled:opacity-50 cursor-pointer"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      {isSavingAttendance ? 'Saving...' : attendanceSaved ? 'Saved!' : 'Save Attendance'}
+                    </button>
                   </div>
                 </div>
 
@@ -706,57 +793,169 @@ export const TeacherDashboard: React.FC = () => {
                   </div>
                 ) : (
                   <div className="border border-slate-200 rounded-xl overflow-x-auto w-full text-xs scrollbar-thin">
-                    <table className="w-full min-w-[650px] text-left">
+                    <table className="w-full min-w-[700px] text-left">
                       <thead className="bg-slate-100 text-slate-700 font-bold border-b">
                         <tr>
-                          <th className="p-3 font-mono whitespace-nowrap">Admission No</th>
-                          <th className="p-3 whitespace-nowrap">Student Name</th>
-                          <th className="p-3 text-center whitespace-nowrap">Gender</th>
-                          <th className="p-3 whitespace-nowrap">Parent Name</th>
-                          <th className="p-3 whitespace-nowrap">Phone</th>
-                          <th className="p-3 text-center whitespace-nowrap">Status</th>
+                          <th className="p-3 w-14 text-center font-mono">Roll</th>
+                          <th className="p-3 font-mono">Adm No</th>
+                          <th className="p-3">Student Name</th>
+                          <th className="p-3 text-center">Gender</th>
+                          <th className="p-3">Parent Name</th>
+                          <th className="p-3 text-center w-36">Days Attended</th>
+                          <th className="p-3 text-center">Ratio</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {inChargeStudents.map(st => (
-                          <tr key={st.id} className="hover:bg-slate-50 transition">
-                            <td className="p-3 font-mono font-semibold text-slate-700">
-                              {st.admissionNo}
-                            </td>
-                            <td className="p-3">
-                              <div className="font-bold text-slate-900">{st.nameEn}</div>
-                              {st.nameMl && (
-                                <div className="text-[11px] text-slate-500">{st.nameMl}</div>
-                              )}
-                            </td>
-                            <td className="p-3 text-center">
-                              <span
-                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                                  st.gender === 'F'
-                                    ? 'bg-pink-100 text-pink-800'
-                                    : 'bg-blue-100 text-blue-800'
-                                }`}
-                              >
-                                {st.gender || 'M'}
-                              </span>
-                            </td>
-                            <td className="p-3 text-slate-800 font-medium">
-                              {st.parentNameEn || '—'}
-                            </td>
-                            <td className="p-3 font-mono text-slate-600">
-                              {st.parentPhone || '—'}
-                            </td>
-                            <td className="p-3 text-center">
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                                Enrolled
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
+                        {inChargeStudents.map(st => {
+                          const currentDays = studentDaysAttendedMap[st.id] !== undefined
+                            ? studentDaysAttendedMap[st.id]
+                            : (st.attendance?.daysAttended ?? attendanceTotalWorkingDays);
+
+                          return (
+                            <tr key={st.id} className="hover:bg-slate-50 transition">
+                              <td className="p-3 text-center font-mono font-bold text-slate-600">
+                                {st.rollNo}
+                              </td>
+                              <td className="p-3 font-mono font-semibold text-slate-700">
+                                {st.admissionNo}
+                              </td>
+                              <td className="p-3">
+                                <div className="font-bold text-slate-900">{st.nameEn}</div>
+                                {st.nameMl && (
+                                  <div className="text-[11px] text-slate-500">{st.nameMl}</div>
+                                )}
+                              </td>
+                              <td className="p-3 text-center">
+                                <span
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                                    st.gender === 'F' ? 'bg-pink-100 text-pink-800' : 'bg-blue-100 text-blue-800'
+                                  }`}
+                                >
+                                  {st.gender || 'M'}
+                                </span>
+                              </td>
+                              <td className="p-3 text-slate-800 font-medium">
+                                {st.parentNameEn || '—'}
+                              </td>
+                              <td className="p-3 text-center">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max={attendanceTotalWorkingDays}
+                                  value={currentDays}
+                                  onChange={e => {
+                                    const val = Number(e.target.value);
+                                    setStudentDaysAttendedMap(prev => ({
+                                      ...prev,
+                                      [st.id]: val,
+                                    }));
+                                  }}
+                                  className="w-20 p-1 text-center font-mono font-bold border border-slate-300 rounded-lg bg-white focus:outline-emerald-800"
+                                />
+                              </td>
+                              <td className="p-3 text-center font-mono text-slate-600">
+                                {currentDays} / {attendanceTotalWorkingDays}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 )}
+              </div>
+
+              {/* Section 3: Month-by-Month Tuition Installment Progress Tracker */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                      <CreditCard className="w-4 h-4 text-emerald-800" />
+                      Class Fee Payment Progress (12 Installments: June 2026 – May 2027)
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Live status of ₹300 monthly installments for students in {inChargeClass.name}.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="border border-slate-200 rounded-xl overflow-x-auto w-full text-xs scrollbar-thin">
+                  <table className="w-full min-w-[750px] text-left">
+                    <thead className="bg-slate-100 text-slate-700 font-bold border-b">
+                      <tr>
+                        <th className="p-2.5 w-12 text-center font-mono">Roll</th>
+                        <th className="p-2.5 font-mono w-24">Adm No</th>
+                        <th className="p-2.5 min-w-[150px]">Student Name</th>
+                        {TUITION_FEE_MONTHS.map(m => (
+                          <th key={m} className="p-2 text-center font-mono text-[10px] w-12">
+                            {m.split(' ')[0].substring(0, 3)}
+                          </th>
+                        ))}
+                        <th className="p-2.5 text-center">Paid / 12</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {inChargeStudents.map(st => {
+                        const paidMonths = new Set<string>();
+                        classFeePayments
+                          .filter(p => p.studentId === st.id)
+                          .forEach(p => {
+                            (p.tuitionFeeMonths || []).forEach(m => paidMonths.add(m));
+                          });
+                        const count = paidMonths.size;
+
+                        return (
+                          <tr key={st.id} className="hover:bg-slate-50 transition">
+                            <td className="p-2 text-center font-mono font-bold text-slate-600">
+                              {st.rollNo}
+                            </td>
+                            <td className="p-2 font-mono font-semibold text-slate-700">
+                              {st.admissionNo}
+                            </td>
+                            <td className="p-2 font-bold text-slate-900">
+                              {st.nameEn}
+                            </td>
+                            {TUITION_FEE_MONTHS.map(m => {
+                              const isPaid = paidMonths.has(m);
+                              return (
+                                <td key={m} className="p-2 text-center">
+                                  {isPaid ? (
+                                    <span
+                                      title={`${m}: Paid`}
+                                      className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-emerald-600 text-white text-[10px] font-bold shadow-2xs"
+                                    >
+                                      ✓
+                                    </span>
+                                  ) : (
+                                    <span
+                                      title={`${m}: Pending`}
+                                      className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-slate-100 text-slate-400 text-[10px]"
+                                    >
+                                      —
+                                    </span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 text-center">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  count === 12
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : count > 0
+                                    ? 'bg-blue-100 text-blue-800'
+                                    : 'bg-slate-100 text-slate-500'
+                                }`}
+                              >
+                                {count} / 12
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}

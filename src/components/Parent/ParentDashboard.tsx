@@ -1,6 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Student, Examination, StudentProgressReport, InstitutionSettings, sortStudentsBoysFirst } from '../../types';
+import {
+  Student,
+  Examination,
+  StudentProgressReport,
+  InstitutionSettings,
+  sortStudentsBoysFirst,
+  TUITION_FEE_MONTHS,
+  FeePayment,
+} from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
 import {
   User,
@@ -13,6 +21,9 @@ import {
   CheckCircle2,
   Loader2,
   RotateCcw,
+  CreditCard,
+  Printer,
+  X,
 } from 'lucide-react';
 
 export const ParentDashboard: React.FC = () => {
@@ -23,6 +34,9 @@ export const ParentDashboard: React.FC = () => {
   const [examinations, setExaminations] = useState<Examination[]>([]);
   const [selectedChildId, setSelectedChildId] = useState<string>('');
   const [selectedExamId, setSelectedExamId] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'report' | 'fees'>('report');
+  const [childPayments, setChildPayments] = useState<FeePayment[]>([]);
+  const [activeReceipt, setActiveReceipt] = useState<FeePayment | null>(null);
 
   // Selected Report Data
   const [reportData, setReportData] = useState<{
@@ -106,6 +120,25 @@ export const ParentDashboard: React.FC = () => {
     }
   };
 
+  const loadChildFees = async (childId: string) => {
+    if (!childId) return;
+    try {
+      const res = await fetchWithAuth(`/api/fees/payments?studentId=${childId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setChildPayments(data);
+      }
+    } catch (e) {
+      console.warn('Error loading child fees:', e);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedChildId) {
+      loadChildFees(selectedChildId);
+    }
+  }, [selectedChildId]);
+
   useEffect(() => {
     if (selectedChildId && selectedExamId) {
       loadReport(selectedChildId, selectedExamId);
@@ -128,11 +161,11 @@ export const ParentDashboard: React.FC = () => {
     <div className="space-y-6">
       {/* Welcome Banner */}
       <div className="bg-gradient-to-r from-emerald-900 to-emerald-800 text-white rounded-2xl p-6 shadow-sm print:hidden">
+        <div className="text-center font-serif text-emerald-300 text-base mb-3" dir="rtl">
+          بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
+        </div>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <div className="font-serif text-emerald-300 text-sm mb-1" dir="rtl">
-              بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
-            </div>
             <h1 className="text-xl md:text-2xl font-bold font-serif">
               {isMl && user?.nameMl ? user.nameMl : user?.name}
             </h1>
@@ -251,58 +284,375 @@ export const ParentDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Immediate Progress Report Card Display Section */}
-          <div className="space-y-4">
-            {fetchingReport ? (
-              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs">
-                <Loader2 className="w-8 h-8 animate-spin text-emerald-800 mx-auto mb-3" />
-                <h3 className="text-sm font-bold text-slate-800">
-                  Loading Progress Report for {selectedChild?.nameEn}...
-                </h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  Fetching evaluation results, rankings, and subject assessments.
-                </p>
-              </div>
-            ) : isUnpublished ? (
-              <div className="bg-white rounded-2xl border border-amber-200 p-8 shadow-xs">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <h3 className="font-bold text-amber-950 text-base">
-                      {t.unpublishedNoticeTitle}
-                    </h3>
-                    <p className="text-xs text-amber-800 mt-1 leading-relaxed">
-                      The examination results for <strong>{selectedExam?.nameEn}</strong> are currently under evaluation or awaiting final verification and publication by the Principal. Please check back shortly.
-                    </p>
+          {/* View Mode Toggle: Progress Report vs Madrasa Fees */}
+          <div className="flex items-center gap-2 border-b border-slate-200 pb-2 print:hidden">
+            <button
+              type="button"
+              onClick={() => setActiveTab('report')}
+              className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition cursor-pointer ${
+                activeTab === 'report'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              }`}
+            >
+              <Award className="w-4 h-4" />
+              <span>{t.navProgressReport || 'Progress Report Card'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('fees')}
+              className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition cursor-pointer ${
+                activeTab === 'fees'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              }`}
+            >
+              <CreditCard className="w-4 h-4" />
+              <span>Madrasa Fees & Receipts ({childPayments.length})</span>
+            </button>
+          </div>
+
+          {/* TAB 1: Immediate Progress Report Card Display Section */}
+          {activeTab === 'report' && (
+            <div className="space-y-4">
+              {fetchingReport ? (
+                <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs">
+                  <Loader2 className="w-8 h-8 animate-spin text-emerald-800 mx-auto mb-3" />
+                  <h3 className="text-sm font-bold text-slate-800">
+                    Loading Progress Report for {selectedChild?.nameEn}...
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Fetching evaluation results, rankings, and subject assessments.
+                  </p>
+                </div>
+              ) : isUnpublished ? (
+                <div className="bg-white rounded-2xl border border-amber-200 p-8 shadow-xs">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <h3 className="font-bold text-amber-950 text-base">
+                        {t.unpublishedNoticeTitle}
+                      </h3>
+                      <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                        The examination results for <strong>{selectedExam?.nameEn}</strong> are currently under evaluation or awaiting final verification and publication by the Principal. Please check back shortly.
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ) : reportError ? (
-              <div className="bg-white rounded-2xl border border-rose-200 p-6 shadow-xs flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3 text-rose-800 text-xs">
-                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
-                  <div>
-                    <h4 className="font-bold text-rose-950 text-sm">Unable to load report</h4>
-                    <p className="mt-0.5">{reportError}</p>
+              ) : reportError ? (
+                <div className="bg-white rounded-2xl border border-rose-200 p-6 shadow-xs flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3 text-rose-800 text-xs">
+                    <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                    <div>
+                      <h4 className="font-bold text-rose-950 text-sm">Unable to load report</h4>
+                      <p className="mt-0.5">{reportError}</p>
+                    </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => loadReport(selectedChildId, selectedExamId)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Retry
+                  </button>
                 </div>
+              ) : reportData ? (
+                <div className="space-y-4">
+                  <ProgressReportCard
+                    report={reportData.report}
+                    settings={reportData.settings}
+                  />
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          {/* TAB 2: Madrasa Fees & Receipts Section */}
+          {activeTab === 'fees' && (
+            <div className="space-y-6">
+              {/* Month-by-Month Progress Tracker Card */}
+              {(() => {
+                const paidMonthsSet = new Set<string>();
+                childPayments.forEach(p => {
+                  (p.tuitionFeeMonths || []).forEach(m => paidMonthsSet.add(m));
+                });
+                const totalPaidAmount = childPayments.reduce((sum, p) => sum + (Number(p.totalAmount) || 0), 0);
+                const settledMonthsCount = paidMonthsSet.size;
+
+                return (
+                  <div className="space-y-6">
+                    {/* Summary KPI Strip */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 text-xs">
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
+                        <span className="text-[11px] font-bold text-slate-500 uppercase block">Tuition Installments Settled</span>
+                        <span className="text-2xl font-black text-emerald-900 font-mono mt-1 block">
+                          {settledMonthsCount} / 12 Months
+                        </span>
+                        <span className="text-[10px] text-slate-400">Academic Year 2026–2027</span>
+                      </div>
+
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
+                        <span className="text-[11px] font-bold text-slate-500 uppercase block">Total Fees Paid</span>
+                        <span className="text-2xl font-black text-slate-900 font-mono mt-1 block">
+                          ₹{totalPaidAmount.toLocaleString('en-IN')}
+                        </span>
+                        <span className="text-[10px] text-slate-400">Tuition + Special & Exam Funds</span>
+                      </div>
+
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
+                        <span className="text-[11px] font-bold text-slate-500 uppercase block">Official Receipts</span>
+                        <span className="text-2xl font-black text-purple-900 font-mono mt-1 block">
+                          {childPayments.length} Receipts
+                        </span>
+                        <span className="text-[10px] text-slate-400">Issued by Madrasa Office</span>
+                      </div>
+                    </div>
+
+                    {/* 12-Month Interactive Tracker Card */}
+                    <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+                      <div>
+                        <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                          <CreditCard className="w-4 h-4 text-emerald-800" />
+                          12-Month Tuition Installment Progress Tracker for {selectedChild?.nameEn}
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          Tuition fee is ₹300 per month (June 2026 – May 2027). Green badges denote settled installments.
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 pt-2">
+                        {TUITION_FEE_MONTHS.map(month => {
+                          const isPaid = paidMonthsSet.has(month);
+                          return (
+                            <div
+                              key={month}
+                              className={`p-3 rounded-xl border text-center transition ${
+                                isPaid
+                                  ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950 shadow-2xs'
+                                  : 'bg-slate-50 border-slate-200 text-slate-400'
+                              }`}
+                            >
+                              <div className="text-[10px] font-bold uppercase tracking-wider mb-1">
+                                {month.split(' ')[0]}
+                              </div>
+                              <div className="text-xs font-mono font-black mb-1">
+                                {month.split(' ')[1]}
+                              </div>
+                              {isPaid ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-white px-2 py-0.5 rounded-full border border-emerald-200 shadow-2xs">
+                                  ✓ Paid
+                                </span>
+                              ) : (
+                                <span className="inline-block text-[10px] font-medium text-slate-400 bg-slate-200/60 px-2 py-0.5 rounded-full">
+                                  Pending
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Receipts History Table */}
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                      <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
+                        <h4 className="text-sm font-bold text-slate-900">
+                          Payment Receipts History ({childPayments.length})
+                        </h4>
+                      </div>
+
+                      {childPayments.length === 0 ? (
+                        <div className="p-8 text-center text-xs text-slate-400">
+                          No fee payment receipts recorded yet for {selectedChild?.nameEn}.
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                              <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                                <th className="py-2.5 px-3">Receipt #</th>
+                                <th className="py-2.5 px-3">Date</th>
+                                <th className="py-2.5 px-3">Tuition Months Covered</th>
+                                <th className="py-2.5 px-3 text-right">Amount (₹)</th>
+                                <th className="py-2.5 px-3 text-right">Action</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {childPayments.map(p => (
+                                <tr key={p.id} className="hover:bg-slate-50 transition">
+                                  <td className="py-2.5 px-3 font-mono font-bold text-emerald-900">
+                                    {p.receiptNo}
+                                  </td>
+                                  <td className="py-2.5 px-3 font-mono text-slate-600">
+                                    {p.date}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-slate-700">
+                                    {(p.tuitionFeeMonths || []).length > 0
+                                      ? p.tuitionFeeMonths.join(', ')
+                                      : 'Special / Exam Fee'}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
+                                    ₹{p.totalAmount.toLocaleString('en-IN')}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right">
+                                    <button
+                                      type="button"
+                                      onClick={() => setActiveReceipt(p)}
+                                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 rounded-lg transition border border-emerald-300 cursor-pointer"
+                                    >
+                                      <Printer className="w-3.5 h-3.5" />
+                                      View Receipt
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* MODAL: VIEW & PRINT OFFICIAL FEE RECEIPT */}
+      {activeReceipt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4 print:hidden">
+              <span className="text-xs font-bold text-slate-700">Official Fee Receipt</span>
+              <div className="flex items-center gap-2">
                 <button
-                  type="button"
-                  onClick={() => loadReport(selectedChildId, selectedExamId)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition"
+                  onClick={() => window.print()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg cursor-pointer"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  Retry
+                  <Printer className="w-3.5 h-3.5" />
+                  Print Receipt
+                </button>
+                <button
+                  onClick={() => setActiveReceipt(null)}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
                 </button>
               </div>
-            ) : reportData ? (
-              <div className="space-y-4">
-                <ProgressReportCard
-                  report={reportData.report}
-                  settings={reportData.settings}
-                />
+            </div>
+
+            {/* Official Slip */}
+            <div className="bg-white text-slate-900 border-2 border-emerald-900 p-6 rounded-xl font-sans relative">
+              <div className="text-center border-b border-emerald-800 pb-3 mb-3">
+                <div className="font-serif text-emerald-900 text-sm font-bold" dir="rtl">
+                  بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
+                </div>
+                <h1 className="text-base font-black uppercase text-emerald-950 font-serif mt-1">
+                  Al-Madrasathul Islamiya Pallikkuth
+                </h1>
+                <h2 className="text-xs font-bold text-emerald-900">
+                  അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്
+                </h2>
+                <p className="text-[10px] text-slate-500">
+                  Reg. No: KEC-8492 • Official Fee Receipt (2026–2027)
+                </p>
               </div>
-            ) : null}
+
+              <div className="flex items-center justify-between text-xs mb-3 font-mono bg-emerald-50/70 p-2 rounded-lg border border-emerald-100">
+                <div>
+                  <span className="text-slate-500">Receipt No: </span>
+                  <strong className="text-emerald-950 text-sm">{activeReceipt.receiptNo}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-500">Date: </span>
+                  <strong className="text-slate-800">{activeReceipt.date}</strong>
+                </div>
+              </div>
+
+              <div className="text-xs space-y-1 mb-4 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Student Name:</span>
+                  <strong className="text-slate-900">{activeReceipt.studentName}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Admission No:</span>
+                  <span className="font-mono font-bold text-slate-800">{activeReceipt.admissionNo}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Class:</span>
+                  <strong className="text-emerald-900">{activeReceipt.className}</strong>
+                </div>
+              </div>
+
+              <table className="w-full text-xs mb-4 border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-300 text-slate-600 font-bold">
+                    <th className="py-1.5 text-left">Description</th>
+                    <th className="py-1.5 text-right">Amount (₹)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {activeReceipt.admissionFee > 0 && (
+                    <tr>
+                      <td className="py-1 text-slate-800">Admission Fee</td>
+                      <td className="py-1 text-right font-mono">₹{activeReceipt.admissionFee}</td>
+                    </tr>
+                  )}
+                  {activeReceipt.tuitionFeeAmount > 0 && (
+                    <tr>
+                      <td className="py-1 text-slate-800">
+                        Tuition Fee ({activeReceipt.tuitionFeeMonths?.length || 0} months)
+                        <div className="text-[10px] text-slate-500">
+                          {(activeReceipt.tuitionFeeMonths || []).join(', ')}
+                        </div>
+                      </td>
+                      <td className="py-1 text-right font-mono font-bold">₹{activeReceipt.tuitionFeeAmount}</td>
+                    </tr>
+                  )}
+                  {activeReceipt.specialFeeComponents && Object.entries(activeReceipt.specialFeeComponents).map(([k, val]) => {
+                    if (!val) return null;
+                    return (
+                      <tr key={k}>
+                        <td className="py-1 text-slate-800 capitalize">{k.replace(/([A-Z])/g, ' $1')}</td>
+                        <td className="py-1 text-right font-mono">₹{val}</td>
+                      </tr>
+                    );
+                  })}
+                  {activeReceipt.donationAmount > 0 && (
+                    <tr>
+                      <td className="py-1 text-slate-800">Donation / Other</td>
+                      <td className="py-1 text-right font-mono">₹{activeReceipt.donationAmount}</td>
+                    </tr>
+                  )}
+                  <tr className="border-t-2 border-emerald-900 font-bold">
+                    <td className="py-2 text-emerald-950 uppercase text-xs">Total Received</td>
+                    <td className="py-2 text-right font-mono text-emerald-950 text-sm font-black">
+                      ₹{activeReceipt.totalAmount.toLocaleString('en-IN')}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div className="text-[10px] text-slate-600 italic mb-6">
+                <strong>In Words: </strong> {activeReceipt.amountInWords}
+              </div>
+
+              <div className="flex items-end justify-between pt-6 border-t border-slate-200 text-xs">
+                <div>
+                  <div className="text-[10px] text-slate-400">Collected By:</div>
+                  <div className="font-semibold text-slate-700">{activeReceipt.collectedBy || 'Office'}</div>
+                </div>
+                <div className="text-center">
+                  <div className="font-serif italic font-bold text-emerald-900 text-xs mb-1">ASLAM TK</div>
+                  <div className="border-t border-slate-400 pt-1 text-[10px] font-bold text-slate-600">
+                    Authorized Signatory
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

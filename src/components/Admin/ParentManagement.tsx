@@ -355,24 +355,64 @@ export const ParentManagement: React.FC = () => {
     }
   };
 
-  const handleClearDemoParents = async () => {
-    const confirm = window.confirm(
-      'Clear all demo parent accounts from Firestore and local storage? Any real parent accounts and Admin will remain intact.'
+  const [selectedParentIds, setSelectedParentIds] = useState<string[]>([]);
+
+  const handleDeleteClassParents = async () => {
+    if (!filterClassId) {
+      alert('Please select a class from the filter dropdown first.');
+      return;
+    }
+    const cls = classes.find(c => c.id === filterClassId);
+    const confirmed = window.confirm(
+      `Are you sure you want to delete all parent accounts associated with students of "${cls?.name}"?`
     );
-    if (!confirm) return;
+    if (!confirmed) return;
 
     try {
       setLoading(true);
-      await firestoreSync.purgeDemoParentsFromFirestore();
-      const res = await fetchWithAuth('/api/parents/clear-demo', { method: 'POST' });
+      const res = await fetchWithAuth(`/api/parents/class/${filterClassId}`, {
+        method: 'DELETE',
+      });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || 'Failed to clear demo parents');
+        throw new Error(err.error || 'Failed to delete class parents');
       }
+      const data = await res.json();
       await loadData();
-      alert('Demo parent accounts cleared successfully.');
+      alert(`Successfully removed ${data.deletedCount || 0} parent accounts for ${cls?.name}.`);
     } catch (err: any) {
-      alert(err.message || 'Error clearing demo parents');
+      alert(err.message || 'Error removing class parents');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBulkDeleteSelected = async () => {
+    if (selectedParentIds.length === 0) {
+      alert('No parent accounts selected for removal.');
+      return;
+    }
+    const confirmed = window.confirm(
+      `Are you sure you want to delete the ${selectedParentIds.length} selected parent accounts?`
+    );
+    if (!confirmed) return;
+
+    try {
+      setLoading(true);
+      const res = await fetchWithAuth('/api/parents/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parentIds: selectedParentIds }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to delete selected parents');
+      }
+      setSelectedParentIds([]);
+      await loadData();
+      alert('Selected parent accounts deleted successfully.');
+    } catch (err: any) {
+      alert(err.message || 'Error deleting parents');
     } finally {
       setLoading(false);
     }
@@ -473,14 +513,27 @@ export const ParentManagement: React.FC = () => {
             Generate / Sync Parent Accounts
           </button>
 
-          <button
-            onClick={handleClearDemoParents}
-            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-xl transition cursor-pointer"
-            title="Purge only mock parent accounts from database"
-          >
-            <Trash2 className="w-3.5 h-3.5 text-amber-700" />
-            Clear Demo Parents
-          </button>
+          {filterClassId && (
+            <button
+              onClick={handleDeleteClassParents}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded-xl transition cursor-pointer"
+              title="Delete all parent accounts linked to this class"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-700" />
+              Delete Class Parents
+            </button>
+          )}
+
+          {selectedParentIds.length > 0 && (
+            <button
+              onClick={handleBulkDeleteSelected}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-rose-700 hover:bg-rose-800 rounded-xl transition shadow-xs cursor-pointer"
+              title="Delete all checked parent accounts"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete Selected ({selectedParentIds.length})
+            </button>
+          )}
 
           <button
             onClick={() => setShowAddModal(true)}
@@ -501,7 +554,10 @@ export const ParentManagement: React.FC = () => {
             </span>
             <select
               value={filterClassId}
-              onChange={e => setFilterClassId(e.target.value)}
+              onChange={e => {
+                setFilterClassId(e.target.value);
+                setSelectedParentIds([]);
+              }}
               className="p-2 border border-slate-300 rounded-lg bg-slate-50 text-xs font-medium focus:outline-none"
             >
               <option value="">All Classes</option>
@@ -514,10 +570,30 @@ export const ParentManagement: React.FC = () => {
           </div>
           {filterClassId && (
             <button
-              onClick={() => setFilterClassId('')}
+              onClick={() => {
+                setFilterClassId('');
+                setSelectedParentIds([]);
+              }}
               className="text-xs text-rose-600 hover:underline font-medium cursor-pointer"
             >
               Reset Filter
+            </button>
+          )}
+
+          {filteredParents.length > 0 && (
+            <button
+              onClick={() => {
+                if (selectedParentIds.length === filteredParents.length) {
+                  setSelectedParentIds([]);
+                } else {
+                  setSelectedParentIds(filteredParents.map(p => p.id));
+                }
+              }}
+              className="text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg border border-slate-300 transition cursor-pointer"
+            >
+              {selectedParentIds.length === filteredParents.length
+                ? 'Deselect All'
+                : `Select All (${filteredParents.length})`}
             </button>
           )}
         </div>
@@ -552,28 +628,45 @@ export const ParentManagement: React.FC = () => {
             const linkedStudents = students.filter(s => s.parentUserId === parent.id);
             const elderChild = getElderChild(linkedStudents);
             const isPasswordVisible = !!showPasswordMap[parent.id];
+            const isSelected = selectedParentIds.includes(parent.id);
 
             return (
               <div
                 key={parent.id}
-                className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4 flex flex-col justify-between hover:shadow-sm transition"
+                className={`bg-white rounded-2xl border p-5 shadow-xs space-y-4 flex flex-col justify-between hover:shadow-sm transition ${
+                  isSelected ? 'border-emerald-600 ring-2 ring-emerald-500/20 bg-emerald-50/10' : 'border-slate-200'
+                }`}
               >
                 <div>
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
-                      Parent Account
-                    </span>
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setSelectedParentIds(prev => [...prev, parent.id]);
+                          } else {
+                            setSelectedParentIds(prev => prev.filter(id => id !== parent.id));
+                          }
+                        }}
+                        className="rounded border-slate-300 text-emerald-800 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span className="text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
+                        Parent Account
+                      </span>
+                    </label>
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => handleOpenEdit(parent)}
-                        className="p-1 text-slate-400 hover:text-emerald-700 hover:bg-slate-100 rounded-lg transition"
+                        className="p-1 text-slate-400 hover:text-emerald-700 hover:bg-slate-100 rounded-lg transition cursor-pointer"
                         title="Edit Parent Name"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => handleDeleteParent(parent)}
-                        className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                        className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                         title="Delete Parent Account"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -581,12 +674,10 @@ export const ParentManagement: React.FC = () => {
                     </div>
                   </div>
 
-                  <h3 className="font-bold text-slate-900 text-base mt-2">
+                  {/* Single Clean Line for Parent Name */}
+                  <h3 className="font-bold text-slate-900 text-base mt-2 whitespace-nowrap overflow-hidden text-ellipsis">
                     {parent.name}
                   </h3>
-                  {parent.nameMl && parent.nameMl !== parent.name && (
-                    <p className="text-xs text-slate-600 font-medium">{parent.nameMl}</p>
-                  )}
                   <p className="text-xs text-slate-500 font-mono">@{parent.username}</p>
                   {parent.phone && (
                     <p className="text-xs text-slate-500 mt-0.5">📞 {parent.phone}</p>

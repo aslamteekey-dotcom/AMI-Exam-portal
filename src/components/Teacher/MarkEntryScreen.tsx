@@ -65,21 +65,23 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
         throw new Error(err.error || 'Failed to load mark sheet');
       }
       const data = await res.json();
-      setCls(data.class);
+      setCls(data.classItem || data.class);
       setSubject(data.subject);
-      setExam(data.examination);
+      setExam(data.examination || data.exam);
+      setComponents(data.components || []);
       const sortedStudents = sortStudentsBoysFirst<Student>(data.students || []);
       setStudents(sortedStudents);
       setMarkSheet(data.markSheet);
 
       // Initialize marks state
       const initialMarks: Record<string, { isAbsent: boolean; componentMarks: Record<string, string>; remarks: string }> = {};
+      const activeComponents = data.components || [];
       sortedStudents.forEach((s: Student) => {
         const entry: StudentMarkEntry = data.markSheet?.studentMarks?.[s.id];
         if (entry) {
           const compStr: Record<string, string> = {};
-          data.components.forEach((c: SubjectAssessmentRule) => {
-            compStr[c.componentKey] = entry.componentMarks[c.componentKey] !== undefined ? String(entry.componentMarks[c.componentKey]) : '';
+          activeComponents.forEach((c: SubjectAssessmentRule) => {
+            compStr[c.componentKey] = entry.componentMarks?.[c.componentKey] !== undefined ? String(entry.componentMarks[c.componentKey]) : '';
           });
           initialMarks[s.id] = {
             isAbsent: !!entry.isAbsent,
@@ -88,7 +90,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
           };
         } else {
           const emptyComp: Record<string, string> = {};
-          data.components.forEach((c: SubjectAssessmentRule) => {
+          activeComponents.forEach((c: SubjectAssessmentRule) => {
             emptyComp[c.componentKey] = '';
           });
           initialMarks[s.id] = {
@@ -281,7 +283,15 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
     );
   }
 
-  const subjectMaxMarks = components.reduce((sum, c) => sum + c.maxMarks, 0);
+  const compTotal = (components || []).reduce((sum, c) => sum + (Number(c.maxMarks) || 0), 0);
+  const effectiveComponents: SubjectAssessmentRule[] = (components && components.length > 0)
+    ? components
+    : [
+        { componentKey: 'written', labelEn: 'OMR (Written)', labelMl: 'എഴുത്ത് പരീക്ഷ', maxMarks: 20 },
+        { componentKey: 'oral', labelEn: 'OCR (Oral / Descriptive)', labelMl: 'വാചിക പരീക്ഷ', maxMarks: 20 },
+        { componentKey: 'ce', labelEn: 'CIE (Continuous Evaluation)', labelMl: 'തുടർമൂല്യനിർണ്ണയം', maxMarks: 10 },
+      ];
+  const subjectMaxMarks = compTotal > 0 ? compTotal : effectiveComponents.reduce((sum, c) => sum + c.maxMarks, 0);
 
   return (
     <div className="space-y-6">
@@ -397,7 +407,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                 <th className="py-3 px-4 w-16 text-center">Roll No</th>
                 <th className="py-3 px-4 w-52">Student Name</th>
                 <th className="py-3 px-4 w-28 text-center">Status</th>
-                {components.map(comp => (
+                {effectiveComponents.map(comp => (
                   <th key={comp.componentKey} className="py-3 px-3 text-center min-w-[130px]">
                     <div>{comp.labelEn}</div>
                     <div className="text-[10px] text-emerald-800 font-bold lowercase">
@@ -428,9 +438,12 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                       {student.rollNo}
                     </td>
                     <td className="py-3 px-4">
-                      <div className="font-bold text-slate-900">{student.nameEn}</div>
-                      <div className="text-xs text-slate-500 font-medium">{student.nameMl}</div>
-                      <div className="text-[10px] font-mono text-slate-400">{student.admissionNo}</div>
+                      <div className="font-bold text-slate-900 whitespace-nowrap text-xs">
+                        {student.nameEn}{' '}
+                        <span className="font-mono text-[11px] font-normal text-slate-400">
+                          (Adm: {student.admissionNo})
+                        </span>
+                      </div>
                     </td>
 
                     {/* Present / Absent Toggle Button */}
@@ -461,7 +474,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                     </td>
 
                     {/* Component Inputs */}
-                    {components.map(comp => (
+                    {effectiveComponents.map(comp => (
                       <td key={comp.componentKey} className="py-3 px-3 text-center">
                         {isAbsent ? (
                           <span className="text-slate-400 font-mono text-xs select-none">—</span>

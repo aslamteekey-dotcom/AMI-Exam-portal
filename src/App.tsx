@@ -6,6 +6,7 @@ import { AdminDashboard } from './components/Admin/AdminDashboard';
 import { TeacherDashboard } from './components/Teacher/TeacherDashboard';
 import { ParentDashboard } from './components/Parent/ParentDashboard';
 import { GraduationCap } from 'lucide-react';
+import { ErrorBoundary } from './components/Common/ErrorBoundary';
 
 const AppContent: React.FC = () => {
   const { user, isLoading, lang, t } = useAuth();
@@ -67,8 +68,10 @@ const AppContent: React.FC = () => {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
