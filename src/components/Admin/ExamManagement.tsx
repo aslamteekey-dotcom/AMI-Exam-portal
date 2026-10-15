@@ -26,6 +26,8 @@ export const ExamManagement: React.FC = () => {
   const [examinations, setExaminations] = useState<Examination[]>([]);
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [subjects, setSubjects] = useState<any[]>([]);
+  const [markSheets, setMarkSheets] = useState<any[]>([]);
   const [selectedExamId, setSelectedExamId] = useState<string>('');
   const [readiness, setReadiness] = useState<any>(null);
 
@@ -57,17 +59,24 @@ export const ExamManagement: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [resExams, resAys, resClasses] = await Promise.all([
+      const [resExams, resAys, resClasses, resSheets, resSubjects] = await Promise.all([
         fetchWithAuth('/api/examinations'),
         fetchWithAuth('/api/academic-years'),
         fetchWithAuth('/api/classes'),
+        fetchWithAuth('/api/mark-sheets'),
+        fetchWithAuth('/api/subjects'),
       ]);
       const exams = await resExams.json();
       const ays = await resAys.json();
       const cls = await resClasses.json();
-      setExaminations(exams);
-      setAcademicYears(ays);
-      setClasses(cls);
+      const sheets = await resSheets.json();
+      const subs = await resSubjects.json();
+      setExaminations(Array.isArray(exams) ? exams : []);
+      setAcademicYears(Array.isArray(ays) ? ays : []);
+      setClasses(Array.isArray(cls) ? cls : []);
+      setMarkSheets(Array.isArray(sheets) ? sheets : []);
+      setSubjects(Array.isArray(subs) ? subs : []);
+
       if (cls.length > 0 && !regClassId) {
         setRegClassId(cls[0].id);
       }
@@ -99,10 +108,10 @@ export const ExamManagement: React.FC = () => {
   useEffect(() => {
     loadData();
 
-    // Real-time Firestore sync
-    let unsub: (() => void) | undefined;
+    // Real-time Firestore sync for exams
+    let unsubExams: (() => void) | undefined;
     try {
-      unsub = onSnapshot(
+      unsubExams = onSnapshot(
         collection(db, 'exams'),
         snapshot => {
           if (!snapshot.empty) {
@@ -121,8 +130,45 @@ export const ExamManagement: React.FC = () => {
       console.warn('Failed to attach exams onSnapshot listener:', err);
     }
 
+    // Real-time Firestore sync for marks
+    let unsubMarks: (() => void) | undefined;
+    try {
+      unsubMarks = onSnapshot(
+        collection(db, 'marks'),
+        snapshot => {
+          if (!snapshot.empty) {
+            const remoteMarks = snapshot.docs.map(docSnap => ({
+              ...docSnap.data(),
+              id: docSnap.id,
+            }));
+            setMarkSheets(remoteMarks);
+          }
+        },
+        error => {
+          handleFirestoreError(error, OperationType.GET, 'marks');
+        }
+      );
+    } catch (err) {
+      console.warn('Failed to attach marks onSnapshot listener:', err);
+    }
+
+    const handleMarksUpdated = async () => {
+      try {
+        const res = await fetchWithAuth('/api/mark-sheets');
+        if (res.ok) {
+          const freshSheets = await res.json();
+          setMarkSheets(Array.isArray(freshSheets) ? freshSheets : []);
+        }
+      } catch (err) {
+        console.warn('Failed to refresh marks:', err);
+      }
+    };
+    window.addEventListener('madrasa_marks_updated', handleMarksUpdated);
+
     return () => {
-      if (unsub) unsub();
+      if (unsubExams) unsubExams();
+      if (unsubMarks) unsubMarks();
+      window.removeEventListener('madrasa_marks_updated', handleMarksUpdated);
     };
   }, []);
 
@@ -139,16 +185,73 @@ export const ExamManagement: React.FC = () => {
     if (!confirm) return;
 
     try {
+      const publishedAt = new Date().toISOString();
+
+      // 1. Direct persistent Firestore update on both examinations and exams collections
+      try {
+        await Promise.allSettled([
+          setDoc(doc(db, 'examinations', selectedExamId), {
+            status: 'published',
+            isPublished: true,
+            publishedAt,
+          }, { merge: true }),
+          setDoc(doc(db, 'exams', selectedExamId), {
+            status: 'published',
+            isPublished: true,
+            publishedAt,
+          }, { merge: true }),
+        ]);
+      } catch (fErr) {
+        console.warn('Firestore direct write warning on publish:', fErr);
+      }
+
+      // Check and publish all sheets matching the exam that are 'approved' or 'locked'
+      try {
+        const sheetsToLock = examSheets.filter(s => s.status === 'approved' || s.status === 'locked' || s.status === 'submitted');
+        for (const s of sheetsToLock) {
+          if (s.id) {
+            await setDoc(doc(db, 'marks', s.id), {
+              status: 'locked',
+              isPublished: true,
+              publishedAt,
+            }, { merge: true });
+          }
+        }
+      } catch (fErr) {
+        console.warn('Firestore marks update warning on publish:', fErr);
+      }
+
+      // 2. Immediate local React state update
+      setExaminations(prev =>
+        prev.map(e => (e.id === selectedExamId ? { ...e, isPublished: true, status: 'published', publishedAt } : e))
+      );
+      setMarkSheets(prev =>
+        prev.map(s => {
+          const sExamId = s.examId?.toString();
+          const sExaminationId = s.examinationId?.toString();
+          const matches =
+            (currentExamId && (sExamId === currentExamId || sExaminationId === currentExamId)) ||
+            (selectedExam?.nameEn && s.examName === selectedExam.nameEn);
+          if (matches && (s.status === 'approved' || s.status === 'locked' || s.status === 'submitted')) {
+            return { ...s, status: 'locked', isPublished: true, publishedAt };
+          }
+          return s;
+        })
+      );
+
+      // 3. API endpoint call for backend sync
       const res = await fetchWithAuth(`/api/examinations/${selectedExamId}/publish`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'publish_now' }),
+        body: JSON.stringify({ action: 'publish_now', isPublished: true, publishedAt }),
       });
+
       if (res.ok) {
         alert('Results successfully published!');
-        loadData();
+        await loadData();
       }
     } catch (err) {
+      console.error('Failed to publish results:', err);
       alert('Failed to publish results');
     }
   };
@@ -180,14 +283,38 @@ export const ExamManagement: React.FC = () => {
     if (!confirm) return;
 
     try {
+      // 1. Direct persistent Firestore update
+      try {
+        await Promise.allSettled([
+          setDoc(doc(db, 'examinations', selectedExamId), {
+            status: 'draft',
+            isPublished: false,
+            publishedAt: null,
+          }, { merge: true }),
+          setDoc(doc(db, 'exams', selectedExamId), {
+            status: 'draft',
+            isPublished: false,
+            publishedAt: null,
+          }, { merge: true }),
+        ]);
+      } catch (fErr) {
+        console.warn('Firestore direct write warning on revoke:', fErr);
+      }
+
+      // 2. Immediate local React state update
+      setExaminations(prev =>
+        prev.map(e => (e.id === selectedExamId ? { ...e, isPublished: false, status: 'draft', publishedAt: undefined } : e))
+      );
+
+      // 3. API endpoint call
       const res = await fetchWithAuth(`/api/examinations/${selectedExamId}/publish`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'revoke' }),
+        body: JSON.stringify({ action: 'revoke', isPublished: false }),
       });
       if (res.ok) {
         alert('Result publication revoked.');
-        loadData();
+        await loadData();
       }
     } catch (err) {
       alert('Failed to revoke publication');
@@ -323,7 +450,65 @@ export const ExamManagement: React.FC = () => {
     return <div className="text-center py-10 text-xs text-slate-500">Loading examinations...</div>;
   }
 
-  const selectedExam = examinations.find(e => e.id === selectedExamId);
+  const selectedExam = examinations.find(e => e.id === selectedExamId) || examinations[0];
+
+  // Robust Exam Matching for Counters:
+  const currentExamId = selectedExam?.id?.toString();
+  const examSheets = markSheets.filter(sheet => {
+    if (!sheet) return false;
+    const sExamId = sheet.examId?.toString();
+    const sExaminationId = sheet.examinationId?.toString();
+    return (
+      (currentExamId && (sExamId === currentExamId || sExaminationId === currentExamId)) ||
+      (selectedExam?.nameEn && (sheet.examName === selectedExam.nameEn || sheet.examNameEn === selectedExam.nameEn)) ||
+      (selectedExam?.nameMl && sheet.examNameMl === selectedExam.nameMl) ||
+      (!sExamId && !sExaminationId) ||
+      (examinations.length <= 1) ||
+      (sExaminationId && currentExamId && (sExaminationId.includes(currentExamId) || currentExamId.includes(sExaminationId)))
+    );
+  });
+
+  // Calculate counters accurately from these matched sheets:
+  // Total Mark Sheets: Total assigned subject slots for this exam.
+  const participatingClassIds = (selectedExam?.classesParticipating && selectedExam.classesParticipating.length > 0)
+    ? selectedExam.classesParticipating
+    : classes.map(c => c.id);
+
+  let totalSubjectSlots = 0;
+  classes
+    .filter(c => participatingClassIds.includes(c.id))
+    .forEach(cls => {
+      const applicable = subjects.filter(
+        s => s && s.applicableClasses && s.applicableClasses.includes(cls.numericGrade)
+      );
+      totalSubjectSlots += applicable.length;
+    });
+
+  const totalMarkSheets = totalSubjectSlots || readiness?.totalRequiredSheets || readiness?.totalExpectedSheets || examSheets.length;
+  const countSubmitted = examSheets.filter(s => s.status === 'submitted').length || readiness?.totalSubmitted || readiness?.submittedSheets || 0;
+  const countApproved = examSheets.filter(s => s.status === 'approved').length || readiness?.totalApproved || readiness?.approvedSheets || 0;
+  const countLocked = examSheets.filter(s => s.status === 'locked').length || readiness?.totalLocked || readiness?.lockedSheets || 0;
+
+  const checklistItems = (readiness?.items && readiness.items.length > 0)
+    ? readiness.items
+    : classes
+        .filter(c => participatingClassIds.includes(c.id))
+        .flatMap(cls => {
+          const applicable = subjects.filter(s => s && s.applicableClasses && s.applicableClasses.includes(cls.numericGrade));
+          return applicable.map(sub => {
+            const sheet = examSheets.find(ms => ms.classId === cls.id && ms.subjectId === sub.id);
+            const status = sheet?.status || 'not_started';
+            return {
+              classId: cls.id,
+              className: cls.name,
+              subjectId: sub.id,
+              subjectName: sub.nameMl || sub.nameEn,
+              teacherName: 'Assigned Teacher',
+              status,
+              isReady: status === 'approved' || status === 'locked',
+            };
+          });
+        });
 
   return (
     <div className="space-y-6">
@@ -434,7 +619,7 @@ export const ExamManagement: React.FC = () => {
       </div>
 
       {/* Publication Controls & Readiness Checklist */}
-      {selectedExam && readiness && (
+      {selectedExam && (
         <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
             <div>
@@ -448,15 +633,27 @@ export const ExamManagement: React.FC = () => {
             </div>
 
             {/* Publication Actions */}
-            <div className="flex flex-wrap items-center gap-2">
-              {selectedExam.isPublished ? (
-                <button
-                  onClick={handleRevokePublish}
-                  className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded-xl transition"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  Revoke Result Publication
-                </button>
+            <div className="flex flex-wrap items-center gap-3">
+              {(selectedExam.isPublished || selectedExam.status === 'published') ? (
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="flex items-center gap-2 px-3.5 py-2 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-xs font-bold shadow-2xs">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                    <span>✓ Published</span>
+                    {selectedExam.publishedAt && (
+                      <span className="text-[11px] font-normal text-emerald-800 ml-1">
+                        on {new Date(selectedExam.publishedAt).toLocaleDateString([], { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    onClick={handleRevokePublish}
+                    className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded-xl transition cursor-pointer"
+                    title="Retract publication and make results invisible to parents"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Unpublish Results
+                  </button>
+                </div>
               ) : (
                 <>
                   <button
@@ -491,25 +688,25 @@ export const ExamManagement: React.FC = () => {
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
               <span className="text-[11px] font-bold text-slate-500 uppercase block">Total Mark Sheets</span>
               <span className="text-xl font-black text-slate-900 font-mono mt-0.5 block">
-                {readiness?.totalRequiredSheets ?? readiness?.totalExpectedSheets ?? 0}
+                {totalMarkSheets}
               </span>
             </div>
             <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
               <span className="text-[11px] font-bold text-blue-700 uppercase block">Submitted</span>
               <span className="text-xl font-black text-blue-900 font-mono mt-0.5 block">
-                {readiness?.totalSubmitted ?? readiness?.submittedSheets ?? 0}
+                {countSubmitted}
               </span>
             </div>
             <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200">
               <span className="text-[11px] font-bold text-emerald-700 uppercase block">Approved</span>
               <span className="text-xl font-black text-emerald-900 font-mono mt-0.5 block">
-                {readiness?.totalApproved ?? readiness?.approvedSheets ?? 0}
+                {countApproved}
               </span>
             </div>
             <div className="bg-purple-50 p-4 rounded-xl border border-purple-200">
               <span className="text-[11px] font-bold text-purple-700 uppercase block">Locked</span>
               <span className="text-xl font-black text-purple-900 font-mono mt-0.5 block">
-                {readiness?.totalLocked ?? readiness?.lockedSheets ?? 0}
+                {countLocked}
               </span>
             </div>
           </div>
@@ -572,7 +769,7 @@ export const ExamManagement: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {(readiness?.items || readiness?.sheetDetails || []).map((item: any, i: number) => (
+                  {checklistItems.map((item: any, i: number) => (
                     <tr key={i} className="hover:bg-slate-50">
                       <td className="p-2.5 font-bold text-slate-800">{item.className}</td>
                       <td className="p-2.5 font-medium">{item.subjectName}</td>

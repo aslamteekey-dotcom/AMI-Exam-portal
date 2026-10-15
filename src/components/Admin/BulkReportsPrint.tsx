@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { ClassItem, Examination, StudentProgressReport, InstitutionSettings, sortStudentsBoysFirst } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
+import { computeClassLedgerRankings, calculateStudentReportMetrics } from '../../utils/reportCalculations';
 import {
   Printer,
   Download,
@@ -127,6 +128,13 @@ export const BulkReportsPrint: React.FC = () => {
     loadInitial();
   }, []);
 
+  // Dynamically re-fetch reports whenever selected class or exam changes
+  useEffect(() => {
+    if (selectedClassId && selectedExamId) {
+      fetchClassReports(selectedClassId, selectedExamId);
+    }
+  }, [selectedClassId, selectedExamId]);
+
   // Listen to background student updates and refresh current class
   useEffect(() => {
     const handleStudentsUpdated = () => {
@@ -140,21 +148,98 @@ export const BulkReportsPrint: React.FC = () => {
     };
   }, []);
 
+  const currentClass = classes.find(
+    c =>
+      c.id === selectedClassId ||
+      String(c.numericGrade) === selectedClassId ||
+      String(c.numericGrade) === selectedClassId.replace(/\D/g, '') ||
+      c.name.toLowerCase().trim() === selectedClassId.toLowerCase().trim()
+  );
+  const currentExam = examinations.find(e => e.id === selectedExamId);
+
+  const rawReports = useMemo(() => {
+    return (reportsData?.reports || []).filter(r => r && r.student);
+  }, [reportsData?.reports]);
+
+  const safeReports = useMemo(() => {
+    return sortStudentsBoysFirst(
+      rawReports.map(r => ({
+        ...r,
+        gender: r.student?.gender,
+        nameEn: r.student?.nameEn,
+        name: (r.student as any)?.name,
+      }))
+    ).map((r, idx) => ({
+      ...r,
+      student: {
+        ...r.student,
+        rollNo: idx + 1,
+      },
+    }));
+  }, [rawReports]);
+
+  // Determine consistent total maximum marks for the class (e.g. 8 subjects * 50 = 400)
+  const classTotalExpectedMax = useMemo(() => {
+    return safeReports.reduce((max, r) => {
+      const subSum = (r.subjects || []).reduce((sum, s) => sum + (s.maxMarks || 50), 0);
+      return Math.max(max, subSum);
+    }, 0) || 400;
+  }, [safeReports]);
+
+  // Unify calculation metrics and dense ranking using shared engine
+  const classLedgerRankings = useMemo(() => {
+    return computeClassLedgerRankings(safeReports, classTotalExpectedMax);
+  }, [safeReports, classTotalExpectedMax]);
+
+  // Synchronize reports with exact class ledger ranking metrics
+  const enrichedReports = useMemo(() => {
+    return safeReports.map(rep => {
+      const s = rep.student;
+      const rankData = classLedgerRankings.get(s?.id || '') || (s?.admissionNo ? classLedgerRankings.get(s.admissionNo) : undefined);
+      const metrics = rankData?.metrics || calculateStudentReportMetrics(rep, classTotalExpectedMax);
+      return {
+        ...rep,
+        classRank: rankData?.rank ?? null,
+        denseRankText: rankData?.denseRankText || (metrics.displayResultStatus === 'Passed' ? 'Passed' : metrics.displayResultStatus),
+        resultStatus: metrics.displayResultStatus as any,
+        totalObtainedMarks: metrics.displayGrandObtained,
+        attendedObtainedMarks: metrics.displayGrandObtained,
+        totalMaxMarks: classTotalExpectedMax,
+        attendedMaxMarks: metrics.grandAttendedMax > 0 ? metrics.grandAttendedMax : classTotalExpectedMax,
+        percentage: Number(metrics.percentageStr) || 0,
+        hasAbsentSubjects: metrics.hasAbsent,
+        hasWithheldCe: metrics.hasWithheld,
+        attendance: {
+          daysAttended: metrics.attendanceDays,
+          totalWorkingDays: metrics.attendanceTotal,
+        },
+      };
+    });
+  }, [safeReports, classLedgerRankings, classTotalExpectedMax]);
+
   const handleClassChange = (cId: string) => {
     setSelectedClassId(cId);
+    selectedClassIdRef.current = cId;
     // Explicit requirement: Set default view strictly to Result Ledger Table
     setViewMode('ledger_table');
-    if (selectedExamId) {
-      fetchClassReports(cId, selectedExamId);
+    const examToUse = selectedExamId || selectedExamIdRef.current || (examinations[0]?.id || '');
+    if (examToUse) {
+      fetchClassReports(cId, examToUse);
     }
+  };
+
+  const setSelectedClass = (cId: string) => {
+    handleClassChange(cId);
   };
 
   const handleExamChange = (eId: string) => {
     setSelectedExamId(eId);
+    selectedExamIdRef.current = eId;
     // Explicit requirement: Set default view strictly to Result Ledger Table
     setViewMode('ledger_table');
-    if (selectedClassId) {
-      fetchClassReports(selectedClassId, eId);
+    const classToUse = selectedClassId || selectedClassIdRef.current || (classes[0]?.id || '');
+    if (classToUse) {
+      fetchClassReports(classToUse, eId);
     }
   };
 
@@ -165,26 +250,30 @@ export const BulkReportsPrint: React.FC = () => {
     setViewMode('ledger_table');
   };
 
-  const handleExportCsv = async () => {
-    if (!selectedClassId || !selectedExamId) return;
-    try {
-      const res = await fetchWithAuth(
-        `/api/export/class-results-csv?classId=${selectedClassId}&examId=${selectedExamId}`
-      );
-      if (!res.ok) throw new Error('Failed to export CSV');
-      const text = await res.text();
-      const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `class_${selectedClassId}_results.csv`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-    } catch (err: any) {
-      alert(err.message || 'Error exporting CSV');
-    }
+  const handleExportCsv = () => {
+    if (!enrichedReports.length) return;
+    let csv = 'Roll No,Exam Reg No,Admission No,Student Name,Marks Obtained,Total Max,Percentage,Attendance,Dense Rank,Result Status\n';
+    enrichedReports.forEach(rep => {
+      const s = rep.student;
+      const rankData = classLedgerRankings.get(s?.id || '') || (s?.admissionNo ? classLedgerRankings.get(s.admissionNo) : undefined);
+      const metrics = rankData?.metrics || calculateStudentReportMetrics(rep, classTotalExpectedMax);
+      const examRegNo = rep.examRegisterNo || s?.examRegisterNumbers?.[selectedExamId] || s?.rollNo || '—';
+      const rankStr = rankData?.isRankAwarded && rankData.rank !== null
+        ? `Rank ${rankData.rank}`
+        : (metrics.displayResultStatus === 'Absent' ? 'Absent' : (metrics.displayResultStatus === 'Withheld' ? 'Withheld' : '—'));
+      csv += `${s?.rollNo || ''},"${examRegNo}","${s?.admissionNo || ''}","${s?.nameEn || ''}",${metrics.displayGrandObtained},${classTotalExpectedMax},"${metrics.percentageStr}%","${metrics.attendanceDays}/${metrics.attendanceTotal}","${rankStr}","${metrics.displayResultStatus}"\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const cName = getEnglishClassName(currentClass || ({ name: 'Class', numericGrade: 1 } as any)).replace(/\s+/g, '_');
+    const eName = (currentExam?.nameEn || 'Exam').replace(/\s+/g, '_');
+    link.download = `${cName}_${eName}_Result_Ledger.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
   };
 
   const handlePrintAll = () => {
@@ -202,7 +291,7 @@ export const BulkReportsPrint: React.FC = () => {
     }
 
     setIsBatchPrinting(true);
-    setPdfProgress({ current: 0, total: safeReports.length });
+    setPdfProgress({ current: 0, total: enrichedReports.length });
 
     try {
       // Allow DOM to update and render student cards
@@ -283,43 +372,27 @@ export const BulkReportsPrint: React.FC = () => {
     }
   };
 
+  const sortedClasses = [...classes].sort((a, b) => a.numericGrade - b.numericGrade);
+  const classLabelEnglish = currentClass ? getEnglishClassName(currentClass) : 'Class';
+  const selectedClass = selectedClassId;
+
   if (loading) {
     return <div className="text-center py-12 text-xs text-slate-500">Loading progress report center...</div>;
   }
 
   // Single report detailed inspection
   if (activeSingleReport && reportsData) {
+    const singleEnriched = enrichedReports.find(
+      r => r.student?.id === activeSingleReport.student?.id || r.student?.admissionNo === activeSingleReport.student?.admissionNo
+    ) || activeSingleReport;
     return (
       <ProgressReportCard
-        report={activeSingleReport}
+        report={singleEnriched}
         settings={reportsData.settings || settings!}
         onBack={() => setActiveSingleReport(null)}
       />
     );
   }
-
-  const currentClass = classes.find(
-    c => c.id === selectedClassId || String(c.numericGrade) === selectedClassId || c.name === selectedClassId
-  );
-  const currentExam = examinations.find(e => e.id === selectedExamId);
-  const rawReports = (reportsData?.reports || []).filter(r => r && r.student);
-  const safeReports = sortStudentsBoysFirst(
-    rawReports.map(r => ({
-      ...r,
-      gender: r.student?.gender,
-      nameEn: r.student?.nameEn,
-      name: (r.student as any)?.name,
-    }))
-  ).map((r, idx) => ({
-    ...r,
-    student: {
-      ...r.student,
-      rollNo: idx + 1,
-    },
-  }));
-
-  const sortedClasses = [...classes].sort((a, b) => a.numericGrade - b.numericGrade);
-  const classLabelEnglish = currentClass ? getEnglishClassName(currentClass) : 'Class';
 
   return (
     <div className="space-y-6">
@@ -387,13 +460,13 @@ export const BulkReportsPrint: React.FC = () => {
         <div>
           <label className="block font-bold text-slate-700 mb-1">Select Class:</label>
           <select
-            value={selectedClassId}
-            onChange={e => handleClassChange(e.target.value)}
+            value={selectedClassId || selectedClass}
+            onChange={e => setSelectedClass(e.target.value)}
             className="p-2 border border-slate-300 rounded-xl bg-slate-50 font-bold text-slate-800 focus:outline-none cursor-pointer min-w-[140px]"
           >
-            {sortedClasses.map(c => (
-              <option key={c.id} value={c.id}>
-                {getEnglishClassName(c)}
+            {sortedClasses.map(cls => (
+              <option key={cls.id} value={cls.id}>
+                {getEnglishClassName(cls)}
               </option>
             ))}
           </select>
@@ -457,14 +530,14 @@ export const BulkReportsPrint: React.FC = () => {
               }`}
             >
               <FileText className="w-3.5 h-3.5" />
-              Full-Class Cards ({safeReports.length})
+              Full-Class Cards ({enrichedReports.length})
             </button>
           </div>
         )}
       </div>
 
       {/* Main Content Area */}
-      {safeReports.length > 0 ? (
+      {enrichedReports.length > 0 ? (
         viewMode === 'bulk_cards' ? (
           /* ========================================================= */
           /* 1. FULL-CLASS BULK REPORT CARDS VIEW (A4 Print / PDF Engine) */
@@ -474,14 +547,14 @@ export const BulkReportsPrint: React.FC = () => {
             <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs print:hidden">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-emerald-800 text-white flex items-center justify-center font-bold">
-                  {safeReports.length}
+                  {enrichedReports.length}
                 </div>
                 <div>
                   <h3 className="font-bold text-emerald-950 text-sm">
                     {classLabelEnglish} — {currentExam?.nameEn}
                   </h3>
                   <p className="text-[11px] text-emerald-800/80">
-                    Displaying all {safeReports.length} progress report cards in sequential order. Each student card is formatted strictly for a single A4 page.
+                    Displaying all {enrichedReports.length} progress report cards in sequential order. Each student card is formatted strictly for a single A4 page.
                   </p>
                 </div>
               </div>
@@ -518,7 +591,7 @@ export const BulkReportsPrint: React.FC = () => {
 
             {/* List of Report Cards */}
             <div ref={bulkCardsContainerRef} className="space-y-8 print:space-y-0">
-              {safeReports.map((rep, idx) => (
+              {enrichedReports.map((rep, idx) => (
                 <div
                   key={rep?.student?.id || idx}
                   className="report-card-print-container w-full flex flex-col items-center"
@@ -565,7 +638,7 @@ export const BulkReportsPrint: React.FC = () => {
             <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
               <div>
                 <h3 className="text-sm font-bold text-slate-900">
-                  {classLabelEnglish} Result Ledger ({safeReports.length} Students)
+                  {classLabelEnglish} Result Ledger ({enrichedReports.length} Students)
                 </h3>
                 <p className="text-[11px] text-slate-500">
                   Dense Ranking: ties share identical rank without skipping (1, 1, 2…); students with TE &lt; 35% require improvement.
@@ -612,43 +685,11 @@ export const BulkReportsPrint: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {safeReports.map(rep => {
+                  {enrichedReports.map(rep => {
                     const s = rep?.student;
-                    const attDays = rep.attendance?.daysAttended ?? s?.attendance?.daysAttended ?? 88;
-                    const attTotal = rep.attendance?.totalWorkingDays ?? s?.attendance?.totalWorkingDays ?? 88;
+                    const rankData = classLedgerRankings.get(s?.id || '') || (s?.admissionNo ? classLedgerRankings.get(s.admissionNo) : undefined);
+                    const metrics = rankData?.metrics || calculateStudentReportMetrics(rep, classTotalExpectedMax);
                     const examRegNo = rep.examRegisterNo || s?.examRegisterNumbers?.[selectedExamId] || s?.rollNo || '—';
-
-                    const attendedObtained = rep.attendedObtainedMarks ?? rep.totalObtainedMarks ?? 0;
-                    const attendedMax = rep.attendedMaxMarks ?? rep.totalMaxMarks ?? 0;
-
-                    const pctVal =
-                      attendedMax > 0
-                        ? ((attendedObtained / attendedMax) * 100).toFixed(2)
-                        : rep.percentage !== null && rep.percentage !== undefined
-                        ? rep.percentage.toFixed(2)
-                        : '0.00';
-
-                    const isRankAwarded =
-                      rep.resultStatus === 'Passed' &&
-                      !rep.hasAbsentSubjects &&
-                      !rep.hasWithheldCe &&
-                      rep.classRank !== null;
-
-                    let resultBadgeColor = 'bg-emerald-100 text-emerald-800 border-emerald-200';
-                    let displayResultStatus: string =
-                      rep.resultStatus === 'Needs Improvement' ? 'Need Improvement' : rep.resultStatus;
-
-                    if (rep.hasAbsentSubjects) {
-                      displayResultStatus = 'Absent';
-                      resultBadgeColor = 'bg-slate-100 text-slate-800 border-slate-200';
-                    } else if (rep.hasWithheldCe) {
-                      displayResultStatus = 'Withheld';
-                      resultBadgeColor = 'bg-amber-100 text-amber-900 border-amber-200';
-                    } else if (displayResultStatus === 'Need Improvement') {
-                      resultBadgeColor = 'bg-rose-100 text-rose-800 border-rose-200';
-                    } else {
-                      resultBadgeColor = 'bg-emerald-100 text-emerald-800 border-emerald-200';
-                    }
 
                     return (
                       <tr key={s?.id || Math.random()} className="hover:bg-slate-50/80 transition">
@@ -659,26 +700,30 @@ export const BulkReportsPrint: React.FC = () => {
                           <span className="font-bold text-slate-900 block">{s?.nameEn}</span>
                         </td>
                         <td className="py-2.5 px-3 text-center font-mono font-bold text-emerald-950">
-                          {attendedObtained} / {attendedMax}
+                          {metrics.displayGrandObtained} / {classTotalExpectedMax}
                         </td>
                         <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-800">
-                          {pctVal}%
+                          {metrics.percentageStr}%
                         </td>
                         <td className="py-2.5 px-3 text-center font-mono text-slate-600">
-                          {attDays} / {attTotal}
+                          {metrics.attendanceDays} / {metrics.attendanceTotal}
                         </td>
                         <td className="py-2.5 px-3 text-center font-bold">
-                          {isRankAwarded ? (
+                          {rankData?.isRankAwarded && rankData.rank !== null ? (
                             <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-50 text-emerald-900 border border-emerald-200 font-black">
-                              Rank {rep.classRank}
+                              Rank {rankData.rank}
                             </span>
                           ) : (
-                            <span className="text-slate-400 font-mono text-xs">—</span>
+                            <span className="text-slate-400 font-mono text-xs">
+                              {metrics.displayResultStatus === 'Absent'
+                                ? 'Absent'
+                                : (metrics.displayResultStatus === 'Withheld' ? 'Withheld' : '—')}
+                            </span>
                           )}
                         </td>
                         <td className="py-2.5 px-3 text-center">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${resultBadgeColor}`}>
-                            {displayResultStatus}
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${metrics.resultBadgeColor}`}>
+                            {metrics.displayResultStatus}
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-right">

@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { Printer, Download, Award, GraduationCap, ShieldAlert, AlertTriangle } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { extractComponentColumns, calculateStudentReportMetrics } from '../../utils/reportCalculations';
 
 interface Props {
   report: StudentProgressReport;
@@ -76,46 +77,8 @@ export const ProgressReportCard: React.FC<Props> = ({
     }
   };
 
-  // Helper to extract OMR, OCR, and CIE from components
-  const extractColumns = (components: { key: string; labelEn: string; maxMarks: number; obtainedMarks: number | null }[]) => {
-    let omrVal: number | string = '—';
-    let ocrVal: number | string = '—';
-    let cieVal: number | string = '—';
-    let omrMax = 0;
-    let ocrMax = 0;
-    let cieMax = 0;
-
-    components.forEach((c) => {
-      const k = c.key.toLowerCase();
-      const val = c.obtainedMarks !== null && c.obtainedMarks !== undefined ? c.obtainedMarks : '—';
-      if (k === 'omr' || k === 'written' || k === 'tilawah' || k === 'new_portion' || k === 'salawat') {
-        omrVal = val;
-        omrMax = c.maxMarks;
-      } else if (k === 'descriptive' || k === 'tajweed' || k === 'tilawati' || k === 'revision' || k === 'duas' || k === 'oral') {
-        ocrVal = val;
-        ocrMax = c.maxMarks;
-      } else if (k === 'ce' || k === 'diary') {
-        cieVal = val;
-        cieMax = c.maxMarks;
-      }
-    });
-
-    // Fallback if component keys were mapped generically
-    if (omrMax === 0 && components[0]) {
-      omrVal = components[0].obtainedMarks !== null && components[0].obtainedMarks !== undefined ? components[0].obtainedMarks : '—';
-      omrMax = components[0].maxMarks;
-    }
-    if (ocrMax === 0 && components[1]) {
-      ocrVal = components[1].obtainedMarks !== null && components[1].obtainedMarks !== undefined ? components[1].obtainedMarks : '—';
-      ocrMax = components[1].maxMarks;
-    }
-    if (cieMax === 0 && components[2]) {
-      cieVal = components[2].obtainedMarks !== null && components[2].obtainedMarks !== undefined ? components[2].obtainedMarks : '—';
-      cieMax = components[2].maxMarks;
-    }
-
-    return { omrVal, ocrVal, cieVal, omrMax, ocrMax, cieMax };
-  };
+  // Helper alias to keep compatibility
+  const extractColumns = extractComponentColumns;
 
   // Strictly English class name (e.g., "Class 7", strip any Malayalam text)
   const cleanClassName = (report?.classNameEn || 'Class')
@@ -129,34 +92,13 @@ export const ProgressReportCard: React.FC<Props> = ({
   // Dynamically resolve Class In-charge Teacher name
   const classInChargeName = report?.classTeacherName || (report as any)?.classInChargeName || 'Class In-Charge';
 
-  // Grand total calculations for attended subjects
-  let grandAttendedObtained = 0;
-  let grandAttendedMax = 0;
-
-  (report.subjects || []).forEach((sub) => {
-    const { omrVal, ocrVal, cieVal, omrMax, ocrMax, cieMax } = extractColumns(sub.components || []);
-    if (!sub.isAbsent) {
-      const numOmr = typeof omrVal === 'number' ? omrVal : 0;
-      const numOcr = typeof ocrVal === 'number' ? ocrVal : 0;
-      const numCie = typeof cieVal === 'number' ? cieVal : 0;
-      const subTotal = (sub.obtainedMarks !== null && sub.obtainedMarks !== undefined)
-        ? sub.obtainedMarks
-        : (numOmr + numOcr + numCie);
-      grandAttendedObtained += subTotal;
-      grandAttendedMax += (sub.maxMarks || (omrMax + ocrMax + cieMax) || 50);
-    }
-  });
-
-  const displayGrandObtained = report.attendedObtainedMarks ?? report.totalObtainedMarks ?? grandAttendedObtained;
-  const displayGrandMax = report.attendedMaxMarks ?? report.totalMaxMarks ?? grandAttendedMax;
-
-  // Percentage for attended subjects: never display N/A if marks exist
-  const calculatedPercentage = displayGrandMax > 0
-    ? ((displayGrandObtained / displayGrandMax) * 100).toFixed(2)
-    : (report?.percentage !== null && report?.percentage !== undefined ? report.percentage.toFixed(2) : '0.00');
-
-  const attendanceDays = report.attendance?.daysAttended ?? report?.student?.attendance?.daysAttended ?? 88;
-  const attendanceTotal = report.attendance?.totalWorkingDays ?? report?.student?.attendance?.totalWorkingDays ?? 88;
+  // Unify calculation metrics using shared engine
+  const metrics = calculateStudentReportMetrics(report);
+  const displayGrandObtained = metrics.displayGrandObtained;
+  const displayGrandMax = metrics.displayGrandMax;
+  const calculatedPercentage = metrics.percentageStr;
+  const attendanceDays = metrics.attendanceDays;
+  const attendanceTotal = metrics.attendanceTotal;
 
   // Exam Register Number (supports multi-portal cloud sync across schema variations)
   const examRegisterNo =
@@ -170,20 +112,19 @@ export const ProgressReportCard: React.FC<Props> = ({
   // Academic Rank Box logic:
   // Rank is awarded ONLY if all subjects are Passed, with zero withheld subjects and zero absences.
   // Otherwise, show "Need Improvement", "Withheld", or "Absent".
-  const isRankAwarded = report.resultStatus === 'Passed' && !report.hasAbsentSubjects && !report.hasWithheldCe && report.classRank !== null;
   let academicRankBoxText = 'Passed';
-  if (report.hasAbsentSubjects || report.resultStatus === 'Absent') {
+  if (metrics.hasAbsent || report.hasAbsentSubjects || report.resultStatus === 'Absent') {
     academicRankBoxText = 'Absent';
-  } else if (report.hasWithheldCe || report.resultStatus === 'Withheld') {
+  } else if (metrics.hasWithheld || report.hasWithheldCe || report.resultStatus === 'Withheld') {
     academicRankBoxText = 'Withheld';
-  } else if (report.resultStatus === 'Need Improvement' || report.resultStatus === 'Needs Improvement') {
+  } else if (metrics.hasFailedWritten || report.resultStatus === 'Need Improvement' || report.resultStatus === 'Needs Improvement') {
     academicRankBoxText = 'Need Improvement';
-  } else if (isRankAwarded) {
+  } else if (report.classRank !== null && report.classRank !== undefined) {
     academicRankBoxText = `Rank ${report.classRank}`;
   } else if (report.denseRankText && report.denseRankText.startsWith('Rank')) {
     academicRankBoxText = report.denseRankText;
   } else {
-    academicRankBoxText = 'Need Improvement';
+    academicRankBoxText = metrics.displayResultStatus === 'Passed' ? 'Passed' : metrics.displayResultStatus;
   }
 
   return (
@@ -424,16 +365,8 @@ export const ProgressReportCard: React.FC<Props> = ({
                     {displayGrandObtained} / {displayGrandMax}
                   </td>
                   <td className="py-3 px-3 text-center">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                      academicRankBoxText.startsWith('Rank') || academicRankBoxText === 'Passed'
-                        ? 'bg-emerald-100 text-emerald-900'
-                        : academicRankBoxText === 'Withheld'
-                        ? 'bg-amber-100 text-amber-950'
-                        : academicRankBoxText === 'Absent'
-                        ? 'bg-amber-100 text-amber-950'
-                        : 'bg-rose-100 text-rose-950'
-                    }`}>
-                      {report.resultStatus === 'Needs Improvement' ? 'Need Improvement' : report.resultStatus}
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${metrics.resultBadgeColor}`}>
+                      {metrics.displayResultStatus}
                     </span>
                   </td>
                 </tr>

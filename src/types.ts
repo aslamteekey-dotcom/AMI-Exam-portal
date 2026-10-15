@@ -134,6 +134,10 @@ export interface StudentMarkEntry {
 export interface MarkSheet {
   id: string;
   examinationId: string;
+  examId?: string;
+  examName?: string;
+  examNameEn?: string;
+  examNameMl?: string;
   academicYearId: string;
   classId: string;
   subjectId: string;
@@ -143,9 +147,11 @@ export interface MarkSheet {
   submittedAt?: string;
   verifiedAt?: string;
   verifiedBy?: string;
+  isPublished?: boolean;
+  publishedAt?: string;
   lockedAt?: string;
   returnedReason?: string;
-  lastUpdated: string;
+  lastUpdated?: string;
 }
 
 export interface AuditLog {

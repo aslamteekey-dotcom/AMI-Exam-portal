@@ -668,7 +668,11 @@ export class FirestoreSyncService {
   // Sync exam
   public async syncExam(exam: Examination): Promise<void> {
     try {
-      await setDoc(doc(db, 'exams', exam.id), cleanForFirestore(exam));
+      const cleanData = cleanForFirestore(exam);
+      await Promise.allSettled([
+        setDoc(doc(db, 'exams', exam.id), cleanData, { merge: true }),
+        setDoc(doc(db, 'examinations', exam.id), cleanData, { merge: true }),
+      ]);
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `exams/${exam.id}`);
       throw e;
@@ -678,7 +682,10 @@ export class FirestoreSyncService {
   // Delete exam
   public async deleteExam(examId: string): Promise<void> {
     try {
-      await deleteDoc(doc(db, 'exams', examId));
+      await Promise.allSettled([
+        deleteDoc(doc(db, 'exams', examId)),
+        deleteDoc(doc(db, 'examinations', examId)),
+      ]);
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `exams/${examId}`);
       throw e;

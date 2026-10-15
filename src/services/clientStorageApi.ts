@@ -440,6 +440,102 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       status: 'active',
       gender: 'M',
     },
+    // Class 3
+    {
+      id: 'st_301',
+      admissionNo: '3001',
+      rollNo: 1,
+      nameEn: 'Adil Mansoor',
+      nameMl: 'ആദിൽ മൻസൂർ',
+      classId: 'cls_3',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Mansoor Ali',
+      parentNameMl: 'മൻസൂർ അലി',
+      parentPhone: '+91 9846123470',
+      status: 'active',
+      gender: 'M',
+    },
+    // Class 4
+    {
+      id: 'st_401',
+      admissionNo: '4001',
+      rollNo: 1,
+      nameEn: 'Haneen Fathima',
+      nameMl: 'ഹനീൻ ഫാത്തിമ',
+      classId: 'cls_4',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Faizal K',
+      parentNameMl: 'ഫൈസൽ കെ',
+      parentPhone: '+91 9846123471',
+      status: 'active',
+      gender: 'F',
+    },
+    // Class 6
+    {
+      id: 'st_601',
+      admissionNo: '6001',
+      rollNo: 1,
+      nameEn: 'Bilal Farhan',
+      nameMl: 'ബിലാൽ ഫർഹാൻ',
+      classId: 'cls_6',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Farhan K',
+      parentNameMl: 'ഫർഹാൻ കെ',
+      parentPhone: '+91 9846123472',
+      status: 'active',
+      gender: 'M',
+    },
+    // Class 7
+    {
+      id: 'st_701',
+      admissionNo: '862',
+      rollNo: 1,
+      nameEn: 'Muhammed Hafiz C',
+      nameMl: 'മുഹമ്മദ് ഹാഫിസ് സി',
+      classId: 'cls_7',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Hamza K',
+      parentNameMl: 'ഹംസ കെ',
+      parentPhone: '+91 9846123456',
+      parentUserId: 'usr_p1',
+      status: 'active',
+      gender: 'M',
+      examRegisterNumbers: {
+        exam_half_yearly_2026_27: '701',
+      },
+    },
+    {
+      id: 'st_702',
+      admissionNo: '7002',
+      rollNo: 2,
+      nameEn: 'Fathima Sana',
+      nameMl: 'ഫാത്തിമ സന',
+      classId: 'cls_7',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Abdul Rasheed',
+      parentNameMl: 'അബ്ദുൽ റഷീദ്',
+      parentPhone: '+91 9846123473',
+      status: 'active',
+      gender: 'F',
+      examRegisterNumbers: {
+        exam_half_yearly_2026_27: '702',
+      },
+    },
+    // Class 8
+    {
+      id: 'st_801',
+      admissionNo: '8001',
+      rollNo: 1,
+      nameEn: 'Rayan Abdullah',
+      nameMl: 'റയാൻ അബ്ദുള്ള',
+      classId: 'cls_8',
+      academicYearId: 'ay_2026_2027',
+      parentNameEn: 'Abdullah K',
+      parentNameMl: 'അബ്ദുള്ള കെ',
+      parentPhone: '+91 9846123474',
+      status: 'active',
+      gender: 'M',
+    },
     // Class 9
     {
       id: 'st_901',
@@ -552,6 +648,40 @@ export function getInitialClientSeedData(): MadrasaDatabase {
         st_501: { studentId: 'st_501', isAbsent: false, componentMarks: { omr: 18, descriptive: 17, ce: 9 }, subjectTotal: 44 },
         st_502: { studentId: 'st_502', isAbsent: false, componentMarks: { omr: 19, descriptive: 18, ce: 10 }, subjectTotal: 47 },
       },
+      lastUpdated: '2026-10-18T12:00:00Z',
+    },
+    {
+      id: 'ms_c7_fiqh',
+      examinationId: 'exam_half_yearly_2026_27',
+      academicYearId: 'ay_2026_2027',
+      classId: 'cls_7',
+      subjectId: 'sub_fiqh',
+      assignedTeacherId: 'usr_t2',
+      status: 'approved',
+      studentMarks: {
+        st_701: { studentId: 'st_701', isAbsent: false, componentMarks: { omr: 19, descriptive: 18, ce: 10 }, subjectTotal: 47 },
+        '862': { studentId: 'st_701', isAbsent: false, componentMarks: { omr: 19, descriptive: 18, ce: 10 }, subjectTotal: 47 },
+        st_702: { studentId: 'st_702', isAbsent: false, componentMarks: { omr: 18, descriptive: 17, ce: 9 }, subjectTotal: 44 },
+      },
+      verifiedAt: '2026-10-18T12:00:00Z',
+      verifiedBy: 'usr_admin',
+      lastUpdated: '2026-10-18T12:00:00Z',
+    },
+    {
+      id: 'ms_c7_tafsir',
+      examinationId: 'exam_half_yearly_2026_27',
+      academicYearId: 'ay_2026_2027',
+      classId: 'cls_7',
+      subjectId: 'sub_tafsir',
+      assignedTeacherId: 'usr_t1',
+      status: 'approved',
+      studentMarks: {
+        st_701: { studentId: 'st_701', isAbsent: false, componentMarks: { omr: 19, descriptive: 19, ce: 10 }, subjectTotal: 48 },
+        '862': { studentId: 'st_701', isAbsent: false, componentMarks: { omr: 19, descriptive: 19, ce: 10 }, subjectTotal: 48 },
+        st_702: { studentId: 'st_702', isAbsent: false, componentMarks: { omr: 17, descriptive: 18, ce: 9 }, subjectTotal: 44 },
+      },
+      verifiedAt: '2026-10-18T12:00:00Z',
+      verifiedBy: 'usr_admin',
       lastUpdated: '2026-10-18T12:00:00Z',
     },
     {
@@ -973,11 +1103,22 @@ export class ClientStorageApi {
       (this.db.examinations || [])[0]?.id ||
       '';
 
-    const exam = (this.db.examinations || []).find(e => e && e.id === targetExamId);
+    const exam = (this.db.examinations || []).find(
+      e => e && (e.id === targetExamId || e.id?.toString() === targetExamId?.toString() || e.nameEn === targetExamId)
+    ) || (this.db.examinations || [])[0];
 
-    const examSheets = (this.db.markSheets || []).filter(
-      ms => ms && (!targetExamId || ms.examinationId === targetExamId)
-    );
+    const currentExamId = exam?.id?.toString() || targetExamId?.toString();
+    const examSheets = (this.db.markSheets || []).filter(ms => {
+      if (!ms) return false;
+      const sExamId = ms.examId?.toString();
+      const sExaminationId = ms.examinationId?.toString();
+      return (
+        (currentExamId && (sExamId === currentExamId || sExaminationId === currentExamId)) ||
+        (exam?.nameEn && ms.examName === exam.nameEn) ||
+        (!currentExamId && !sExamId && !sExaminationId) ||
+        (this.db.examinations || []).length <= 1
+      );
+    });
 
     let countDraft = 0;
     let countSubmitted = 0;
@@ -1266,12 +1407,22 @@ export class ClientStorageApi {
             hasAbsent = true;
             isIncomplete = true;
           } else {
-            totalObtained += (entry.subjectTotal || 0);
+            let compSum = 0;
+            components.forEach(c => {
+              const v = entry.componentMarks?.[c.componentKey];
+              if (v !== undefined && v !== null && (v as any) !== '') {
+                compSum += Number(v) || 0;
+              }
+            });
+            const subTotal = (typeof entry.subjectTotal === 'number' && !isNaN(entry.subjectTotal) && entry.subjectTotal > 0)
+              ? entry.subjectTotal
+              : compSum;
+            totalObtained += subTotal;
 
             // Calculate TE / non-CE marks
             components.forEach(c => {
               if (c.componentKey !== 'ce' && c.componentKey !== 'diary') {
-                const mark = entry.componentMarks?.[c.componentKey] || 0;
+                const mark = Number(entry.componentMarks?.[c.componentKey]) || 0;
                 subNonCeObtained += mark;
                 nonCeObtained += mark;
               }
@@ -1377,7 +1528,12 @@ export class ClientStorageApi {
     if (!exam) return null;
 
     const cls = this.db.classes.find(
-      c => c.id === student.classId || String(c.numericGrade) === String(student.classId) || c.name === student.classId
+      c =>
+        c.id === student.classId ||
+        String(c.numericGrade) === String(student.classId) ||
+        String(c.numericGrade) === String(student.classId).replace(/\D/g, '') ||
+        c.name.toLowerCase().trim() === String(student.classId).toLowerCase().trim() ||
+        c.name.toLowerCase().includes(String(student.classId).toLowerCase().trim())
     );
     if (!cls) return null;
 
@@ -1387,12 +1543,12 @@ export class ClientStorageApi {
     const rankMap = this.calculateClassRanks(cls.id, examId);
     const rankInfo = rankMap.get(student.id) || (student.admissionNo ? rankMap.get(student.admissionNo) : undefined) || { rank: null, total: 0, max: 0, pct: null, isIncomplete: true };
     const totalStudentsInClass = this.db.students.filter(
-      s => (s.classId === cls.id || s.classId === student.classId || String(s.classId) === String(cls.numericGrade)) && s.status === 'active'
+      s => (s.classId === cls.id || s.classId === student.classId || String(s.classId) === String(cls.numericGrade) || s.classId?.replace(/\D/g, '') === String(cls.numericGrade)) && s.status === 'active'
     ).length || 1;
 
     const applicableSubjects = this.db.subjects.filter(s => s.applicableClasses.includes(cls.numericGrade));
     const markSheets = this.db.markSheets.filter(
-      ms => (ms.classId === cls.id || ms.classId === student.classId || String(ms.classId) === String(cls.numericGrade)) && ms.examinationId === examId
+      ms => (ms.classId === cls.id || ms.classId === student.classId || String(ms.classId) === String(cls.numericGrade) || ms.classId?.replace(/\D/g, '') === String(cls.numericGrade)) && ms.examinationId === examId
     );
     const markSheetBySub = new Map<string, MarkSheet>();
     markSheets.forEach(ms => markSheetBySub.set(ms.subjectId, ms));
@@ -1480,8 +1636,19 @@ export class ClientStorageApi {
         hasWithheldCe = true;
       }
 
-      totalObtainedMarks += entry.subjectTotal;
-      totalAttendedObtainedMarks += entry.subjectTotal;
+      let compSum = 0;
+      configuredComponents.forEach(c => {
+        const v = entry.componentMarks?.[c.componentKey];
+        if (v !== undefined && v !== null && (v as any) !== '') {
+          compSum += Number(v) || 0;
+        }
+      });
+      const resolvedSubjectTotal = (typeof entry.subjectTotal === 'number' && !isNaN(entry.subjectTotal) && entry.subjectTotal > 0)
+        ? entry.subjectTotal
+        : compSum;
+
+      totalObtainedMarks += resolvedSubjectTotal;
+      totalAttendedObtainedMarks += resolvedSubjectTotal;
       totalAttendedMaxMarks += maxSubMarks;
 
       let subNonCeMax = 0;
@@ -1489,7 +1656,7 @@ export class ClientStorageApi {
       configuredComponents.forEach(c => {
         if (c.componentKey !== 'ce' && c.componentKey !== 'diary') {
           subNonCeMax += c.maxMarks;
-          const mark = entry.componentMarks[c.componentKey] || 0;
+          const mark = Number(entry.componentMarks?.[c.componentKey]) || 0;
           subNonCeObtained += mark;
           nonCeDiaryObtained += mark;
         }
@@ -1515,7 +1682,7 @@ export class ClientStorageApi {
         subjectNameEn: displayName.nameEn,
         subjectNameMl: displayName.nameMl,
         maxMarks: maxSubMarks,
-        obtainedMarks: entry.subjectTotal,
+        obtainedMarks: resolvedSubjectTotal,
         isAbsent: false,
         hasMissingCe: isCeMissing,
         components: configuredComponents.map(c => ({
@@ -2666,43 +2833,60 @@ export class ClientStorageApi {
       const examReadinessMatch = path.match(/^\/api\/examinations\/([^/]+)\/readiness$/);
       if (examReadinessMatch && method === 'GET') {
         const examId = examReadinessMatch[1];
-        const exam = (this.db.examinations || []).find(e => e.id === examId);
+        const exam = (this.db.examinations || []).find(e => 
+          e && (e.id === examId || e.id?.toString() === examId?.toString() || e.nameEn === examId)
+        ) || (this.db.examinations || [])[0];
         if (!exam) return this.jsonResponse({ error: 'Exam not found' }, 404);
 
+        const currentExamId = exam.id?.toString() || examId?.toString();
+        const examSheets = (this.db.markSheets || []).filter(sheet => {
+          if (!sheet) return false;
+          const sExamId = sheet.examId?.toString();
+          const sExaminationId = sheet.examinationId?.toString();
+          return (
+            (currentExamId && (sExamId === currentExamId || sExaminationId === currentExamId)) ||
+            (exam.nameEn && sheet.examName === exam.nameEn) ||
+            (!sExamId && !sExaminationId) ||
+            (this.db.examinations || []).length <= 1 ||
+            (sExaminationId && currentExamId && (sExaminationId.includes(currentExamId) || currentExamId.includes(sExaminationId)))
+          );
+        });
+
+        const participating = (exam.classesParticipating && exam.classesParticipating.length > 0)
+          ? exam.classesParticipating
+          : (this.db.classes || []).map(c => c.id);
+
         let totalExpectedSheets = 0;
-        let submittedSheets = 0;
-        let approvedSheets = 0;
-        let lockedSheets = 0;
-        let missingSheets = 0;
         const sheetDetails: any[] = [];
 
-        (exam.classesParticipating || []).forEach(cId => {
-          const cls = (this.db.classes || []).find(c => c.id === cId);
-          if (!cls) return;
-          const subjects = (this.db.subjects || []).filter(s => s.applicableClasses.includes(cls.numericGrade));
-          subjects.forEach(sub => {
-            totalExpectedSheets++;
-            const sheet = (this.db.markSheets || []).find(
-              ms => ms.examinationId === examId && ms.classId === cId && ms.subjectId === sub.id
-            );
-            const asgn = (this.db.teacherAssignments || []).find(a => a.classId === cId && a.subjectId === sub.id);
-            const teacher = asgn ? (this.db.users || []).find(u => u.id === asgn.teacherId) : null;
-            const status = sheet?.status || 'not_started';
-            if (status === 'submitted') submittedSheets++;
-            if (status === 'approved') approvedSheets++;
-            if (status === 'locked') lockedSheets++;
-            if (status === 'not_started') missingSheets++;
-            sheetDetails.push({
-              classId: cId,
-              className: cls.name,
-              subjectId: sub.id,
-              subjectName: sub.nameMl,
-              teacherName: teacher ? teacher.name : 'Unassigned',
-              status,
-              isReady: status === 'approved' || status === 'locked',
+        (this.db.classes || [])
+          .filter(c => participating.includes(c.id))
+          .forEach(cls => {
+            const subjects = (this.db.subjects || []).filter(s => s.applicableClasses.includes(cls.numericGrade));
+            subjects.forEach(sub => {
+              totalExpectedSheets++;
+              const sheet = examSheets.find(
+                ms => ms.classId === cls.id && ms.subjectId === sub.id
+              );
+              const asgn = (this.db.teacherAssignments || []).find(a => a.classId === cls.id && a.subjectId === sub.id);
+              const teacher = asgn ? (this.db.users || []).find(u => u.id === asgn.teacherId) : null;
+              const status = sheet?.status || 'not_started';
+              sheetDetails.push({
+                classId: cls.id,
+                className: cls.name,
+                subjectId: sub.id,
+                subjectName: sub.nameMl,
+                teacherName: teacher ? teacher.name : 'Unassigned',
+                status,
+                isReady: status === 'approved' || status === 'locked',
+              });
             });
           });
-        });
+
+        const submittedSheets = examSheets.filter(s => s.status === 'submitted').length;
+        const approvedSheets = examSheets.filter(s => s.status === 'approved').length;
+        const lockedSheets = examSheets.filter(s => s.status === 'locked').length;
+        const missingSheets = Math.max(0, totalExpectedSheets - examSheets.length);
 
         const isReady = totalExpectedSheets > 0 && approvedSheets + lockedSheets === totalExpectedSheets;
         return this.jsonResponse({
@@ -2710,6 +2894,7 @@ export class ClientStorageApi {
           totalRequiredSheets: totalExpectedSheets,
           totalExpectedSheets,
           totalSubmitted: submittedSheets,
+          submittedSheets,
           totalApproved: approvedSheets,
           approvedSheets,
           totalLocked: lockedSheets,
@@ -2725,23 +2910,64 @@ export class ClientStorageApi {
       const examPublishMatch = path.match(/^\/api\/examinations\/([^/]+)\/publish$/);
       if (examPublishMatch && method === 'POST') {
         const examId = examPublishMatch[1];
-        const exam = this.db.examinations.find(e => e.id === examId);
+        const exam = (this.db.examinations || []).find(e => 
+          e && (e.id === examId || e.id?.toString() === examId?.toString() || e.nameEn === examId)
+        ) || (this.db.examinations || [])[0];
         if (!exam) return this.jsonResponse({ error: 'Exam not found' }, 404);
 
-        const { isPublished } = bodyData;
-        exam.isPublished = Boolean(isPublished);
-        exam.status = exam.isPublished ? 'published' : 'draft';
-        if (exam.isPublished) {
-          exam.publishedAt = new Date().toISOString();
+        const isPub =
+          bodyData.action === 'publish_now' ||
+          bodyData.action === 'publish' ||
+          bodyData.isPublished === true;
+        const isRevoke =
+          bodyData.action === 'revoke' ||
+          bodyData.action === 'unpublish' ||
+          bodyData.isPublished === false;
+
+        const currentExamId = exam.id?.toString() || examId?.toString();
+
+        if (isPub) {
+          exam.isPublished = true;
+          exam.status = 'published';
+          exam.publishedAt = bodyData.publishedAt || new Date().toISOString();
+
+          // Check and publish all sheets matching the exam that are 'approved' or 'locked'
+          this.db.markSheets.forEach(sheet => {
+            const sExamId = sheet.examId?.toString();
+            const sExaminationId = sheet.examinationId?.toString();
+            const matches =
+              (currentExamId && (sExamId === currentExamId || sExaminationId === currentExamId)) ||
+              (exam.nameEn && sheet.examName === exam.nameEn) ||
+              (!sExamId && !sExaminationId) ||
+              (this.db.examinations || []).length <= 1;
+            if (matches && (sheet.status === 'approved' || sheet.status === 'locked' || sheet.status === 'submitted')) {
+              sheet.status = 'locked';
+              (sheet as any).isPublished = true;
+              (sheet as any).publishedAt = exam.publishedAt;
+            }
+          });
+        } else if (isRevoke) {
+          exam.isPublished = false;
+          exam.status = 'draft';
+          exam.publishedAt = undefined;
         }
+
         this.saveDB();
 
         firestoreSync.syncExam(exam).catch(e => {
           console.warn('Firestore syncExam error on publish:', e);
         });
 
+        // Also sync updated marksheets to firestore
+        this.db.markSheets
+          .filter(ms => ms.examinationId === examId)
+          .forEach(ms => {
+            firestoreSync.syncMarkSheet(ms).catch(e => console.warn('Firestore syncMarkSheet publish error:', e));
+          });
+
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('madrasa_exams_updated', { detail: this.db.examinations }));
+          window.dispatchEvent(new CustomEvent('madrasa_marks_updated'));
         }
 
         return this.jsonResponse({ success: true, exam });
@@ -2821,7 +3047,15 @@ export class ClientStorageApi {
           }
         }
 
-        sheet.studentMarks = studentMarks || {};
+        const processedMarks = { ...(studentMarks || {}) };
+        Object.keys(processedMarks).forEach(k => {
+          const entry = processedMarks[k];
+          if (entry && !entry.isAbsent && entry.componentMarks) {
+            const sum = Object.values(entry.componentMarks).reduce((s: number, v: any) => s + (Number(v) || 0), 0);
+            entry.subjectTotal = sum;
+          }
+        });
+        sheet.studentMarks = processedMarks;
         sheet.status = 'draft';
         sheet.lastUpdated = new Date().toISOString();
         this.saveDB();

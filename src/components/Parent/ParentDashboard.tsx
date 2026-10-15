@@ -139,15 +139,38 @@ export const ParentDashboard: React.FC = () => {
       console.warn('Real-time students listener error in ParentDashboard:', e);
     }
 
-    // 2. Real-time Firestore listener for published examinations
+    // 2. Real-time Firestore listener for published examinations (listening to both 'exams' and 'examinations')
     try {
+      const handleRemoteExams = (remoteExams: Examination[]) => {
+        setExaminations(prev => {
+          const map = new Map<string, Examination>();
+          prev.forEach(e => map.set(e.id, e));
+          remoteExams.forEach(e => {
+            const existing = map.get(e.id);
+            map.set(e.id, existing ? { ...existing, ...e } : e);
+          });
+          return Array.from(map.values());
+        });
+        if (selectedChildId && selectedExamId) {
+          loadReport(selectedChildId, selectedExamId);
+        }
+      };
+
       const unsubExams = onSnapshot(collection(db, 'exams'), snapshot => {
         if (!snapshot.empty) {
           const remoteExams = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Examination));
-          setExaminations(remoteExams);
+          handleRemoteExams(remoteExams);
         }
       });
       unsubs.push(unsubExams);
+
+      const unsubExaminations = onSnapshot(collection(db, 'examinations'), snapshot => {
+        if (!snapshot.empty) {
+          const remoteExams = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Examination));
+          handleRemoteExams(remoteExams);
+        }
+      });
+      unsubs.push(unsubExaminations);
     } catch (e) {
       console.warn('Real-time exams listener error in ParentDashboard:', e);
     }

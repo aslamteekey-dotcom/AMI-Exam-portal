@@ -264,13 +264,17 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
           };
         } else {
           const compNum: Record<string, number> = {};
+          let subjectTotal = 0;
           for (const [k, v] of Object.entries(entry.componentMarks)) {
-            compNum[k] = v !== '' ? parseInt(v, 10) : 0;
+            const num = v !== '' ? parseInt(v, 10) : 0;
+            compNum[k] = num;
+            subjectTotal += num;
           }
           studentMarksPayload[studentId] = {
             studentId,
             isAbsent: false,
             componentMarks: compNum,
+            subjectTotal,
             remarks: entry.remarks,
           };
         }
