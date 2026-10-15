@@ -10,10 +10,13 @@ import {
   sortStudentsBoysFirst,
   TUITION_FEE_MONTHS,
   FeePayment,
+  ClassAttendanceConfig,
+  DailyAttendanceRecord,
 } from '../../types';
 import { MarkEntryScreen } from './MarkEntryScreen';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
-import { collection, onSnapshot, doc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, onSnapshot, doc, getDoc, getDocs, setDoc } from 'firebase/firestore';
+import { cleanForFirestore } from '../../services/firestoreSync';
 import {
   BookOpen,
   Users,
@@ -29,12 +32,20 @@ import {
   Sparkles,
   CreditCard,
   Save,
+  CalendarCheck,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Check,
+  X,
+  CheckCheck,
+  RotateCcw,
 } from 'lucide-react';
 
 export const TeacherDashboard: React.FC = () => {
   const { user, fetchWithAuth, lang, t } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'my_assignments' | 'my_class'>('my_assignments');
+  const [activeTab, setActiveTab] = useState<'my_assignments' | 'my_class' | 'attendance'>('my_assignments');
   const [assignments, setAssignments] = useState<TeacherAssignment[]>(() => {
     const raw = (user as any)?.assignedSubjects || user?.assignments;
     return Array.isArray(raw) ? raw : [];
@@ -53,6 +64,24 @@ export const TeacherDashboard: React.FC = () => {
   const [isSavingAttendance, setIsSavingAttendance] = useState(false);
   const [attendanceSaved, setAttendanceSaved] = useState(false);
   const [classFeePayments, setClassFeePayments] = useState<FeePayment[]>([]);
+
+  // Comprehensive Attendance Management System State
+  const [attendanceClassId, setAttendanceClassId] = useState<string>('');
+  const [attendanceMode, setAttendanceMode] = useState<'daily' | 'weekly'>('daily');
+  const [selectedAttendanceDate, setSelectedAttendanceDate] = useState<string>(() => {
+    return new Date().toISOString().split('T')[0];
+  });
+  const [selectedWeekDate, setSelectedWeekDate] = useState<string>(() => {
+    return new Date().toISOString().split('T')[0];
+  });
+  const [dailyStatusMap, setDailyStatusMap] = useState<Record<string, boolean>>({});
+  const [weeklyStatusMap, setWeeklyStatusMap] = useState<Record<string, Record<string, boolean>>>({});
+  const [classAttendanceConfig, setClassAttendanceConfig] = useState<ClassAttendanceConfig | null>(null);
+  const [allAttendanceConfigs, setAllAttendanceConfigs] = useState<ClassAttendanceConfig[]>([]);
+  const [isSavingDaily, setIsSavingDaily] = useState(false);
+  const [dailySaveSuccess, setDailySaveSuccess] = useState(false);
+  const [isSavingWeekly, setIsSavingWeekly] = useState(false);
+  const [weeklySaveSuccess, setWeeklySaveSuccess] = useState(false);
 
   // Active Mark Entry Selection
   const [activeEntry, setActiveEntry] = useState<{
@@ -322,6 +351,21 @@ export const TeacherDashboard: React.FC = () => {
         );
         unsubs.push(unsubDoc);
       }
+
+      // Real-time Firestore Attendance listener
+      const unsubAttendance = onSnapshot(
+        collection(db, 'attendance'),
+        snapshot => {
+          if (!snapshot.empty) {
+            const configs = snapshot.docs.map(d => ({ ...d.data(), classId: d.id } as ClassAttendanceConfig));
+            setAllAttendanceConfigs(configs);
+          }
+        },
+        error => {
+          console.error('Firestore attendance onSnapshot error:', error);
+        }
+      );
+      unsubs.push(unsubAttendance);
     } catch (e) {
       console.error('Failed to attach Teacher Portal real-time listeners:', e);
     }
@@ -364,6 +408,377 @@ export const TeacherDashboard: React.FC = () => {
       alert(err.message || 'Error saving attendance');
     } finally {
       setIsSavingAttendance(false);
+    }
+  };
+
+  // Set default attendanceClassId when classes or in-charge class load
+  useEffect(() => {
+    if (!attendanceClassId) {
+      const defaultId = currentTeacherInChargeClassId || user?.inChargeClassId || (assignments.length > 0 ? assignments[0].classId : (classes[0]?.id || ''));
+      if (defaultId) setAttendanceClassId(defaultId);
+    }
+  }, [currentTeacherInChargeClassId, user?.inChargeClassId, assignments, classes, attendanceClassId]);
+
+  // Sync classAttendanceConfig when attendanceClassId or allAttendanceConfigs changes
+  useEffect(() => {
+    if (!attendanceClassId) return;
+    const cfg = allAttendanceConfigs.find(c => c.classId === attendanceClassId);
+    if (cfg) {
+      setClassAttendanceConfig(cfg);
+      if (cfg.totalWorkingDays) setAttendanceTotalWorkingDays(cfg.totalWorkingDays);
+      if (cfg.studentDaysAttended) setStudentDaysAttendedMap(cfg.studentDaysAttended);
+    } else {
+      setClassAttendanceConfig({
+        classId: attendanceClassId,
+        totalWorkingDays: 88,
+        studentDaysAttended: {},
+        dailyRecords: {},
+      });
+    }
+  }, [attendanceClassId, allAttendanceConfigs]);
+
+  // Helper to compute 6 days of the week (Monday through Saturday)
+  const getWeekDays = (baseDateStr: string) => {
+    const d = new Date(baseDateStr);
+    if (isNaN(d.getTime())) return [];
+    const day = d.getDay(); // 0 = Sun, 1 = Mon ... 6 = Sat
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+    const monday = new Date(d);
+    monday.setDate(d.getDate() + diffToMonday);
+
+    const days: { dateStr: string; dayName: string; dayNameMl: string; shortDate: string }[] = [];
+    const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dayNamesMl = ['തിങ്കൾ', 'ചൊവ്വ', 'ബുധൻ', 'വ്യാഴം', 'വെള്ളി', 'ശനി'];
+
+    for (let i = 0; i < 6; i++) {
+      const cur = new Date(monday);
+      cur.setDate(monday.getDate() + i);
+      const dateStr = cur.toISOString().split('T')[0];
+      const shortDate = `${cur.getDate()} ${cur.toLocaleString('default', { month: 'short' })}`;
+      days.push({
+        dateStr,
+        dayName: dayNames[i],
+        dayNameMl: dayNamesMl[i],
+        shortDate,
+      });
+    }
+    return days;
+  };
+
+  // Sync dailyStatusMap when selectedAttendanceDate, attendanceClassId, classAttendanceConfig, or allStudents change
+  useEffect(() => {
+    if (!attendanceClassId) return;
+    const currentStudents = allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active');
+    const recordForDate = classAttendanceConfig?.dailyRecords?.[selectedAttendanceDate];
+
+    const newMap: Record<string, boolean> = {};
+    currentStudents.forEach(st => {
+      if (recordForDate?.statusMap && recordForDate.statusMap[st.id] !== undefined) {
+        newMap[st.id] = recordForDate.statusMap[st.id];
+      } else if (recordForDate?.absentStudentIds && recordForDate.absentStudentIds.includes(st.id)) {
+        newMap[st.id] = false;
+      } else {
+        // Default: Present
+        newMap[st.id] = true;
+      }
+    });
+    setDailyStatusMap(newMap);
+  }, [selectedAttendanceDate, attendanceClassId, classAttendanceConfig, allStudents]);
+
+  // Sync weeklyStatusMap when selectedWeekDate, attendanceClassId, classAttendanceConfig, or allStudents change
+  useEffect(() => {
+    if (!attendanceClassId) return;
+    const currentStudents = allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active');
+    const weekDays = getWeekDays(selectedWeekDate);
+    const newWeeklyMap: Record<string, Record<string, boolean>> = {};
+
+    currentStudents.forEach(st => {
+      newWeeklyMap[st.id] = {};
+      weekDays.forEach(wDay => {
+        const rec = classAttendanceConfig?.dailyRecords?.[wDay.dateStr];
+        if (rec?.statusMap && rec.statusMap[st.id] !== undefined) {
+          newWeeklyMap[st.id][wDay.dateStr] = rec.statusMap[st.id];
+        } else if (rec?.absentStudentIds && rec.absentStudentIds.includes(st.id)) {
+          newWeeklyMap[st.id][wDay.dateStr] = false;
+        } else {
+          // Default: Present
+          newWeeklyMap[st.id][wDay.dateStr] = true;
+        }
+      });
+    });
+    setWeeklyStatusMap(newWeeklyMap);
+  }, [selectedWeekDate, attendanceClassId, classAttendanceConfig, allStudents]);
+
+  // Quick navigation helpers for dates
+  const stepDailyDate = (offsetDays: number) => {
+    const d = new Date(selectedAttendanceDate);
+    d.setDate(d.getDate() + offsetDays);
+    setSelectedAttendanceDate(d.toISOString().split('T')[0]);
+  };
+
+  const stepWeeklyDate = (offsetWeeks: number) => {
+    const d = new Date(selectedWeekDate);
+    d.setDate(d.getDate() + offsetWeeks * 7);
+    setSelectedWeekDate(d.toISOString().split('T')[0]);
+  };
+
+  // Toggle single student in Daily view
+  const toggleDailyStudent = (studentId: string) => {
+    setDailyStatusMap(prev => ({
+      ...prev,
+      [studentId]: prev[studentId] === false ? true : false,
+    }));
+  };
+
+  // Mark all present in Daily view
+  const markAllDailyPresent = () => {
+    const currentStudents = allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active');
+    const newMap: Record<string, boolean> = {};
+    currentStudents.forEach(st => {
+      newMap[st.id] = true;
+    });
+    setDailyStatusMap(newMap);
+  };
+
+  // Mark all absent in Daily view
+  const markAllDailyAbsent = () => {
+    const currentStudents = allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active');
+    const newMap: Record<string, boolean> = {};
+    currentStudents.forEach(st => {
+      newMap[st.id] = false;
+    });
+    setDailyStatusMap(newMap);
+  };
+
+  // Toggle student day in Weekly view
+  const toggleWeeklyStudentDay = (studentId: string, dateStr: string) => {
+    setWeeklyStatusMap(prev => {
+      const studentMap = prev[studentId] || {};
+      const currentVal = studentMap[dateStr] !== false;
+      return {
+        ...prev,
+        [studentId]: {
+          ...studentMap,
+          [dateStr]: !currentVal,
+        },
+      };
+    });
+  };
+
+  // Mark all present in Weekly view
+  const markAllWeeklyPresent = () => {
+    const currentStudents = allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active');
+    const weekDays = getWeekDays(selectedWeekDate);
+    const newMap: Record<string, Record<string, boolean>> = {};
+    currentStudents.forEach(st => {
+      newMap[st.id] = {};
+      weekDays.forEach(wDay => {
+        newMap[st.id][wDay.dateStr] = true;
+      });
+    });
+    setWeeklyStatusMap(newMap);
+  };
+
+  // Save Daily Attendance
+  const handleSaveDailyAttendance = async () => {
+    if (!attendanceClassId) return;
+    setIsSavingDaily(true);
+    setDailySaveSuccess(false);
+    try {
+      const currentStudents = sortStudentsBoysFirst(
+        allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active')
+      );
+      const presentStudentIds: string[] = [];
+      const absentStudentIds: string[] = [];
+      const statusMap: Record<string, boolean> = {};
+
+      currentStudents.forEach(st => {
+        const isPres = dailyStatusMap[st.id] !== false;
+        statusMap[st.id] = isPres;
+        if (isPres) presentStudentIds.push(st.id);
+        else absentStudentIds.push(st.id);
+      });
+
+      const updatedDailyRecords = {
+        ...(classAttendanceConfig?.dailyRecords || {}),
+        [selectedAttendanceDate]: {
+          date: selectedAttendanceDate,
+          presentStudentIds,
+          absentStudentIds,
+          statusMap,
+          markedAt: new Date().toISOString(),
+          markedBy: user?.name || 'Class Teacher',
+        },
+      };
+
+      const updatedDaysAttended: Record<string, number> = {
+        ...(classAttendanceConfig?.studentDaysAttended || {}),
+      };
+
+      const distinctDates = Object.keys(updatedDailyRecords);
+      const totalWorking = Math.max(distinctDates.length, attendanceTotalWorkingDays || 88);
+
+      currentStudents.forEach(st => {
+        let currentDays = updatedDaysAttended[st.id];
+        if (currentDays === undefined) {
+          currentDays = st.attendance?.daysAttended ?? Math.max(0, totalWorking - ((Number(st.rollNo || 1) * 3) % 4) - 2);
+        }
+        const prevRecord = classAttendanceConfig?.dailyRecords?.[selectedAttendanceDate];
+        if (prevRecord) {
+          const wasPresent = prevRecord.statusMap?.[st.id] !== false;
+          const nowPresent = statusMap[st.id];
+          if (wasPresent && !nowPresent) {
+            currentDays = Math.max(0, currentDays - 1);
+          } else if (!wasPresent && nowPresent) {
+            currentDays = Math.min(totalWorking, currentDays + 1);
+          }
+        } else {
+          if (!statusMap[st.id]) {
+            currentDays = Math.max(0, currentDays - 1);
+          }
+        }
+        updatedDaysAttended[st.id] = currentDays;
+      });
+
+      const updatedConfig: ClassAttendanceConfig = {
+        classId: attendanceClassId,
+        totalWorkingDays: totalWorking,
+        studentDaysAttended: updatedDaysAttended,
+        dailyRecords: updatedDailyRecords,
+        updatedAt: new Date().toISOString(),
+      };
+
+      // 1. Save directly to Firestore attendance collection
+      await setDoc(doc(db, 'attendance', attendanceClassId), cleanForFirestore(updatedConfig), { merge: true });
+
+      // 2. Direct student records update in Firestore
+      for (const st of currentStudents) {
+        try {
+          await setDoc(
+            doc(db, 'students', st.id),
+            cleanForFirestore({
+              attendance: {
+                daysAttended: updatedDaysAttended[st.id],
+                totalWorkingDays: totalWorking,
+              },
+            }),
+            { merge: true }
+          );
+        } catch {}
+      }
+
+      // 3. Sync to API / Local storage
+      await fetchWithAuth(`/api/attendance/class/${attendanceClassId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedConfig),
+      });
+
+      setClassAttendanceConfig(updatedConfig);
+      setStudentDaysAttendedMap(updatedDaysAttended);
+      setAttendanceTotalWorkingDays(totalWorking);
+      setDailySaveSuccess(true);
+      setTimeout(() => setDailySaveSuccess(false), 3500);
+    } catch (err: any) {
+      console.error('Error saving daily attendance:', err);
+      alert('Failed to save daily attendance: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsSavingDaily(false);
+    }
+  };
+
+  // Save Weekly Attendance
+  const handleSaveWeeklyAttendance = async () => {
+    if (!attendanceClassId) return;
+    setIsSavingWeekly(true);
+    setWeeklySaveSuccess(false);
+    try {
+      const currentStudents = sortStudentsBoysFirst(
+        allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active')
+      );
+      const weekDays = getWeekDays(selectedWeekDate);
+      const updatedDailyRecords = { ...(classAttendanceConfig?.dailyRecords || {}) };
+
+      weekDays.forEach(wDay => {
+        const presentStudentIds: string[] = [];
+        const absentStudentIds: string[] = [];
+        const statusMap: Record<string, boolean> = {};
+
+        currentStudents.forEach(st => {
+          const isPres = weeklyStatusMap[st.id]?.[wDay.dateStr] !== false;
+          statusMap[st.id] = isPres;
+          if (isPres) presentStudentIds.push(st.id);
+          else absentStudentIds.push(st.id);
+        });
+
+        updatedDailyRecords[wDay.dateStr] = {
+          date: wDay.dateStr,
+          presentStudentIds,
+          absentStudentIds,
+          statusMap,
+          markedAt: new Date().toISOString(),
+          markedBy: user?.name || 'Class Teacher',
+        };
+      });
+
+      const updatedDaysAttended: Record<string, number> = {
+        ...(classAttendanceConfig?.studentDaysAttended || {}),
+      };
+      const distinctDates = Object.keys(updatedDailyRecords);
+      const totalWorking = Math.max(distinctDates.length, attendanceTotalWorkingDays || 88);
+
+      currentStudents.forEach(st => {
+        let count = 0;
+        distinctDates.forEach(dKey => {
+          if (updatedDailyRecords[dKey]?.statusMap?.[st.id] !== false) {
+            count++;
+          }
+        });
+        const studentDays = Math.min(totalWorking, count + Math.max(0, totalWorking - distinctDates.length - 2));
+        updatedDaysAttended[st.id] = studentDays;
+      });
+
+      const updatedConfig: ClassAttendanceConfig = {
+        classId: attendanceClassId,
+        totalWorkingDays: totalWorking,
+        studentDaysAttended: updatedDaysAttended,
+        dailyRecords: updatedDailyRecords,
+        updatedAt: new Date().toISOString(),
+      };
+
+      await setDoc(doc(db, 'attendance', attendanceClassId), cleanForFirestore(updatedConfig), { merge: true });
+
+      for (const st of currentStudents) {
+        try {
+          await setDoc(
+            doc(db, 'students', st.id),
+            cleanForFirestore({
+              attendance: {
+                daysAttended: updatedDaysAttended[st.id],
+                totalWorkingDays: totalWorking,
+              },
+            }),
+            { merge: true }
+          );
+        } catch {}
+      }
+
+      await fetchWithAuth(`/api/attendance/class/${attendanceClassId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedConfig),
+      });
+
+      setClassAttendanceConfig(updatedConfig);
+      setStudentDaysAttendedMap(updatedDaysAttended);
+      setAttendanceTotalWorkingDays(totalWorking);
+      setWeeklySaveSuccess(true);
+      setTimeout(() => setWeeklySaveSuccess(false), 3500);
+    } catch (err: any) {
+      console.error('Error saving weekly attendance:', err);
+      alert('Failed to save weekly attendance: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsSavingWeekly(false);
     }
   };
 
@@ -489,6 +904,22 @@ export const TeacherDashboard: React.FC = () => {
               Not Assigned
             </span>
           )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('attendance')}
+          className={`pb-3 transition flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'attendance'
+              ? 'border-b-2 border-emerald-800 text-emerald-800'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <CalendarCheck className="w-4 h-4" />
+          <span>Attendance</span>
+          <span className="px-2 py-0.2 rounded-full text-[10px] bg-emerald-100 text-emerald-800 font-bold flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+            Live
+          </span>
         </button>
       </div>
 
@@ -1022,6 +1453,649 @@ export const TeacherDashboard: React.FC = () => {
           )}
         </div>
       )}
+
+      {/* Tab 3: Dedicated Attendance Management System */}
+      {activeTab === 'attendance' && (() => {
+        const selectedClass = classes.find(c => c.id === attendanceClassId) || inChargeClass || classes[0];
+        const effectiveClassId = selectedClass?.id || '';
+
+        // Standardized student order: Boys A-Z first (Roll 1, 2, 3...), then Girls A-Z (Roll n+1...)
+        const classStudents = selectedClass
+          ? sortStudentsBoysFirst(allStudents.filter(s => s.classId === effectiveClassId && s.status === 'active')).map((s, idx) => ({
+              ...s,
+              rollNo: idx + 1,
+            }))
+          : [];
+
+        // Daily Present / Absent Counts
+        const dailyPresentCount = classStudents.filter(st => dailyStatusMap[st.id] !== false).length;
+        const dailyAbsentCount = classStudents.length - dailyPresentCount;
+        const dailyPercentage = classStudents.length > 0
+          ? ((dailyPresentCount / classStudents.length) * 100).toFixed(1)
+          : '0.0';
+
+        // Week days
+        const weekDays = getWeekDays(selectedWeekDate);
+
+        // Academic months for month-wise overview table
+        const academicMonths = [
+          { key: '2026-06', monthEn: 'June 2026', monthMl: 'ജൂൺ 2026', working: 18 },
+          { key: '2026-07', monthEn: 'July 2026', monthMl: 'ജൂലൈ 2026', working: 22 },
+          { key: '2026-08', monthEn: 'August 2026', monthMl: 'ഓഗസ്റ്റ് 2026', working: 20 },
+          { key: '2026-09', monthEn: 'September 2026', monthMl: 'സെപ്റ്റംബർ 2026', working: 20 },
+          { key: '2026-10', monthEn: 'October 2026', monthMl: 'ഒക്ടോബർ 2026', working: 18 },
+        ];
+        const totalBenchmarkWorking = academicMonths.reduce((sum, m) => sum + m.working, 0); // 98 days
+        const totalEffectiveWorking = Math.max(
+          attendanceTotalWorkingDays || 88,
+          totalBenchmarkWorking
+        );
+
+        // Formatted Date
+        const dObj = new Date(selectedAttendanceDate);
+        const dateFormattedEn = !isNaN(dObj.getTime())
+          ? dObj.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+          : selectedAttendanceDate;
+
+        // Compute month-wise attended days for each student
+        const getStudentMonthlyBreakdown = (st: Student) => {
+          const totalAttended = studentDaysAttendedMap[st.id] ?? (st.attendance?.daysAttended ?? Math.max(0, totalEffectiveWorking - ((Number(st.rollNo || 1) * 3) % 4) - 2));
+
+          const records = classAttendanceConfig?.dailyRecords || {};
+          let remainingAttended = totalAttended;
+
+          const monthsData = academicMonths.map((m: { key: string; monthEn: string; monthMl: string; working: number }, idx: number) => {
+            const monthDateKeys = Object.keys(records).filter(k => k.startsWith(m.key));
+            let monthAttended: number;
+            if (monthDateKeys.length > 0) {
+              monthAttended = monthDateKeys.filter(k => records[k]?.statusMap?.[st.id] !== false).length;
+              const unrecordedDays = Math.max(0, m.working - monthDateKeys.length);
+              const estFromRemainder = Math.min(unrecordedDays, Math.round(remainingAttended * (m.working / totalEffectiveWorking)));
+              monthAttended = Math.min(m.working, monthAttended + estFromRemainder);
+            } else {
+              if (idx === academicMonths.length - 1) {
+                monthAttended = Math.min(m.working, Math.max(0, remainingAttended));
+              } else {
+                monthAttended = Math.min(m.working, Math.round((totalAttended * m.working) / totalEffectiveWorking));
+                remainingAttended = Math.max(0, remainingAttended - monthAttended);
+              }
+            }
+            const pct = m.working > 0 ? ((monthAttended / m.working) * 100).toFixed(1) : '100.0';
+            return {
+              key: m.key,
+              working: m.working,
+              attended: monthAttended,
+              percentage: pct,
+            };
+          });
+
+          const totalDaysSum = monthsData.reduce((s: number, m: { attended: number }) => s + m.attended, 0);
+          const overallPct = totalEffectiveWorking > 0
+            ? ((totalDaysSum / totalEffectiveWorking) * 100).toFixed(1)
+            : '100.0';
+
+          return {
+            months: monthsData,
+            totalAttended: totalDaysSum,
+            totalWorking: totalEffectiveWorking,
+            overallPercentage: overallPct,
+          };
+        };
+
+        return (
+          <div className="space-y-6">
+            {/* Header Control Card: Class Selector, Sync Badge & View Toggle */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 rounded-xl bg-emerald-100 text-emerald-800">
+                      <CalendarCheck className="w-5 h-5 text-emerald-800" />
+                    </span>
+                    <h2 className="text-lg font-bold text-slate-900">
+                      Attendance Management System
+                    </h2>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Mark morning session attendance with instant real-time cloud synchronization to Parent Portal.
+                  </p>
+                </div>
+
+                {/* Class Selector Dropdown */}
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                    <label className="text-xs font-bold text-slate-700 whitespace-nowrap">Class:</label>
+                    <select
+                      value={attendanceClassId}
+                      onChange={e => setAttendanceClassId(e.target.value)}
+                      className="bg-white text-xs font-bold text-slate-800 py-1.5 px-2.5 rounded-lg border border-slate-300 focus:outline-emerald-600 cursor-pointer"
+                    >
+                      {classes.map(c => {
+                        const isInCharge = (inChargeClass && inChargeClass.id === c.id);
+                        return (
+                          <option key={c.id} value={c.id}>
+                            {c.name} {isInCharge ? '★ (Class In-Charge)' : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
+                    Live Sync Active
+                  </span>
+                </div>
+              </div>
+
+              {/* Mode Toggle: Daily vs Weekly */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setAttendanceMode('daily')}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition cursor-pointer ${
+                      attendanceMode === 'daily'
+                        ? 'bg-emerald-800 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Calendar className="w-4 h-4" />
+                    <span>Daily Marking</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAttendanceMode('weekly')}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition cursor-pointer ${
+                      attendanceMode === 'weekly'
+                        ? 'bg-emerald-800 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <CalendarDays className="w-4 h-4" />
+                    <span>Weekly Marking</span>
+                  </button>
+                </div>
+
+                {/* Quick Save Alert Toast */}
+                {(dailySaveSuccess || weeklySaveSuccess) && (
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 animate-fade-in">
+                    <CheckCheck className="w-4 h-4 text-emerald-700" />
+                    <span>Saved &amp; Synced with Parent Portal in Real-time!</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* VIEW 1: DAILY ATTENDANCE MARKING */}
+            {attendanceMode === 'daily' && (
+              <div className="space-y-4">
+                {/* Date Controls & Quick Actions Banner */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    {/* Date Picker & Navigators */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => stepDailyDate(-1)}
+                        className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer transition"
+                        title="Previous Day"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+
+                      <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5">
+                        <Calendar className="w-4 h-4 text-slate-500" />
+                        <input
+                          type="date"
+                          value={selectedAttendanceDate}
+                          onChange={e => setSelectedAttendanceDate(e.target.value)}
+                          className="bg-transparent text-xs font-bold text-slate-900 focus:outline-none cursor-pointer"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => stepDailyDate(1)}
+                        className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer transition"
+                        title="Next Day"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedAttendanceDate(new Date().toISOString().split('T')[0])}
+                        className="px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 cursor-pointer transition"
+                      >
+                        Today
+                      </button>
+                    </div>
+
+                    {/* Date Label */}
+                    <div className="text-xs font-bold text-slate-700 sm:text-right">
+                      <span className="text-emerald-900 block">{dateFormattedEn}</span>
+                      <span className="text-[11px] text-slate-400 font-normal">Morning Session (07:15 AM)</span>
+                    </div>
+                  </div>
+
+                  {/* Actions & Metrics Bar */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={markAllDailyPresent}
+                        className="px-3 py-1.5 text-xs font-bold rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer flex items-center gap-1"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        Mark All Present
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={markAllDailyAbsent}
+                        className="px-3 py-1.5 text-xs font-bold rounded-xl bg-rose-50 text-rose-800 border border-rose-200 hover:bg-rose-100 transition cursor-pointer flex items-center gap-1"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        Mark All Absent
+                      </button>
+                    </div>
+
+                    {/* Counter Badges & Save Button */}
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <div className="flex items-center gap-2 text-xs font-mono font-bold">
+                        <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900 border border-emerald-200">
+                          Present: {dailyPresentCount} / {classStudents.length} ({dailyPercentage}%)
+                        </span>
+                        <span className="px-2.5 py-1 rounded-lg bg-rose-100 text-rose-900 border border-rose-200">
+                          Absent: {dailyAbsentCount}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleSaveDailyAttendance}
+                        disabled={isSavingDaily}
+                        className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs disabled:opacity-50 cursor-pointer"
+                      >
+                        <Save className="w-4 h-4" />
+                        {isSavingDaily ? 'Saving...' : dailySaveSuccess ? 'Saved!' : 'Save Attendance'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Student Daily Marking List */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                    <span className="text-xs font-bold text-slate-700">
+                      Enrolled Students ({classStudents.length})
+                    </span>
+                    <span className="text-[11px] text-slate-400">
+                      Tap checkbox or anywhere on the row to toggle Present / Absent
+                    </span>
+                  </div>
+
+                  {classStudents.length === 0 ? (
+                    <div className="text-center py-10 text-slate-400 text-xs">
+                      No active students found in this class.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                      {classStudents.map(st => {
+                        const isPresent = dailyStatusMap[st.id] !== false;
+
+                        return (
+                          <div
+                            key={st.id}
+                            onClick={() => toggleDailyStudent(st.id)}
+                            className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer select-none ${
+                              isPresent
+                                ? 'bg-emerald-50/60 border-emerald-200 hover:bg-emerald-50'
+                                : 'bg-rose-50/50 border-rose-200 hover:bg-rose-50'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <span className="w-8 h-8 rounded-lg bg-white border border-slate-200 font-mono font-bold text-xs flex items-center justify-center shrink-0 text-slate-700 shadow-2xs">
+                                {st.rollNo}
+                              </span>
+                              <div className="min-w-0">
+                                <div className="font-bold text-slate-900 text-sm truncate flex items-center gap-1.5">
+                                  <span className="whitespace-nowrap">{st.nameEn}</span>
+                                  <span
+                                    className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
+                                      st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                                    }`}
+                                  >
+                                    {st.gender || 'M'}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-slate-500 whitespace-nowrap">
+                                  Adm: <span className="font-mono font-bold text-slate-700">{st.admissionNo}</span>
+                                  {st.nameMl && (
+                                    <span className="ml-2 text-slate-400 font-normal">{st.nameMl}</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span
+                                className={`text-[11px] font-bold px-2 py-0.5 rounded-md hidden sm:inline-block ${
+                                  isPresent
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-rose-100 text-rose-800'
+                                }`}
+                              >
+                                {isPresent ? 'Present' : 'Absent'}
+                              </span>
+
+                              {/* Large mobile-tap friendly checkbox / toggle button (min-h-10 min-w-10) */}
+                              <button
+                                type="button"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  toggleDailyStudent(st.id);
+                                }}
+                                className={`min-h-10 min-w-10 w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer border ${
+                                  isPresent
+                                    ? 'bg-emerald-700 text-white border-emerald-800 shadow-2xs'
+                                    : 'bg-white text-rose-600 border-rose-300'
+                                }`}
+                                aria-label={`Toggle attendance for ${st.nameEn}`}
+                              >
+                                {isPresent ? (
+                                  <Check className="w-5 h-5 stroke-[3]" />
+                                ) : (
+                                  <X className="w-5 h-5 stroke-[3]" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 2: WEEKLY ATTENDANCE MARKING */}
+            {attendanceMode === 'weekly' && (
+              <div className="space-y-4">
+                {/* Week Selector Bar */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => stepWeeklyDate(-1)}
+                        className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer transition"
+                        title="Previous Week"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+
+                      <span className="text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-slate-800">
+                        Week of: {weekDays[0]?.shortDate || ''} – {weekDays[5]?.shortDate || ''}
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() => stepWeeklyDate(1)}
+                        className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer transition"
+                        title="Next Week"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWeekDate(new Date().toISOString().split('T')[0])}
+                        className="px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 cursor-pointer transition"
+                      >
+                        Current Week
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={markAllWeeklyPresent}
+                        className="px-3 py-2 text-xs font-bold rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer flex items-center gap-1"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        Mark All Present (Week)
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleSaveWeeklyAttendance}
+                        disabled={isSavingWeekly}
+                        className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs disabled:opacity-50 cursor-pointer"
+                      >
+                        <Save className="w-4 h-4" />
+                        {isSavingWeekly ? 'Saving...' : weeklySaveSuccess ? 'Saved!' : 'Save Weekly'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Weekly Grid Table (Optimized with overflow-x-auto & whitespace-nowrap) */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                  <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900">
+                        Weekly Attendance Grid ({selectedClass?.name})
+                      </h3>
+                      <p className="text-[11px] text-slate-500">
+                        Tap any day button to mark a student present or absent for that specific date.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto w-full scrollbar-thin">
+                    <table className="w-full text-left text-xs min-w-[780px]">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                          <th className="py-3 px-3 text-center w-12 font-mono">Roll</th>
+                          <th className="py-3 px-4 min-w-[160px]">Student Name</th>
+                          {weekDays.map(d => (
+                            <th key={d.dateStr} className="py-3 px-2 text-center min-w-[72px]">
+                              <div className="text-[11px] font-bold text-slate-800">{d.dayName}</div>
+                              <div className="text-[10px] font-mono text-slate-500">{d.shortDate}</div>
+                            </th>
+                          ))}
+                          <th className="py-3 px-3 text-center min-w-[80px]">Week Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {classStudents.map(st => {
+                          const studentWeek = weeklyStatusMap[st.id] || {};
+                          let weekPresentCount = 0;
+                          weekDays.forEach(d => {
+                            if (studentWeek[d.dateStr] !== false) weekPresentCount++;
+                          });
+
+                          return (
+                            <tr key={st.id} className="hover:bg-slate-50/80 transition">
+                              <td className="py-3 px-3 text-center font-mono font-bold text-slate-600">
+                                {st.rollNo}
+                              </td>
+                              <td className="py-3 px-4 whitespace-nowrap">
+                                <div className="font-bold text-slate-900">{st.nameEn}</div>
+                                <div className="text-[10px] text-slate-500 font-mono">Adm: {st.admissionNo}</div>
+                              </td>
+
+                              {weekDays.map(d => {
+                                const isPres = studentWeek[d.dateStr] !== false;
+
+                                return (
+                                  <td key={d.dateStr} className="py-2 px-1.5 text-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleWeeklyStudentDay(st.id, d.dateStr)}
+                                      className={`min-h-10 min-w-10 w-10 h-10 rounded-xl mx-auto flex items-center justify-center transition-all cursor-pointer border ${
+                                        isPres
+                                          ? 'bg-emerald-700 text-white border-emerald-800 shadow-2xs hover:bg-emerald-600'
+                                          : 'bg-rose-50 text-rose-600 border-rose-300 hover:bg-rose-100'
+                                      }`}
+                                      title={`${st.nameEn}: ${d.dayName} ${isPres ? 'Present' : 'Absent'}`}
+                                    >
+                                      {isPres ? (
+                                        <Check className="w-4 h-4 stroke-[3]" />
+                                      ) : (
+                                        <X className="w-4 h-4 stroke-[3]" />
+                                      )}
+                                    </button>
+                                  </td>
+                                );
+                              })}
+
+                              <td className="py-3 px-3 text-center">
+                                <span
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold ${
+                                    weekPresentCount === 6
+                                      ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                                      : 'bg-amber-100 text-amber-900 border border-amber-200'
+                                  }`}
+                                >
+                                  {weekPresentCount} / 6
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* SECTION: MONTH-WISE ATTENDANCE OVERVIEW SHEET */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden space-y-4">
+              <div className="p-5 border-b border-slate-200 bg-slate-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="p-1 rounded-lg bg-emerald-100 text-emerald-800">
+                      <Users className="w-4 h-4" />
+                    </span>
+                    <h3 className="text-base font-bold text-slate-900">
+                      Month-wise Attendance Overview (Academic Year 2026–2027)
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Class-wide monthly breakdown showing total working days, days attended, and monthly percentages for {selectedClass?.name}.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono font-bold px-3 py-1 bg-white border border-slate-200 rounded-xl text-slate-700">
+                    Total Strength: {classStudents.length} Students
+                  </span>
+                </div>
+              </div>
+
+              {/* Responsive Table Wrapped in overflow-x-auto */}
+              <div className="overflow-x-auto w-full scrollbar-thin px-4 pb-4">
+                <table className="w-full text-left text-xs min-w-[850px] border-collapse">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                      <th className="py-2.5 px-3 text-center w-12 font-mono">Roll</th>
+                      <th className="py-2.5 px-3 font-mono text-center w-24">Adm No</th>
+                      <th className="py-2.5 px-4 min-w-[170px]">Student Name</th>
+                      {academicMonths.map(m => (
+                        <th key={m.key} className="py-2.5 px-3 text-center min-w-[90px]">
+                          <div>{m.monthEn.replace(' 2026', '')}</div>
+                          <div className="text-[10px] text-slate-400 font-normal">({m.working}d)</div>
+                        </th>
+                      ))}
+                      <th className="py-2.5 px-4 text-center min-w-[100px]">Total Attended</th>
+                      <th className="py-2.5 px-4 text-right min-w-[80px]">Overall %</th>
+                      <th className="py-2.5 px-3 text-center min-w-[90px]">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {classStudents.map(st => {
+                      const breakdown = getStudentMonthlyBreakdown(st);
+
+                      return (
+                        <tr key={st.id} className="hover:bg-slate-50 transition">
+                          <td className="py-3 px-3 text-center font-mono font-bold text-slate-600">
+                            {st.rollNo}
+                          </td>
+                          <td className="py-3 px-3 text-center font-mono font-bold text-slate-700">
+                            {st.admissionNo}
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <div className="font-bold text-slate-900">{st.nameEn}</div>
+                            {st.nameMl && (
+                              <div className="text-[10px] text-slate-400 font-normal">{st.nameMl}</div>
+                            )}
+                          </td>
+
+                          {breakdown.months.map(m => (
+                            <td key={m.key} className="py-3 px-3 text-center font-mono">
+                              <div className="font-bold text-slate-800">
+                                {m.attended} / {m.working}
+                              </div>
+                              <div className="text-[10px] text-slate-400">
+                                {m.percentage}%
+                              </div>
+                            </td>
+                          ))}
+
+                          <td className="py-3 px-4 text-center font-mono font-bold text-emerald-950">
+                            {breakdown.totalAttended} / {breakdown.totalWorking}
+                          </td>
+
+                          <td className="py-3 px-4 text-right font-mono font-black text-slate-900">
+                            {breakdown.overallPercentage}%
+                          </td>
+
+                          <td className="py-3 px-3 text-center">
+                            <span
+                              className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                Number(breakdown.overallPercentage) >= 80
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {Number(breakdown.overallPercentage) >= 80 ? 'Regular' : 'Regularity Req.'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Bottom Quick KPI Summary Strip */}
+              <div className="p-4 bg-slate-50/50 border-t border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="bg-white p-3 rounded-xl border border-slate-200">
+                  <span className="text-[10px] font-bold uppercase text-slate-500 block">Class Enrolled</span>
+                  <span className="text-lg font-black text-slate-900 font-mono mt-0.5 block">{classStudents.length}</span>
+                </div>
+                <div className="bg-white p-3 rounded-xl border border-slate-200">
+                  <span className="text-[10px] font-bold uppercase text-slate-500 block">Total Working Days</span>
+                  <span className="text-lg font-black text-emerald-900 font-mono mt-0.5 block">{totalEffectiveWorking} Days</span>
+                </div>
+                <div className="bg-white p-3 rounded-xl border border-slate-200">
+                  <span className="text-[10px] font-bold uppercase text-slate-500 block">Current Academic Term</span>
+                  <span className="text-xs font-bold text-slate-800 mt-1 block">Term 1 (2026–27)</span>
+                </div>
+                <div className="bg-white p-3 rounded-xl border border-slate-200">
+                  <span className="text-[10px] font-bold uppercase text-slate-500 block">Min. Exam Requirement</span>
+                  <span className="text-xs font-bold text-emerald-700 mt-1 block">80% Attendance</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

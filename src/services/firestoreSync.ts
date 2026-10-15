@@ -736,6 +736,22 @@ export class FirestoreSyncService {
   public async syncAttendance(config: ClassAttendanceConfig): Promise<void> {
     try {
       await setDoc(doc(db, 'attendance', config.classId), cleanForFirestore(config), { merge: true });
+      if (config.studentDaysAttended) {
+        for (const [sId, days] of Object.entries(config.studentDaysAttended)) {
+          try {
+            await setDoc(
+              doc(db, 'students', sId),
+              cleanForFirestore({
+                attendance: {
+                  daysAttended: days,
+                  totalWorkingDays: config.totalWorkingDays,
+                },
+              }),
+              { merge: true }
+            );
+          } catch {}
+        }
+      }
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `attendance/${config.classId}`);
       throw e;

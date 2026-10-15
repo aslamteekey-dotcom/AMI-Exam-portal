@@ -8,6 +8,7 @@ import {
   sortStudentsBoysFirst,
   TUITION_FEE_MONTHS,
   FeePayment,
+  ClassAttendanceConfig,
 } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
 import {
@@ -44,6 +45,9 @@ import {
   Sparkles,
   ShieldCheck,
   BookOpen,
+  Instagram,
+  Facebook,
+  Youtube,
 } from 'lucide-react';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -96,6 +100,7 @@ export const ParentDashboard: React.FC = () => {
   const [childPayments, setChildPayments] = useState<FeePayment[]>([]);
   const [activeReceipt, setActiveReceipt] = useState<FeePayment | null>(null);
   const [settings, setSettings] = useState<InstitutionSettings | null>(null);
+  const [attendanceConfigs, setAttendanceConfigs] = useState<Record<string, ClassAttendanceConfig>>({});
 
   // Notifications State
   const [notifications, setNotifications] = useState<NotificationItem[]>([
@@ -308,6 +313,22 @@ export const ParentDashboard: React.FC = () => {
       console.warn('Real-time marks listener error in ParentDashboard:', e);
     }
 
+    // 4. Real-time Firestore listener for attendance records
+    try {
+      const unsubAttendance = onSnapshot(collection(db, 'attendance'), snapshot => {
+        if (!snapshot.empty) {
+          const attMap: Record<string, ClassAttendanceConfig> = {};
+          snapshot.docs.forEach(docSnap => {
+            attMap[docSnap.id] = { ...docSnap.data(), classId: docSnap.id } as ClassAttendanceConfig;
+          });
+          setAttendanceConfigs(attMap);
+        }
+      });
+      unsubs.push(unsubAttendance);
+    } catch (e) {
+      console.warn('Real-time attendance listener error in ParentDashboard:', e);
+    }
+
     const handleStudentsUpdated = (e: any) => {
       const list = e.detail;
       if (Array.isArray(list)) {
@@ -512,7 +533,7 @@ export const ParentDashboard: React.FC = () => {
                   Roll: {selectedChild.rollNo} • Adm: {selectedChild.admissionNo}
                 </span>
                 <span className="bg-white/15 text-white px-2.5 py-1 rounded-full text-xs font-semibold">
-                  Class: {classesMap[selectedChild.classId] || selectedChild.classId}
+                  Class: {(classesMap[selectedChild.classId] || selectedChild.classId || '').replace(/^Class\s*/i, '')}
                 </span>
               </div>
             )}
@@ -584,17 +605,11 @@ export const ParentDashboard: React.FC = () => {
                   onChange={e => setSelectedChildId(e.target.value)}
                   className="w-full p-2.5 pr-8 border border-emerald-300 rounded-xl bg-emerald-50/60 font-bold text-slate-800 text-xs focus:ring-2 focus:ring-emerald-700 focus:outline-none cursor-pointer appearance-none"
                 >
-                  {children.map(child => {
-                    const childRegNo =
-                      child.examRegisterNumbers?.[selectedExamId] ||
-                      (child as any).examRegisterNos?.[selectedExamId] ||
-                      (child as any).examRegNo;
-                    return (
-                      <option key={child.id} value={child.id}>
-                        {child.nameEn} {child.nameMl ? `(${child.nameMl})` : ''} — Class {classesMap[child.classId] || child.classId} (Adm: {child.admissionNo}{childRegNo ? `, Reg: ${childRegNo}` : ''})
-                      </option>
-                    );
-                  })}
+                  {children.map(child => (
+                    <option key={child.id} value={child.id}>
+                      {child.nameEn || (child as any).name}
+                    </option>
+                  ))}
                 </select>
                 <ChevronDown className="w-4 h-4 text-emerald-800 absolute right-3 top-3 pointer-events-none" />
               </div>
@@ -668,19 +683,6 @@ export const ParentDashboard: React.FC = () => {
             >
               <Home className="w-4 h-4" />
               <span>{isMl ? 'ഹോം' : 'Home'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('about')}
-              className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
-                activeTab === 'about'
-                  ? 'bg-emerald-800 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
-              }`}
-            >
-              <Sparkles className="w-4 h-4 text-amber-300" />
-              <span>{isMl ? 'മദ്റസയെക്കുറിച്ച്' : 'About Madrasa'}</span>
             </button>
 
             <button
@@ -763,6 +765,19 @@ export const ParentDashboard: React.FC = () => {
               <PhoneCall className="w-4 h-4" />
               <span>{isMl ? 'ബന്ധപ്പെടുക' : 'Contact'}</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('about')}
+              className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
+                activeTab === 'about'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              }`}
+            >
+              <Sparkles className="w-4 h-4 text-amber-300" />
+              <span>About</span>
+            </button>
           </div>
 
           {/* TAB 1: HOME OVERVIEW VIEW */}
@@ -798,7 +813,7 @@ export const ParentDashboard: React.FC = () => {
                         {selectedChild.nameEn}
                       </div>
                       <div className="text-xs text-emerald-800 font-medium">
-                        Class {classesMap[selectedChild.classId] || selectedChild.classId} • Roll: {selectedChild.rollNo}
+                        Class: {(classesMap[selectedChild.classId] || selectedChild.classId || '').replace(/^Class\s*/i, '')} • Roll: {selectedChild.rollNo}
                       </div>
                     </div>
                   )}
@@ -841,9 +856,13 @@ export const ParentDashboard: React.FC = () => {
 
                   {/* Card 2: Attendance */}
                   {(() => {
-                    const totalWorkingDays = selectedChild?.attendance?.totalWorkingDays ?? 92;
+                    const childClassId = selectedChild?.classId || '';
+                    const classAttConfig = attendanceConfigs[childClassId];
                     const seed = selectedChild ? ((Number(selectedChild.rollNo || 1) * 3) % 4) : 1;
-                    const attendedDays = selectedChild?.attendance?.daysAttended ?? Math.max(84, totalWorkingDays - seed - 2);
+                    const totalWorkingDays = classAttConfig?.totalWorkingDays ?? selectedChild?.attendance?.totalWorkingDays ?? 92;
+                    const attendedDays = (selectedChild && classAttConfig?.studentDaysAttended?.[selectedChild.id] !== undefined)
+                      ? classAttConfig.studentDaysAttended[selectedChild.id]
+                      : (selectedChild?.attendance?.daysAttended ?? Math.max(84, totalWorkingDays - seed - 2));
                     const percentage = totalWorkingDays > 0 ? ((attendedDays / totalWorkingDays) * 100).toFixed(1) : '100.0';
 
                     return (
@@ -1032,7 +1051,7 @@ export const ParentDashboard: React.FC = () => {
                     <Sparkles className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="font-bold text-slate-900 text-sm">About Our Madrasa</h3>
+                    <h3 className="font-bold text-slate-900 text-sm">About</h3>
                     <p className="text-xs text-slate-500 mt-0.5">
                       KMEB affiliation, A+ accreditation, digital learning mission, and values.
                     </p>
@@ -1042,7 +1061,7 @@ export const ParentDashboard: React.FC = () => {
             </div>
           )}
 
-          {/* TAB 1.5: DEDICATED INTERNAL ABOUT MADRASA TAB */}
+          {/* TAB: DEDICATED INTERNAL ABOUT TAB */}
           {activeTab === 'about' && (
             <div className="space-y-6">
               {/* Institutional Profile & About Madrasa Section */}
@@ -1067,17 +1086,16 @@ export const ParentDashboard: React.FC = () => {
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-[10px] font-bold tracking-wider uppercase px-2.5 py-0.5 rounded-full bg-emerald-800/90 text-emerald-200 border border-emerald-700/60 flex items-center gap-1">
                             <Sparkles className="w-3 h-3 text-amber-300" />
-                            <span>{isMl ? 'സ്ഥാപന വിവരണം' : 'Institutional Overview'}</span>
+                            <span>Institutional Overview</span>
                           </span>
-                          <span className="text-emerald-400 text-xs">•</span>
-                          <span className="text-[11px] font-mono text-emerald-300 font-semibold">Reg: KEC-8492</span>
                         </div>
                         <h2 className="text-xl sm:text-2xl font-bold font-serif text-white tracking-tight">
-                          {isMl ? 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്' : 'Al-Madrasathul Islamiya Pallikkuth'}
+                          Al-Madrasathul Islamiya Pallikkuth
                         </h2>
-                        <h3 className="text-xs sm:text-sm font-bold text-emerald-200 font-serif mt-0.5">
-                          അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്
-                        </h3>
+                        {/* Affiliation Number Details in place of Malayalam translation */}
+                        <div className="text-xs sm:text-sm font-semibold text-emerald-200 font-mono mt-0.5 tracking-wider">
+                          Reg No: KMEB/MPM/026/M0161/19
+                        </div>
                         <p className="text-xs font-semibold text-emerald-300 tracking-wide mt-1">
                           Islamic Education &amp; Digital Learning
                         </p>
@@ -1096,21 +1114,15 @@ export const ParentDashboard: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Complete Institutional Description Text */}
-                  <div className="bg-white/5 backdrop-blur-xs p-5 sm:p-6 rounded-2xl border border-white/10 space-y-4">
+                  {/* Concise Mobile-Friendly Statement */}
+                  <div className="bg-white/5 backdrop-blur-xs p-5 sm:p-6 rounded-2xl border border-white/10 space-y-3">
                     <div className="text-xs uppercase font-bold tracking-wider text-emerald-300 flex items-center gap-2">
                       <BookOpen className="w-4 h-4" />
-                      <span>Official Institutional Statement</span>
+                      <span>OFFICIAL STATEMENT</span>
                     </div>
                     <p className="text-sm sm:text-base text-emerald-50 leading-relaxed font-sans">
-                      &ldquo;Al-Madrasathul Islamiya Pallikkuth is a KMEB-affiliated institution with A+ accreditation, committed to excellence in Islamic education through innovative teaching methods and modern educational technology. Prioritizing technical advancements and digital learning content, we strive to create an engaging, student-centered learning environment that nurtures Islamic values, academic excellence, moral character, and holistic development. Through the integration of traditional Islamic learning with modern digital resources, we work in partnership with parents and teachers to empower every student with knowledge, skills, and values for a brighter future.&rdquo;
+                      Al-Madrasathul Islamiya Pallikkuth (KMEB-affiliated, A+ Accredited) blends traditional Islamic values with modern educational technology. We partner with parents and teachers to create an engaging, student-centered digital learning environment that nurtures academic excellence, moral character, and holistic development.
                     </p>
-
-                    {isMl && (
-                      <p className="text-xs sm:text-sm text-emerald-200/95 leading-relaxed font-sans pt-3 border-t border-emerald-800/60">
-                        &ldquo;നൂതന ബോധനരീതികളിലൂടെയും ആധുനിക വിദ്യാഭ്യാസ സാങ്കേതികവിദ്യകളിലൂടെയും ഉന്നത ഇസ്ലാമിക വിദ്യാഭ്യാസം പകർന്നുനൽകുന്നതിൽ പ്രതിജ്ഞാബദ്ധമായ, A+ ഗ്രേഡ് അക്രഡിറ്റേഷനുള്ള KMEB അംഗീകൃത സ്ഥാപനമാണ് അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്. ഡിജിറ്റൽ പഠന സംവിധാനങ്ങൾക്കും സാങ്കേതിക മുന്നേറ്റങ്ങൾക്കും മുൻഗണന നൽകിക്കൊണ്ട് ഇസ്ലാമിക മൂല്യങ്ങൾ, പഠന മികവ്, സദ്സ്വഭാവം, സമഗ്ര വ്യക്തിത്വ വികസനം എന്നിവ വളർത്തിയെടുക്കുന്ന വിദ്യാർത്ഥികേന്ദ്രീകൃത പഠനാന്തരീക്ഷമാണ് ഞങ്ങൾ ഒരുക്കുന്നത്. പരമ്പരാഗത ഇസ്ലാമിക വിജ്ഞാനത്തെ ആധുനിക ഡിജിറ്റൽ സംവിധാനങ്ങളുമായി സംയോജിപ്പിച്ച്, രക്ഷാകർത്താക്കളുടെയും അധ്യാപകരുടെയും കൂട്ടായ പങ്കാളിത്തത്തിലൂടെ ഓരോ വിദ്യാർത്ഥിയെയും ശോഭനമായ ഭാവിക്കായി പ്രാപ്തരാക്കുന്നു.&rdquo;
-                      </p>
-                    )}
                   </div>
 
                   {/* 3 Core Highlight Pillars */}
@@ -1161,8 +1173,61 @@ export const ParentDashboard: React.FC = () => {
                       <span className="font-semibold text-white mt-0.5 block">Pallikkuth, Pattikkad P.O, Malappuram Dt.</span>
                     </div>
                     <div>
-                      <span className="text-[11px] text-emerald-400 font-bold block uppercase tracking-wider">Head of Institution</span>
-                      <span className="font-semibold text-white mt-0.5 block">Sadr Muallim ASLAM TK</span>
+                      <span className="text-[11px] text-emerald-400 font-bold block uppercase tracking-wider">Head of the Institution</span>
+                      <span className="font-semibold text-white mt-0.5 block text-sm font-bold text-amber-200">ASLAM TK</span>
+                    </div>
+                  </div>
+
+                  {/* NEW "FOLLOW US" SOCIAL MEDIA SECTION */}
+                  <div className="bg-white/5 backdrop-blur-xs p-5 sm:p-6 rounded-2xl border border-white/10 space-y-3.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-300 flex items-center gap-2">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                          <span>Follow us</span>
+                        </h3>
+                        <p className="text-xs text-emerald-100/80 mt-0.5">
+                          Connect with Al-Madrasathul Islamiya Pallikkuth on our official social media channels
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                      {/* Instagram Button */}
+                      <a
+                        href="https://www.instagram.com/ami.pallikkuth?vrfl=Nmo4cGxnaDU0YTg1"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-700 to-green-600 hover:from-emerald-600 hover:to-green-500 text-white font-bold text-xs shadow-sm hover:shadow transition border border-emerald-500/40 group"
+                      >
+                        <Instagram className="w-4 h-4 text-emerald-200 group-hover:scale-110 transition-transform" />
+                        <span>Instagram</span>
+                        <ExternalLink className="w-3.5 h-3.5 text-emerald-200/70 ml-auto" />
+                      </a>
+
+                      {/* Facebook Button */}
+                      <a
+                        href="https://www.facebook.com/share/1DfZmA6LPT/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-700 to-green-600 hover:from-emerald-600 hover:to-green-500 text-white font-bold text-xs shadow-sm hover:shadow transition border border-emerald-500/40 group"
+                      >
+                        <Facebook className="w-4 h-4 text-emerald-200 group-hover:scale-110 transition-transform" />
+                        <span>Facebook</span>
+                        <ExternalLink className="w-3.5 h-3.5 text-emerald-200/70 ml-auto" />
+                      </a>
+
+                      {/* YouTube Button */}
+                      <a
+                        href="https://youtube.com/@amipallikkuth?si=Upv5bhFgIIK9LWgT"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-700 to-green-600 hover:from-emerald-600 hover:to-green-500 text-white font-bold text-xs shadow-sm hover:shadow transition border border-emerald-500/40 group"
+                      >
+                        <Youtube className="w-4 h-4 text-emerald-200 group-hover:scale-110 transition-transform" />
+                        <span>YouTube</span>
+                        <ExternalLink className="w-3.5 h-3.5 text-emerald-200/70 ml-auto" />
+                      </a>
                     </div>
                   </div>
                 </div>
@@ -1174,19 +1239,60 @@ export const ParentDashboard: React.FC = () => {
           {activeTab === 'attendance' && (
             <div className="space-y-6">
               {(() => {
-                const totalWorkingDays = selectedChild?.attendance?.totalWorkingDays ?? 92;
+                const childClassId = selectedChild?.classId || '';
+                const classAttConfig = attendanceConfigs[childClassId];
+
                 const seed = selectedChild ? ((Number(selectedChild.rollNo || 1) * 3) % 4) : 1;
-                const attendedDays = selectedChild?.attendance?.daysAttended ?? Math.max(84, totalWorkingDays - seed - 2);
+                const totalWorkingDays = classAttConfig?.totalWorkingDays ?? selectedChild?.attendance?.totalWorkingDays ?? 92;
+                const attendedDays = (selectedChild && classAttConfig?.studentDaysAttended?.[selectedChild.id] !== undefined)
+                  ? classAttConfig.studentDaysAttended[selectedChild.id]
+                  : (selectedChild?.attendance?.daysAttended ?? Math.max(84, totalWorkingDays - seed - 2));
                 const leavesTaken = Math.max(0, totalWorkingDays - attendedDays);
                 const percentage = totalWorkingDays > 0 ? ((attendedDays / totalWorkingDays) * 100).toFixed(1) : '100.0';
 
-                const monthlyRecords = [
-                  { month: isMl ? 'ജൂൺ 2026' : 'June 2026', working: 18, attended: 18, leaves: 0, pct: '100%' },
-                  { month: isMl ? 'ജൂലൈ 2026' : 'July 2026', working: 22, attended: 21, leaves: 1, pct: '95.5%' },
-                  { month: isMl ? 'ഓഗസ്റ്റ് 2026' : 'August 2026', working: 20, attended: 19, leaves: 1, pct: '95.0%' },
-                  { month: isMl ? 'സെപ്റ്റംബർ 2026' : 'September 2026', working: 20, attended: 19, leaves: 1, pct: '95.0%' },
-                  { month: isMl ? 'ഒക്ടോബർ 2026' : 'October 2026', working: 12, attended: 11, leaves: 1, pct: '91.7%' },
+                const baseMonths = [
+                  { key: '2026-06', month: isMl ? 'ജൂൺ 2026' : 'June 2026', working: 18 },
+                  { key: '2026-07', month: isMl ? 'ജൂലൈ 2026' : 'July 2026', working: 22 },
+                  { key: '2026-08', month: isMl ? 'ഓഗസ്റ്റ് 2026' : 'August 2026', working: 20 },
+                  { key: '2026-09', month: isMl ? 'സെപ്റ്റംബർ 2026' : 'September 2026', working: 20 },
+                  { key: '2026-10', month: isMl ? 'ഒക്ടോബർ 2026' : 'October 2026', working: 18 },
                 ];
+
+                const totalBenchmark = baseMonths.reduce((sum, m) => sum + m.working, 0);
+                const effectiveTotalWorking = Math.max(totalWorkingDays, totalBenchmark);
+
+                const records = classAttConfig?.dailyRecords || {};
+
+                let remainingAttended = attendedDays;
+                const monthlyRecords = baseMonths.map((m, idx) => {
+                  const monthDateKeys = Object.keys(records).filter(k => k.startsWith(m.key));
+                  let mAttended: number;
+
+                  if (monthDateKeys.length > 0) {
+                    mAttended = monthDateKeys.filter(k => records[k]?.statusMap?.[selectedChild?.id || ''] !== false).length;
+                    const unrecorded = Math.max(0, m.working - monthDateKeys.length);
+                    const estRemainder = Math.min(unrecorded, Math.round(remainingAttended * (m.working / effectiveTotalWorking)));
+                    mAttended = Math.min(m.working, mAttended + estRemainder);
+                  } else {
+                    if (idx === baseMonths.length - 1) {
+                      mAttended = Math.min(m.working, Math.max(0, remainingAttended));
+                    } else {
+                      mAttended = Math.min(m.working, Math.round((attendedDays * m.working) / effectiveTotalWorking));
+                      remainingAttended = Math.max(0, remainingAttended - mAttended);
+                    }
+                  }
+
+                  const mLeaves = Math.max(0, m.working - mAttended);
+                  const mPct = m.working > 0 ? ((mAttended / m.working) * 100).toFixed(1) + '%' : '100%';
+                  return {
+                    month: m.month,
+                    working: m.working,
+                    attended: mAttended,
+                    leaves: mLeaves,
+                    pct: mPct,
+                    status: Number(mPct.replace('%', '')) >= 80 ? 'Good' : 'Needs Regularity',
+                  };
+                });
 
                 return (
                   <div className="space-y-6">
@@ -1201,7 +1307,7 @@ export const ParentDashboard: React.FC = () => {
                             </h2>
                           </div>
                           <p className="text-xs text-slate-500 mt-1">
-                            Official attendance log for {selectedChild?.nameEn} (Class {classesMap[selectedChild?.classId || ''] || selectedChild?.classId})
+                            Official attendance log for {selectedChild?.nameEn} (Class: {(classesMap[selectedChild?.classId || ''] || selectedChild?.classId || '').replace(/^Class\s*/i, '')})
                           </p>
                         </div>
 
@@ -1281,29 +1387,35 @@ export const ParentDashboard: React.FC = () => {
                         <span className="text-xs text-slate-500">Morning Session Records</span>
                       </div>
 
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs border-collapse">
+                      <div className="overflow-x-auto w-full scrollbar-thin">
+                        <table className="w-full text-left text-xs min-w-[600px] border-collapse">
                           <thead>
                             <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                              <th className="py-2.5 px-4">Month</th>
-                              <th className="py-2.5 px-4 text-center">Working Days</th>
-                              <th className="py-2.5 px-4 text-center">Days Present</th>
-                              <th className="py-2.5 px-4 text-center">Leaves</th>
-                              <th className="py-2.5 px-4 text-right">Attendance %</th>
-                              <th className="py-2.5 px-4 text-center">Status</th>
+                              <th className="py-2.5 px-4 whitespace-nowrap">Month</th>
+                              <th className="py-2.5 px-4 text-center whitespace-nowrap">Working Days</th>
+                              <th className="py-2.5 px-4 text-center whitespace-nowrap">Days Present</th>
+                              <th className="py-2.5 px-4 text-center whitespace-nowrap">Leaves</th>
+                              <th className="py-2.5 px-4 text-right whitespace-nowrap">Attendance %</th>
+                              <th className="py-2.5 px-4 text-center whitespace-nowrap">Status</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                             {monthlyRecords.map((rec, i) => (
                               <tr key={i} className="hover:bg-slate-50 transition">
-                                <td className="py-3 px-4 font-bold text-slate-800">{rec.month}</td>
+                                <td className="py-3 px-4 font-bold text-slate-800 whitespace-nowrap">{rec.month}</td>
                                 <td className="py-3 px-4 text-center font-mono text-slate-600">{rec.working}</td>
                                 <td className="py-3 px-4 text-center font-mono font-bold text-emerald-900">{rec.attended}</td>
                                 <td className="py-3 px-4 text-center font-mono text-amber-800">{rec.leaves}</td>
                                 <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">{rec.pct}</td>
                                 <td className="py-3 px-4 text-center">
-                                  <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                                    Good
+                                  <span
+                                    className={`inline-block text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
+                                      rec.status === 'Good'
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : 'bg-amber-100 text-amber-800'
+                                    }`}
+                                  >
+                                    {rec.status}
                                   </span>
                                 </td>
                               </tr>

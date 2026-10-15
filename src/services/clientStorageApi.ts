@@ -3476,13 +3476,16 @@ export class ClientStorageApi {
 
       if (attendanceClassMatch && method === 'POST') {
         const cId = attendanceClassMatch[1];
-        const { totalWorkingDays, studentDaysAttended } = bodyData;
+        const { totalWorkingDays, studentDaysAttended, dailyRecords, monthlyStats } = bodyData;
         if (!this.db.attendanceConfigs) this.db.attendanceConfigs = [];
         const existingIdx = this.db.attendanceConfigs.findIndex(c => c.classId === cId);
+        const existing = existingIdx >= 0 ? this.db.attendanceConfigs[existingIdx] : null;
         const config: ClassAttendanceConfig = {
           classId: cId,
-          totalWorkingDays: Number(totalWorkingDays) || 0,
-          studentDaysAttended: studentDaysAttended || {},
+          totalWorkingDays: Number(totalWorkingDays) || (existing?.totalWorkingDays ?? 88),
+          studentDaysAttended: studentDaysAttended || existing?.studentDaysAttended || {},
+          dailyRecords: dailyRecords || existing?.dailyRecords || {},
+          monthlyStats: monthlyStats || existing?.monthlyStats || {},
           updatedAt: new Date().toISOString(),
         };
         if (existingIdx >= 0) {

@@ -290,10 +290,27 @@ export interface FeePayment {
   createdAt: string;
 }
 
+export interface DailyAttendanceRecord {
+  date: string; // "YYYY-MM-DD"
+  presentStudentIds: string[];
+  absentStudentIds: string[];
+  statusMap: Record<string, boolean>; // studentId -> true (Present) / false (Absent)
+  markedAt?: string;
+  markedBy?: string;
+}
+
+export interface MonthlyAttendanceStat {
+  month: string; // e.g., "June 2026", "July 2026"
+  workingDays: number;
+  studentAttended: Record<string, number>; // studentId -> days attended
+}
+
 export interface ClassAttendanceConfig {
   classId: string;
   totalWorkingDays: number;
   studentDaysAttended: Record<string, number>; // studentId -> days attended
+  dailyRecords?: Record<string, DailyAttendanceRecord>; // date ("YYYY-MM-DD") -> record
+  monthlyStats?: Record<string, MonthlyAttendanceStat>; // month key -> stat
   updatedAt?: string;
 }
 
