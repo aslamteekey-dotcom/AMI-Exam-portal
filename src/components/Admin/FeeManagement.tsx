@@ -874,7 +874,10 @@ export const FeeManagement: React.FC = () => {
                 <h2 className="text-xs font-bold text-emerald-900">
                   അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്
                 </h2>
-                <p className="text-[10px] text-slate-500">
+                <div className="text-[10px] font-semibold text-emerald-800 tracking-wide mt-0.5">
+                  Islamic Education &amp; Digital Learning
+                </div>
+                <p className="text-[10px] text-slate-500 mt-0.5">
                   Reg. No: KEC-8492 • Official Fee Receipt (2026–2027)
                 </p>
               </div>

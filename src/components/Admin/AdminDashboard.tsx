@@ -149,6 +149,9 @@ export const AdminDashboard: React.FC = () => {
             <p className="text-xs text-emerald-200 mt-1">
               Principal Administrator Portal • Al-Madrasathul Islamiya Pallikkuth
             </p>
+            <p className="text-[11px] text-emerald-300 font-medium">
+              Islamic Education &amp; Digital Learning
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">

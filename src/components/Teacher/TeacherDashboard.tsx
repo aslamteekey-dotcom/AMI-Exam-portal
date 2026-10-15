@@ -428,6 +428,9 @@ export const TeacherDashboard: React.FC = () => {
             <p className="text-xs text-emerald-200 mt-1">
               {isMl ? 'ടീച്ചർ പോർട്ടൽ • അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്' : 'Teacher Portal • Al-Madrasathul Islamiya Pallikkuth'}
             </p>
+            <p className="text-[11px] text-emerald-300 font-medium">
+              Islamic Education &amp; Digital Learning
+            </p>
           </div>
 
           {/* Exam Selector */}

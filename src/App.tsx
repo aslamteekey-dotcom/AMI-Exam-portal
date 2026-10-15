@@ -43,23 +43,15 @@ const AppContent: React.FC = () => {
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="bg-white border-t border-slate-200 py-6 mt-12 print:hidden text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-lg bg-emerald-800 text-white flex items-center justify-center">
-              <GraduationCap className="w-3.5 h-3.5" />
-            </div>
-            <span className="font-bold text-slate-800 font-serif">
-              {lang === 'ml' ? 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്' : 'Al-Madrasathul Islamiya Pallikkuth'}
-            </span>
-          </div>
-
-          <div className="text-[11px] text-slate-400">
-            {lang === 'ml'
-              ? 'അധ്യയന വർഷം: 2026–2027 • പരീക്ഷാ മൂല്യനിർണ്ണയ സംവിധാനം'
-              : 'Academic session 2026-2027 . Examination system'}
-          </div>
+      {/* Global Footer */}
+      <footer className="bg-white border-t border-slate-200 py-6 mt-12 print:hidden text-xs text-slate-600">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-1">
+          <p className="font-semibold text-slate-800 text-xs sm:text-sm tracking-wide">
+            KMEB Affiliated · Mi'yar Grading A+ Accredited Institution
+          </p>
+          <p className="text-[11px] sm:text-xs text-slate-500 font-medium">
+            Academic Year 2026–2027 · Knowledge | Values | Innovation
+          </p>
         </div>
       </footer>
     </div>

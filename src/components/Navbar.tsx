@@ -37,7 +37,7 @@ export const Navbar: React.FC = () => {
                 </span>
               </div>
               <div className="text-[11px] text-slate-500 font-medium leading-none mt-0.5">
-                {lang === 'ml' ? 'പരീക്ഷാ & പുരോഗതി രേഖാ നിർവ്വഹണം' : 'Examination & Progress Report System'}
+                Islamic Education &amp; Digital Learning
               </div>
             </div>
           </div>

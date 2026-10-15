@@ -50,6 +50,7 @@ import { db } from '../../services/firebase';
 
 export type ParentPortalTab =
   | 'home'
+  | 'about'
   | 'attendance'
   | 'report'
   | 'fees'
@@ -491,6 +492,9 @@ export const ParentDashboard: React.FC = () => {
             <p className="text-xs text-emerald-200 mt-1">
               {t.parentRole} • Al-Madrasathul Islamiya Pallikkuth
             </p>
+            <p className="text-[11px] text-emerald-300 font-medium">
+              Islamic Education &amp; Digital Learning
+            </p>
             {selectedChild && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span className="bg-emerald-950/80 border border-emerald-400/50 text-emerald-200 px-3 py-1 rounded-full text-xs font-mono font-bold flex items-center gap-1.5 shadow-2xs max-w-full">
@@ -651,7 +655,7 @@ export const ParentDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* View Mode Toggle: All 7 Portal Navigation Tabs with Mobile Horizontal Scroll */}
+          {/* View Mode Toggle: All Portal Navigation Tabs with Mobile Horizontal Scroll */}
           <div className="flex items-center gap-1.5 sm:gap-2 border-b border-slate-200 pb-2 overflow-x-auto no-scrollbar print:hidden">
             <button
               type="button"
@@ -664,6 +668,19 @@ export const ParentDashboard: React.FC = () => {
             >
               <Home className="w-4 h-4" />
               <span>{isMl ? 'ഹോം' : 'Home'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('about')}
+              className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
+                activeTab === 'about'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              }`}
+            >
+              <Sparkles className="w-4 h-4 text-amber-300" />
+              <span>{isMl ? 'മദ്റസയെക്കുറിച്ച്' : 'About Madrasa'}</span>
             </button>
 
             <button
@@ -931,7 +948,7 @@ export const ParentDashboard: React.FC = () => {
               </div>
 
               {/* Quick Action Navigation Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 <div
                   onClick={() => setActiveTab('attendance')}
                   className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
@@ -948,6 +965,36 @@ export const ParentDashboard: React.FC = () => {
                 </div>
 
                 <div
+                  onClick={() => setActiveTab('fees')}
+                  className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-teal-100 text-teal-800 flex items-center justify-center shrink-0">
+                    <CreditCard className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">Madrasa Fees &amp; Receipts</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Track 12-month installment schedule, download payment vouchers and receipts.
+                    </p>
+                  </div>
+                </div>
+
+                <div
+                  onClick={() => setActiveTab('report')}
+                  className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center shrink-0">
+                    <Award className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">Progress Report Card</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      View subject marks, grand totals, KMEB grades, and principal verification.
+                    </p>
+                  </div>
+                </div>
+
+                <div
                   onClick={() => setActiveTab('news')}
                   className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
                 >
@@ -955,7 +1002,7 @@ export const ParentDashboard: React.FC = () => {
                     <Newspaper className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="font-bold text-slate-900 text-sm">Madrasa News & Circulars</h3>
+                    <h3 className="font-bold text-slate-900 text-sm">Madrasa News &amp; Circulars</h3>
                     <p className="text-xs text-slate-500 mt-0.5">
                       Stay updated with academic events, Milad fest, and official school notices.
                     </p>
@@ -974,6 +1021,149 @@ export const ParentDashboard: React.FC = () => {
                     <p className="text-xs text-slate-500 mt-0.5">
                       Urgent messages, exam hall ticket alerts, and fee payment receipts.
                     </p>
+                  </div>
+                </div>
+
+                <div
+                  onClick={() => setActiveTab('about')}
+                  className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-emerald-900 text-amber-300 flex items-center justify-center shrink-0">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">About Our Madrasa</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      KMEB affiliation, A+ accreditation, digital learning mission, and values.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 1.5: DEDICATED INTERNAL ABOUT MADRASA TAB */}
+          {activeTab === 'about' && (
+            <div className="space-y-6">
+              {/* Institutional Profile & About Madrasa Section */}
+              <div className="bg-gradient-to-br from-emerald-950 via-emerald-900 to-emerald-950 text-white rounded-3xl p-6 sm:p-8 shadow-md border border-emerald-800/80 relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
+                  <GraduationCap className="w-64 h-64 text-emerald-300" />
+                </div>
+
+                <div className="relative z-10 space-y-6">
+                  {/* Bismillah Header */}
+                  <div className="text-center font-serif text-emerald-300 text-base sm:text-lg" dir="rtl">
+                    بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
+                  </div>
+
+                  {/* Top Header & Badges */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-emerald-800/80 pb-5">
+                    <div className="flex items-center gap-3.5">
+                      <div className="w-14 h-14 rounded-2xl bg-white/10 flex items-center justify-center text-emerald-200 shadow-inner shrink-0">
+                        <GraduationCap className="w-8 h-8" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-[10px] font-bold tracking-wider uppercase px-2.5 py-0.5 rounded-full bg-emerald-800/90 text-emerald-200 border border-emerald-700/60 flex items-center gap-1">
+                            <Sparkles className="w-3 h-3 text-amber-300" />
+                            <span>{isMl ? 'സ്ഥാപന വിവരണം' : 'Institutional Overview'}</span>
+                          </span>
+                          <span className="text-emerald-400 text-xs">•</span>
+                          <span className="text-[11px] font-mono text-emerald-300 font-semibold">Reg: KEC-8492</span>
+                        </div>
+                        <h2 className="text-xl sm:text-2xl font-bold font-serif text-white tracking-tight">
+                          {isMl ? 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്' : 'Al-Madrasathul Islamiya Pallikkuth'}
+                        </h2>
+                        <h3 className="text-xs sm:text-sm font-bold text-emerald-200 font-serif mt-0.5">
+                          അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്
+                        </h3>
+                        <p className="text-xs font-semibold text-emerald-300 tracking-wide mt-1">
+                          Islamic Education &amp; Digital Learning
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 sm:self-start">
+                      <span className="bg-emerald-900/90 border border-emerald-400/50 text-emerald-200 px-3.5 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 shadow-xs">
+                        <ShieldCheck className="w-4 h-4 text-emerald-300" />
+                        <span>KMEB-affiliated</span>
+                      </span>
+                      <span className="bg-amber-400/20 border border-amber-300/50 text-amber-200 px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-xs">
+                        <Award className="w-4 h-4 text-amber-300" />
+                        <span>A+ Accreditation</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Complete Institutional Description Text */}
+                  <div className="bg-white/5 backdrop-blur-xs p-5 sm:p-6 rounded-2xl border border-white/10 space-y-4">
+                    <div className="text-xs uppercase font-bold tracking-wider text-emerald-300 flex items-center gap-2">
+                      <BookOpen className="w-4 h-4" />
+                      <span>Official Institutional Statement</span>
+                    </div>
+                    <p className="text-sm sm:text-base text-emerald-50 leading-relaxed font-sans">
+                      &ldquo;Al-Madrasathul Islamiya Pallikkuth is a KMEB-affiliated institution with A+ accreditation, committed to excellence in Islamic education through innovative teaching methods and modern educational technology. Prioritizing technical advancements and digital learning content, we strive to create an engaging, student-centered learning environment that nurtures Islamic values, academic excellence, moral character, and holistic development. Through the integration of traditional Islamic learning with modern digital resources, we work in partnership with parents and teachers to empower every student with knowledge, skills, and values for a brighter future.&rdquo;
+                    </p>
+
+                    {isMl && (
+                      <p className="text-xs sm:text-sm text-emerald-200/95 leading-relaxed font-sans pt-3 border-t border-emerald-800/60">
+                        &ldquo;നൂതന ബോധനരീതികളിലൂടെയും ആധുനിക വിദ്യാഭ്യാസ സാങ്കേതികവിദ്യകളിലൂടെയും ഉന്നത ഇസ്ലാമിക വിദ്യാഭ്യാസം പകർന്നുനൽകുന്നതിൽ പ്രതിജ്ഞാബദ്ധമായ, A+ ഗ്രേഡ് അക്രഡിറ്റേഷനുള്ള KMEB അംഗീകൃത സ്ഥാപനമാണ് അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്. ഡിജിറ്റൽ പഠന സംവിധാനങ്ങൾക്കും സാങ്കേതിക മുന്നേറ്റങ്ങൾക്കും മുൻഗണന നൽകിക്കൊണ്ട് ഇസ്ലാമിക മൂല്യങ്ങൾ, പഠന മികവ്, സദ്സ്വഭാവം, സമഗ്ര വ്യക്തിത്വ വികസനം എന്നിവ വളർത്തിയെടുക്കുന്ന വിദ്യാർത്ഥികേന്ദ്രീകൃത പഠനാന്തരീക്ഷമാണ് ഞങ്ങൾ ഒരുക്കുന്നത്. പരമ്പരാഗത ഇസ്ലാമിക വിജ്ഞാനത്തെ ആധുനിക ഡിജിറ്റൽ സംവിധാനങ്ങളുമായി സംയോജിപ്പിച്ച്, രക്ഷാകർത്താക്കളുടെയും അധ്യാപകരുടെയും കൂട്ടായ പങ്കാളിത്തത്തിലൂടെ ഓരോ വിദ്യാർത്ഥിയെയും ശോഭനമായ ഭാവിക്കായി പ്രാപ്തരാക്കുന്നു.&rdquo;
+                      </p>
+                    )}
+                  </div>
+
+                  {/* 3 Core Highlight Pillars */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-1 text-xs">
+                    <div className="bg-emerald-950/80 p-4 rounded-xl border border-emerald-800/60">
+                      <div className="font-bold text-amber-300 flex items-center gap-1.5 mb-1.5 text-xs uppercase tracking-wider">
+                        <Award className="w-4 h-4" />
+                        <span>KMEB A+ Accredited</span>
+                      </div>
+                      <p className="text-xs text-emerald-200/90 leading-relaxed">
+                        Certified with A+ grade by Kerala Madrasa Education Board for superior academic, ethical, and organizational standards.
+                      </p>
+                    </div>
+
+                    <div className="bg-emerald-950/80 p-4 rounded-xl border border-emerald-800/60">
+                      <div className="font-bold text-emerald-300 flex items-center gap-1.5 mb-1.5 text-xs uppercase tracking-wider">
+                        <Sparkles className="w-4 h-4" />
+                        <span>Modern Educational Tech</span>
+                      </div>
+                      <p className="text-xs text-emerald-200/90 leading-relaxed">
+                        Digital learning content, multimedia classrooms, and computerized evaluation and mark management systems.
+                      </p>
+                    </div>
+
+                    <div className="bg-emerald-950/80 p-4 rounded-xl border border-emerald-800/60">
+                      <div className="font-bold text-teal-300 flex items-center gap-1.5 mb-1.5 text-xs uppercase tracking-wider">
+                        <ShieldCheck className="w-4 h-4" />
+                        <span>Values &amp; Character</span>
+                      </div>
+                      <p className="text-xs text-emerald-200/90 leading-relaxed">
+                        Nurturing deep Islamic moral values (akhlaq), Tajweed recitation, Subhi prayer habits, and active parent-teacher partnership.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Institutional Contact & Credentials Info Box */}
+                  <div className="bg-white/10 rounded-2xl p-4 sm:p-5 border border-white/10 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs text-emerald-100">
+                    <div>
+                      <span className="text-[11px] text-emerald-400 font-bold block uppercase tracking-wider">Affiliation</span>
+                      <span className="font-semibold text-white mt-0.5 block">Kerala Madrasa Education Board (KMEB)</span>
+                    </div>
+                    <div>
+                      <span className="text-[11px] text-emerald-400 font-bold block uppercase tracking-wider">Accreditation</span>
+                      <span className="font-semibold text-white mt-0.5 block">Mi'yar Grading A+ Accredited</span>
+                    </div>
+                    <div>
+                      <span className="text-[11px] text-emerald-400 font-bold block uppercase tracking-wider">Campus Location</span>
+                      <span className="font-semibold text-white mt-0.5 block">Pallikkuth, Pattikkad P.O, Malappuram Dt.</span>
+                    </div>
+                    <div>
+                      <span className="text-[11px] text-emerald-400 font-bold block uppercase tracking-wider">Head of Institution</span>
+                      <span className="font-semibold text-white mt-0.5 block">Sadr Muallim ASLAM TK</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1626,8 +1816,21 @@ export const ParentDashboard: React.FC = () => {
                       <h4 className="text-sm font-bold text-emerald-200 mt-0.5">
                         അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്
                       </h4>
-                      <p className="text-xs text-emerald-300/80 font-mono mt-1">
-                        Registration No: KEC-8492 • Kerala Islamic Education Board
+                      <div className="flex flex-wrap items-center gap-2 mt-2">
+                        <span className="bg-emerald-900/90 border border-emerald-400/50 text-emerald-200 px-2.5 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1 shadow-2xs">
+                          <ShieldCheck className="w-3 h-3 text-emerald-300" />
+                          <span>KMEB-affiliated</span>
+                        </span>
+                        <span className="bg-amber-400/20 border border-amber-300/50 text-amber-200 px-2.5 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1 shadow-2xs">
+                          <Award className="w-3 h-3 text-amber-300" />
+                          <span>A+ Accreditation</span>
+                        </span>
+                        <span className="text-xs text-emerald-300/80 font-mono">
+                          Reg: KEC-8492
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-emerald-100/90 leading-relaxed mt-2 max-w-2xl">
+                        Committed to excellence in Islamic education through innovative teaching methods, modern educational technology, and student-centered moral development.
                       </p>
                     </div>
 
@@ -1888,7 +2091,10 @@ export const ParentDashboard: React.FC = () => {
                 <h2 className="text-xs font-bold text-emerald-900">
                   അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്
                 </h2>
-                <p className="text-[10px] text-slate-500">
+                <div className="text-[10px] font-semibold text-emerald-800 tracking-wide mt-0.5">
+                  Islamic Education &amp; Digital Learning
+                </div>
+                <p className="text-[10px] text-slate-500 mt-0.5">
                   Reg. No: KEC-8492 • Official Fee Receipt (2026–2027)
                 </p>
               </div>
