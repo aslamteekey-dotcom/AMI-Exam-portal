@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Navbar } from './components/Navbar';
 import { LoginForm } from './components/Auth/LoginForm';
@@ -10,6 +10,10 @@ import { ErrorBoundary } from './components/Common/ErrorBoundary';
 
 const AppContent: React.FC = () => {
   const { user, isLoading, lang, t } = useAuth();
+
+  useEffect(() => {
+    document.title = 'AMI Pallikkuth';
+  }, []);
 
   if (isLoading) {
     return (
