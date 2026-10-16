@@ -9,6 +9,9 @@ import {
   TUITION_FEE_MONTHS,
   FeePayment,
   ClassAttendanceConfig,
+  NewsItem,
+  NotificationItem,
+  DEFAULT_NEWS_ITEMS,
 } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
 import {
@@ -62,31 +65,6 @@ export type ParentPortalTab =
   | 'notification'
   | 'contact';
 
-interface NewsItem {
-  id: string;
-  titleEn: string;
-  titleMl: string;
-  categoryEn: string;
-  categoryMl: string;
-  date: string;
-  summaryEn: string;
-  summaryMl: string;
-  contentEn: string;
-  contentMl: string;
-  author: string;
-  isImportant?: boolean;
-}
-
-interface NotificationItem {
-  id: string;
-  titleEn: string;
-  titleMl: string;
-  descEn: string;
-  descMl: string;
-  time: string;
-  type: 'exam' | 'fee' | 'circular' | 'academic';
-  read: boolean;
-}
 
 export const ParentDashboard: React.FC = () => {
   const { user, fetchWithAuth, lang, t } = useAuth();
@@ -146,7 +124,8 @@ export const ParentDashboard: React.FC = () => {
     },
   ]);
 
-  // Selected news item for modal
+  // News State
+  const [newsList, setNewsList] = useState<NewsItem[]>(DEFAULT_NEWS_ITEMS);
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
   const [newsFilter, setNewsFilter] = useState<'all' | 'academic' | 'events' | 'general'>('all');
 
@@ -327,6 +306,22 @@ export const ParentDashboard: React.FC = () => {
       unsubs.push(unsubAttendance);
     } catch (e) {
       console.warn('Real-time attendance listener error in ParentDashboard:', e);
+    }
+
+    // 5. Real-time Firestore listener for news & announcements
+    try {
+      const unsubNews = onSnapshot(collection(db, 'news'), snapshot => {
+        if (!snapshot.empty) {
+          const remoteNews = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as NewsItem));
+          const existingIds = new Set(remoteNews.map(n => n.id));
+          const combined = [...remoteNews, ...DEFAULT_NEWS_ITEMS.filter(n => !existingIds.has(n.id))];
+          combined.sort((a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime());
+          setNewsList(combined);
+        }
+      });
+      unsubs.push(unsubNews);
+    } catch (e) {
+      console.warn('Real-time news listener error in ParentDashboard:', e);
     }
 
     const handleStudentsUpdated = (e: any) => {
@@ -1687,61 +1682,7 @@ export const ParentDashboard: React.FC = () => {
 
                 {/* News Cards Feed */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-5">
-                  {[
-                    {
-                      id: 'news-1',
-                      titleEn: 'Half-Yearly Examination 2026–2027 Schedule & Progress Card Release',
-                      titleMl: 'അർദ്ധവാർഷിക പരീക്ഷ 2026–2027 ടൈംടേബിളും പുരോഗതി രേഖയും',
-                      categoryEn: 'Academic',
-                      categoryMl: 'പരീക്ഷാ നിർവ്വഹണം',
-                      date: '12 Oct 2026',
-                      isImportant: true,
-                      author: 'Principal Office',
-                      summaryEn: 'Valuation of written and oral assessment components completed. Progress reports are available digitally in this portal.',
-                      summaryMl: 'എഴുത്തുപരീക്ഷകളുടെയും വാചിക പരീക്ഷകളുടെയും മൂല്യനിർണ്ണയം പൂർത്തിയായി. പുരോഗതി രേഖകൾ പോർട്ടലിൽ ലഭ്യമാണ്.',
-                      contentEn: 'The Half-Yearly examinations for all grades have completed successfully. Students and parents can access official signed evaluation cards via this portal. For any clarification regarding component marks, please meet the respective class teacher.',
-                      contentMl: 'എല്ലാ ക്ലാസ്സുകളിലെയും അർദ്ധവാർഷിക പരീക്ഷകൾ വിജയകരമായി പൂർത്തിയായി. രക്ഷിതാക്കൾക്ക് പ്രോഗ്രസ്സ് റിപ്പോർട്ട് കാർഡുകൾ ഓൺലൈനായി കാണാം. സംശയങ്ങൾക്ക് ക്ലാസ് അധ്യാപകരുമായി ബന്ധപ്പെടുക.',
-                    },
-                    {
-                      id: 'news-2',
-                      titleEn: 'Rabi’ al-Awwal Milad Conference & Student Talent Fest',
-                      titleMl: 'റബീഉൽ അവ്വൽ മീലാദ് സമ്മേളനവും വിദ്യാർത്ഥി പ്രതിഭാ മേളയും',
-                      categoryEn: 'Events',
-                      categoryMl: 'ഇസ്ലാമിക പരിപാടികൾ',
-                      date: '28 Sep 2026',
-                      author: 'Arts & Cultural Committee',
-                      summaryEn: 'Annual Qira’at, Hifz, Islamic Quiz, and Arabic calligraphy competitions conducted with active participation of all students.',
-                      summaryMl: 'ഖിറാഅത്ത്, ഹിഫ്ള്, ഇസ്ലാമിക് ക്വിസ്, അറബിക് കാലിഗ്രാഫി മത്സരങ്ങൾ ഭംഗിയായി നടന്നു.',
-                      contentEn: 'Al-Madrasathul Islamiya Pallikkuth celebrated Milad-un-Nabi with great enthusiasm. Students showcased outstanding talents in Quran recitation, Elocution, and Islamic quiz competitions.',
-                      contentMl: 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്തിൽ മീലാദ് ആഘോഷവും വിവിധ കലാ മത്സരങ്ങളും സംഘടിപ്പിച്ചു. നിരവധി വിദ്യാർത്ഥികൾ സമ്മാനങ്ങൾ കരസ്ഥമാക്കി.',
-                    },
-                    {
-                      id: 'news-3',
-                      titleEn: 'Term 1 Parent-Teacher Consultative Meeting (PTM)',
-                      titleMl: 'ഒന്നാം പാദ രക്ഷാകർതൃ-അധ്യാപക സംഗമം (PTM)',
-                      categoryEn: 'Academic',
-                      categoryMl: 'രക്ഷാകർതൃ മീറ്റിംഗ്',
-                      date: '15 Sep 2026',
-                      author: 'Management Committee',
-                      summaryEn: 'Constructive review on student punctuality, Subhi prayer habits, and moral development with class teachers.',
-                      summaryMl: 'വിദ്യാർത്ഥികളുടെ പഠന പുരോഗതിയും സുബ്ഹി നമസ്കാര ശീലവും ചർച്ച ചെയ്യുന്നതിനായി യോഗം ചേർന്നു.',
-                      contentEn: 'The General Body of parents gathered at the Madrasa Auditorium. Key discussions centered on cultivating Tajweed practice at home and supporting students in their daily lessons.',
-                      contentMl: 'മദ്റസ ഓഡിറ്റോറിയത്തിൽ ചേർന്ന രക്ഷാകർതൃ സംഗമത്തിൽ വിദ്യാർത്ഥികളുടെ പഠന നിലവാരം ഉയർത്തുന്നതിനുള്ള നിർദ്ദേശങ്ങൾ ചർച്ച ചെയ്തു.',
-                    },
-                    {
-                      id: 'news-4',
-                      titleEn: 'Madrasa Timing & Morning Assembly Uniform Code',
-                      titleMl: 'മദ്റസ സമയക്രമവും അസംബ്ലി മാർഗ്ഗനിർദ്ദേശങ്ങളും',
-                      categoryEn: 'General',
-                      categoryMl: 'ഭരണനിർവ്വഹണം',
-                      date: '01 Aug 2026',
-                      author: 'Sadr Muallim',
-                      summaryEn: 'Morning assembly starts promptly at 07:15 AM. Proper Islamic white attire and caps are mandatory for all students.',
-                      summaryMl: 'രാവിലെ 07:15 ന് കൃത്യമായി അസംബ്ലി ആരംഭിക്കും. വെള്ള വസ്ത്രവും തൊപ്പിയും നിർബന്ധമാണ്.',
-                      contentEn: 'Parents are requested to ensure students arrive at Madrasa by 07:10 AM with necessary books, slate/notebooks, and in proper clean dress.',
-                      contentMl: 'കുട്ടികളെ കൃത്യസമയത്ത് മദ്റസയിൽ എത്തിക്കാനും യൂണിഫോമും പാഠപുസ്തകങ്ങളും ഉറപ്പുവരുത്താനും രക്ഷിതാക്കൾ ശ്രദ്ധിക്കുക.',
-                    },
-                  ]
+                  {newsList
                     .filter(item => newsFilter === 'all' || item.categoryEn.toLowerCase() === newsFilter)
                     .map(item => (
                       <div

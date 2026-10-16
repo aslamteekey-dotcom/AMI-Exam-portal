@@ -377,3 +377,90 @@ export function assignClassSequentialRollNumbers<T extends { id?: string; gender
 
   return updatedStudents;
 }
+
+export interface NewsItem {
+  id: string;
+  titleEn: string;
+  titleMl: string;
+  categoryEn: string;
+  categoryMl: string;
+  date: string;
+  summaryEn: string;
+  summaryMl: string;
+  contentEn: string;
+  contentMl: string;
+  author: string;
+  isImportant?: boolean;
+  createdAt?: string;
+}
+
+export interface NotificationItem {
+  id: string;
+  titleEn: string;
+  titleMl: string;
+  descEn: string;
+  descMl: string;
+  time: string;
+  type: 'exam' | 'fee' | 'circular' | 'academic';
+  read: boolean;
+}
+
+export const DEFAULT_NEWS_ITEMS: NewsItem[] = [
+  {
+    id: 'news-1',
+    titleEn: 'Half-Yearly Examination 2026–2027 Schedule & Progress Card Release',
+    titleMl: 'അർദ്ധവാർഷിക പരീക്ഷ 2026–2027 ടൈംടേബിളും പുരോഗതി രേഖയും',
+    categoryEn: 'Academic',
+    categoryMl: 'പരീക്ഷാ നിർവ്വഹണം',
+    date: '12 Oct 2026',
+    isImportant: true,
+    author: 'Principal Office',
+    summaryEn: 'Valuation of written and oral assessment components completed. Progress reports are available digitally in this portal.',
+    summaryMl: 'എഴുത്തുപരീക്ഷകളുടെയും വാചിക പരീക്ഷകളുടെയും മൂല്യനിർണ്ണയം പൂർത്തിയായി. പുരോഗതി രേഖകൾ പോർട്ടലിൽ ലഭ്യമാണ്.',
+    contentEn: 'The Half-Yearly examinations for all grades have completed successfully. Students and parents can access official signed evaluation cards via this portal. For any clarification regarding component marks, please meet the respective class teacher.',
+    contentMl: 'എല്ലാ ക്ലാസ്സുകളിലെയും അർദ്ധവാർഷിക പരീക്ഷകൾ വിജയകരമായി പൂർത്തിയായി. രക്ഷിതാക്കൾക്ക് പ്രോഗ്രസ്സ് റിപ്പോർട്ട് കാർഡുകൾ ഓൺലൈനായി കാണാം. സംശയങ്ങൾക്ക് ക്ലാസ് അധ്യാപകരുമായി ബന്ധപ്പെടുക.',
+    createdAt: '2026-10-12T09:00:00Z',
+  },
+  {
+    id: 'news-2',
+    titleEn: 'Rabi’ al-Awwal Milad Conference & Student Talent Fest',
+    titleMl: 'റബീഉൽ അവ്വൽ മീലാദ് സമ്മേളനവും വിദ്യാർത്ഥി പ്രതിഭാ മേളയും',
+    categoryEn: 'Events',
+    categoryMl: 'ഇസ്ലാമിക പരിപാടികൾ',
+    date: '28 Sep 2026',
+    author: 'Arts & Cultural Committee',
+    summaryEn: 'Annual Qira’at, Hifz, Islamic Quiz, and Arabic calligraphy competitions conducted with active participation of all students.',
+    summaryMl: 'ഖിറാഅത്ത്, ഹിഫ്ള്, ഇസ്ലാമിക് ക്വിസ്, അറബിക് കാലിഗ്രാഫി മത്സരങ്ങൾ ഭംഗിയായി നടന്നു.',
+    contentEn: 'Al-Madrasathul Islamiya Pallikkuth celebrated Milad-un-Nabi with great enthusiasm. Students showcased outstanding talents in Quran recitation, Elocution, and Islamic quiz competitions.',
+    contentMl: 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്തിൽ മീലാദ് ആഘോഷവും വിവിധ കലാ മത്സരങ്ങളും സംഘടിപ്പിച്ചു. നിരവധി വിദ്യാർത്ഥികൾ സമ്മാനങ്ങൾ കരസ്ഥമാക്കി.',
+    createdAt: '2026-09-28T10:30:00Z',
+  },
+  {
+    id: 'news-3',
+    titleEn: 'Term 1 Parent-Teacher Consultative Meeting (PTM)',
+    titleMl: 'ഒന്നാം പാദ രക്ഷാകർതൃ-അധ്യാപക സംഗമം (PTM)',
+    categoryEn: 'Academic',
+    categoryMl: 'രക്ഷാകർതൃ മീറ്റിംഗ്',
+    date: '15 Sep 2026',
+    author: 'Management Committee',
+    summaryEn: 'Constructive review on student punctuality, Subhi prayer habits, and moral development with class teachers.',
+    summaryMl: 'വിദ്യാർത്ഥികളുടെ പഠന പുരോഗതിയും സുബ്ഹി നമസ്കാര ശീലവും ചർച്ച ചെയ്യുന്നതിനായി യോഗം ചേർന്നു.',
+    contentEn: 'The General Body of parents gathered at the Madrasa Auditorium. Key discussions centered on cultivating Tajweed practice at home and supporting students in their daily lessons.',
+    contentMl: 'മദ്റസ ഓഡിറ്റോറിയത്തിൽ ചേർന്ന രക്ഷാകർതൃ സംഗമത്തിൽ വിദ്യാർത്ഥികളുടെ പഠന നിലവാരം ഉയർത്തുന്നതിനുള്ള നിർദ്ദേശങ്ങൾ ചർച്ച ചെയ്തു.',
+    createdAt: '2026-09-15T08:00:00Z',
+  },
+  {
+    id: 'news-4',
+    titleEn: 'Madrasa Timing & Morning Assembly Uniform Code',
+    titleMl: 'മദ്റസ സമയക്രമവും അസംബ്ലി മാർഗ്ഗനിർദ്ദേശങ്ങളും',
+    categoryEn: 'General',
+    categoryMl: 'ഭരണനിർവ്വഹണം',
+    date: '01 Aug 2026',
+    author: 'Sadr Muallim',
+    summaryEn: 'Morning assembly starts promptly at 07:15 AM. Proper Islamic white attire and caps are mandatory for all students.',
+    summaryMl: 'രാവിലെ 07:15 ന് കൃത്യമായി അസംബ്ലി ആരംഭിക്കും. വെള്ള വസ്ത്രവും തൊപ്പിയും നിർബന്ധമാണ്.',
+    contentEn: 'Parents are requested to ensure students arrive at Madrasa by 07:10 AM with necessary books, slate/notebooks, and in proper clean dress.',
+    contentMl: 'കുട്ടികളെ കൃത്യസമയത്ത് മദ്റസയിൽ എത്തിക്കാനും യൂണിഫോമും പാഠപുസ്തകങ്ങളും ഉറപ്പുവരുത്താനും രക്ഷിതാക്കൾ ശ്രദ്ധിക്കുക.',
+    createdAt: '2026-08-01T07:15:00Z',
+  },
+];

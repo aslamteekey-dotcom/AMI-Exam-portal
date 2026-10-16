@@ -12,10 +12,21 @@ import {
   FeePayment,
   ClassAttendanceConfig,
   DailyAttendanceRecord,
+  NewsItem,
+  NotificationItem,
+  DEFAULT_NEWS_ITEMS,
 } from '../../types';
 import { MarkEntryScreen } from './MarkEntryScreen';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
-import { collection, onSnapshot, doc, getDoc, getDocs, setDoc } from 'firebase/firestore';
+import {
+  collection,
+  onSnapshot,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  deleteDoc,
+} from 'firebase/firestore';
 import { cleanForFirestore } from '../../services/firestoreSync';
 import {
   BookOpen,
@@ -40,12 +51,46 @@ import {
   X,
   CheckCheck,
   RotateCcw,
+  Home,
+  Newspaper,
+  Bell,
+  PhoneCall,
+  Phone,
+  Mail,
+  MapPin,
+  ExternalLink,
+  Send,
+  ShieldCheck,
+  Instagram,
+  Facebook,
+  Youtube,
+  Plus,
+  Edit2,
+  Trash2,
+  Award,
+  ArrowRight,
+  User as UserIcon,
+  Search,
 } from 'lucide-react';
+
+export type TeacherPortalTab =
+  | 'home'
+  | 'my_class'
+  | 'mark_entry'
+  | 'attendance'
+  | 'fees'
+  | 'news'
+  | 'notification'
+  | 'contact'
+  | 'about';
 
 export const TeacherDashboard: React.FC = () => {
   const { user, fetchWithAuth, lang, t } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'my_assignments' | 'my_class' | 'attendance'>('my_assignments');
+
+  // Tab State: 1. Home, 2. My Class, 3. Mark Entry, 4. Attendance, 5. Fees, 6. News, 7. Notification, 8. Contact, 9. About
+  const [activeTab, setActiveTab] = useState<TeacherPortalTab>('home');
+
   const [assignments, setAssignments] = useState<TeacherAssignment[]>(() => {
     const raw = (user as any)?.assignedSubjects || user?.assignments;
     return Array.isArray(raw) ? raw : [];
@@ -64,8 +109,9 @@ export const TeacherDashboard: React.FC = () => {
   const [isSavingAttendance, setIsSavingAttendance] = useState(false);
   const [attendanceSaved, setAttendanceSaved] = useState(false);
   const [classFeePayments, setClassFeePayments] = useState<FeePayment[]>([]);
+  const [feeClassId, setFeeClassId] = useState<string>('');
 
-  // Comprehensive Attendance Management System State
+  // Comprehensive Attendance Management System State (Preserved Verbatim)
   const [attendanceClassId, setAttendanceClassId] = useState<string>('');
   const [attendanceMode, setAttendanceMode] = useState<'daily' | 'weekly'>('daily');
   const [selectedAttendanceDate, setSelectedAttendanceDate] = useState<string>(() => {
@@ -89,6 +135,90 @@ export const TeacherDashboard: React.FC = () => {
     subjectId: string;
     examinationId: string;
   } | null>(null);
+
+  // Mark Entry Sub-tab Segment: 'my_class' (Class In-charge) vs 'other_class' (All other classes)
+  const [markEntrySegment, setMarkEntrySegment] = useState<'my_class' | 'other_class'>('my_class');
+
+  // Student Edit / Delete Modal State in "My Class"
+  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const [isSavingStudent, setIsSavingStudent] = useState(false);
+  const [isDeletingStudent, setIsDeletingStudent] = useState<string | null>(null);
+  const [studentFormData, setStudentFormData] = useState({
+    nameEn: '',
+    nameMl: '',
+    rollNo: '',
+    admissionNo: '',
+    gender: 'M' as 'M' | 'F',
+    parentNameEn: '',
+    parentPhone: '',
+  });
+
+  // News State with Create Capability
+  const [newsList, setNewsList] = useState<NewsItem[]>(DEFAULT_NEWS_ITEMS);
+  const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
+  const [newsFilter, setNewsFilter] = useState<'all' | 'academic' | 'events' | 'general'>('all');
+  const [showCreateNewsModal, setShowCreateNewsModal] = useState(false);
+  const [isSavingNews, setIsSavingNews] = useState(false);
+  const [newsFormData, setNewsFormData] = useState({
+    titleEn: '',
+    titleMl: '',
+    categoryEn: 'Academic',
+    categoryMl: 'പരീക്ഷാ നിർവ്വഹണം',
+    summaryEn: '',
+    summaryMl: '',
+    contentEn: '',
+    contentMl: '',
+    isImportant: false,
+  });
+
+  // Shared Notifications State
+  const [notifications, setNotifications] = useState<NotificationItem[]>([
+    {
+      id: 'n-1',
+      titleEn: 'Exam Register Number Assigned',
+      titleMl: 'പരീക്ഷാ രജിസ്റ്റർ നമ്പർ നൽകി',
+      descEn: 'Official Examination Register Number has been allocated for Half-Yearly Examination 2026–2027.',
+      descMl: '2026-2027 അർദ്ധവാർഷിക പരീക്ഷയ്ക്കുള്ള പരീക്ഷാ രജിസ്റ്റർ നമ്പർ നൽകിയിട്ടുണ്ട്.',
+      time: '2 hours ago',
+      type: 'exam',
+      read: false,
+    },
+    {
+      id: 'n-2',
+      titleEn: 'Fee Payment Ledger Updated',
+      titleMl: 'ഫീസ് രസീത് തയ്യാറായി',
+      descEn: 'Tuition installment fee payment recorded. Official receipt is available in the Fees tab.',
+      descMl: 'ട്യൂഷൻ ഫീസ് പേയ്മെന്റ് രേഖപ്പെടുത്തിയിട്ടുണ്ട്. ഡിജിറ്റൽ രസീത് ഫീസ് വിഭാഗത്തിൽ ലഭ്യമാണ്.',
+      time: '1 day ago',
+      type: 'fee',
+      read: false,
+    },
+    {
+      id: 'n-3',
+      titleEn: 'Valuation & Progress Card Update',
+      titleMl: 'പുരോഗതി രേഖ പരിശോധന പൂർത്തിയായി',
+      descEn: 'Evaluation scores and teacher remarks have been verified by Principal Aslam TK.',
+      descMl: 'പ്രിൻസിപ്പൽ അസ്‌ലം ടി.കെ. പരിശോധിച്ചു അംഗീകരിച്ച പുരോഗതി രേഖ പ്രോഗ്രസ്സ് റിപ്പോർട്ട് കാർഡിൽ കാണാം.',
+      time: '3 days ago',
+      type: 'academic',
+      read: true,
+    },
+    {
+      id: 'n-4',
+      titleEn: 'Madrasa Holiday Announcement',
+      titleMl: 'മദ്റസ അവധി അറിയിപ്പ്',
+      descEn: 'Madrasa will remain closed on second Saturday as per the academic calendar.',
+      descMl: 'വിദ്യാഭ്യാസ ബോർഡ് കലണ്ടർ പ്രകാരം രണ്ടാം ശനിയാഴ്ച മദ്റസയ്ക്ക് അവധിയായിരിക്കും.',
+      time: '1 week ago',
+      type: 'circular',
+      read: true,
+    },
+  ]);
+
+  // Shared Contact form state
+  const [contactSubject, setContactSubject] = useState('');
+  const [contactMessage, setContactMessage] = useState('');
+  const [contactSent, setContactSent] = useState(false);
 
   const isMl = lang === 'ml';
 
@@ -173,6 +303,7 @@ export const TeacherDashboard: React.FC = () => {
 
       const targetInChargeId = authData.user?.inChargeClassId !== undefined ? authData.user.inChargeClassId : currentAssignments[0]?.classId;
       if (targetInChargeId) {
+        setFeeClassId(targetInChargeId);
         try {
           const [resAtt, resFees] = await Promise.all([
             fetchWithAuth(`/api/attendance/class/${targetInChargeId}`),
@@ -190,6 +321,8 @@ export const TeacherDashboard: React.FC = () => {
         } catch (fErr) {
           console.warn('Error loading in-charge attendance & fees:', fErr);
         }
+      } else if (clsData.length > 0) {
+        setFeeClassId(clsData[0].id);
       }
 
       const activeExam = examData[0];
@@ -211,7 +344,7 @@ export const TeacherDashboard: React.FC = () => {
   useEffect(() => {
     loadData();
 
-    // Real-time onSnapshot listeners for subjects, classes, students, and teachers
+    // Real-time onSnapshot listeners for subjects, classes, students, teachers, attendance, and news
     const unsubs: (() => void)[] = [];
 
     try {
@@ -366,6 +499,24 @@ export const TeacherDashboard: React.FC = () => {
         }
       );
       unsubs.push(unsubAttendance);
+
+      // Real-time Firestore News listener
+      const unsubNews = onSnapshot(
+        collection(db, 'news'),
+        snapshot => {
+          if (!snapshot.empty) {
+            const remoteNews = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as NewsItem));
+            const existingIds = new Set(remoteNews.map(n => n.id));
+            const combined = [...remoteNews, ...DEFAULT_NEWS_ITEMS.filter(n => !existingIds.has(n.id))];
+            combined.sort((a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime());
+            setNewsList(combined);
+          }
+        },
+        error => {
+          console.error('Firestore news onSnapshot error:', error);
+        }
+      );
+      unsubs.push(unsubNews);
     } catch (e) {
       console.error('Failed to attach Teacher Portal real-time listeners:', e);
     }
@@ -385,6 +536,19 @@ export const TeacherDashboard: React.FC = () => {
     if (resSheets.ok) {
       const sheetsData = await resSheets.json();
       setMarkSheets(sheetsData);
+    }
+  };
+
+  const handleFeeClassChange = async (targetClassId: string) => {
+    setFeeClassId(targetClassId);
+    try {
+      const resFees = await fetchWithAuth(`/api/fees/payments?classId=${targetClassId}`);
+      if (resFees.ok) {
+        const fees = await resFees.json();
+        setClassFeePayments(fees);
+      }
+    } catch (e) {
+      console.warn('Error loading fees for class:', e);
     }
   };
 
@@ -478,7 +642,6 @@ export const TeacherDashboard: React.FC = () => {
       } else if (recordForDate?.absentStudentIds && recordForDate.absentStudentIds.includes(st.id)) {
         newMap[st.id] = false;
       } else {
-        // Default: Present
         newMap[st.id] = true;
       }
     });
@@ -501,7 +664,6 @@ export const TeacherDashboard: React.FC = () => {
         } else if (rec?.absentStudentIds && rec.absentStudentIds.includes(st.id)) {
           newWeeklyMap[st.id][wDay.dateStr] = false;
         } else {
-          // Default: Present
           newWeeklyMap[st.id][wDay.dateStr] = true;
         }
       });
@@ -648,10 +810,8 @@ export const TeacherDashboard: React.FC = () => {
         updatedAt: new Date().toISOString(),
       };
 
-      // 1. Save directly to Firestore attendance collection
       await setDoc(doc(db, 'attendance', attendanceClassId), cleanForFirestore(updatedConfig), { merge: true });
 
-      // 2. Direct student records update in Firestore
       for (const st of currentStudents) {
         try {
           await setDoc(
@@ -667,7 +827,6 @@ export const TeacherDashboard: React.FC = () => {
         } catch {}
       }
 
-      // 3. Sync to API / Local storage
       await fetchWithAuth(`/api/attendance/class/${attendanceClassId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -782,6 +941,138 @@ export const TeacherDashboard: React.FC = () => {
     }
   };
 
+  // Student Edit / Delete Handlers in "My Class"
+  const handleOpenEditStudent = (st: Student) => {
+    setEditingStudent(st);
+    setStudentFormData({
+      nameEn: st.nameEn || '',
+      nameMl: st.nameMl || '',
+      rollNo: String(st.rollNo || ''),
+      admissionNo: st.admissionNo || '',
+      gender: (st.gender as 'M' | 'F') || 'M',
+      parentNameEn: st.parentNameEn || '',
+      parentPhone: st.parentPhone || '',
+    });
+  };
+
+  const handleSaveStudent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStudent) return;
+    setIsSavingStudent(true);
+    try {
+      const updateData: Partial<Student> = {
+        nameEn: studentFormData.nameEn.trim(),
+        nameMl: studentFormData.nameMl.trim() || studentFormData.nameEn.trim(),
+        rollNo: Number(studentFormData.rollNo) || editingStudent.rollNo,
+        admissionNo: studentFormData.admissionNo.trim(),
+        gender: studentFormData.gender,
+        parentNameEn: studentFormData.parentNameEn.trim(),
+        parentPhone: studentFormData.parentPhone.trim(),
+      };
+
+      // 1. Direct Firestore write
+      await setDoc(doc(db, 'students', editingStudent.id), cleanForFirestore(updateData), { merge: true });
+
+      // 2. Local API sync
+      await fetchWithAuth(`/api/students/${editingStudent.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updateData),
+      });
+
+      // 3. React state update
+      setAllStudents(prev =>
+        sortStudentsBoysFirst(
+          prev.map(s => (s.id === editingStudent.id ? { ...s, ...updateData } : s))
+        )
+      );
+
+      setEditingStudent(null);
+    } catch (err: any) {
+      alert('Failed to update student: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsSavingStudent(false);
+    }
+  };
+
+  const handleDeleteStudent = async (st: Student) => {
+    const confirmed = window.confirm(
+      `Are you sure you want to remove student "${st.nameEn}" (${st.admissionNo}) from the class roster?`
+    );
+    if (!confirmed) return;
+    setIsDeletingStudent(st.id);
+    try {
+      // 1. Delete from Firestore
+      await deleteDoc(doc(db, 'students', st.id));
+
+      // 2. Delete from API / local state
+      await fetchWithAuth(`/api/students/${st.id}`, { method: 'DELETE' });
+
+      setAllStudents(prev => prev.filter(s => s.id !== st.id));
+    } catch (err: any) {
+      alert('Failed to delete student: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsDeletingStudent(null);
+    }
+  };
+
+  // News Publish Handler (Teacher creating news into Firestore 'news' collection)
+  const handlePublishNews = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newsFormData.titleEn.trim()) {
+      alert('Please enter a title for the announcement.');
+      return;
+    }
+    setIsSavingNews(true);
+    try {
+      const newId = `news_${Date.now()}`;
+      const now = new Date();
+      const dateFormatted = `${now.getDate()} ${now.toLocaleString('default', { month: 'short' })} ${now.getFullYear()}`;
+
+      const newNewsItem: NewsItem = {
+        id: newId,
+        titleEn: newsFormData.titleEn.trim(),
+        titleMl: newsFormData.titleMl.trim() || newsFormData.titleEn.trim(),
+        categoryEn: newsFormData.categoryEn,
+        categoryMl: newsFormData.categoryMl,
+        date: dateFormatted,
+        author: user?.name || 'Class Teacher',
+        summaryEn: newsFormData.summaryEn.trim() || newsFormData.titleEn.trim(),
+        summaryMl: newsFormData.summaryMl.trim() || newsFormData.titleMl.trim() || newsFormData.titleEn.trim(),
+        contentEn: newsFormData.contentEn.trim() || newsFormData.summaryEn.trim() || newsFormData.titleEn.trim(),
+        contentMl: newsFormData.contentMl.trim() || newsFormData.summaryMl.trim() || newsFormData.titleMl.trim() || newsFormData.titleEn.trim(),
+        isImportant: newsFormData.isImportant,
+        createdAt: now.toISOString(),
+      };
+
+      // 1. Direct write to Firestore 'news' collection
+      await setDoc(doc(db, 'news', newId), cleanForFirestore(newNewsItem), { merge: true });
+
+      // 2. State update
+      setNewsList(prev => [newNewsItem, ...prev]);
+
+      // 3. Reset form & close modal
+      setNewsFormData({
+        titleEn: '',
+        titleMl: '',
+        categoryEn: 'Academic',
+        categoryMl: 'പരീക്ഷാ നിർവ്വഹണം',
+        summaryEn: '',
+        summaryMl: '',
+        contentEn: '',
+        contentMl: '',
+        isImportant: false,
+      });
+      setShowCreateNewsModal(false);
+      alert('Announcement published successfully! It is now visible to all parents and teachers.');
+    } catch (err: any) {
+      console.error('Error publishing news:', err);
+      alert('Failed to publish announcement: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsSavingNews(false);
+    }
+  };
+
   if (activeEntry) {
     return (
       <MarkEntryScreen
@@ -808,8 +1099,18 @@ export const TeacherDashboard: React.FC = () => {
   const selectedExam = examinations.find(e => e.id === selectedExamId);
 
   // In-charge class information
-  const inChargeClassId = currentTeacherInChargeClassId !== undefined ? currentTeacherInChargeClassId : user?.inChargeClassId;
-  const inChargeClass = inChargeClassId ? classes.find(c => c.id === inChargeClassId) : null;
+  const inChargeClassId =
+    currentTeacherInChargeClassId !== undefined
+      ? currentTeacherInChargeClassId
+      : (user?.inChargeClassId || (user as any)?.classInCharge);
+  const inChargeClass = inChargeClassId
+    ? (classes.find(
+        c =>
+          c.id === inChargeClassId ||
+          c.name.toLowerCase() === String(inChargeClassId).toLowerCase() ||
+          String(c.numericGrade) === String(inChargeClassId).replace(/\D/g, '')
+      ) || null)
+    : null;
   const inChargeStudents = inChargeClass
     ? sortStudentsBoysFirst(allStudents.filter(s => s.classId === inChargeClass.id && s.status === 'active')).map((s, idx) => ({
         ...s,
@@ -818,6 +1119,36 @@ export const TeacherDashboard: React.FC = () => {
     : [];
   const inChargeSubjects = inChargeClass
     ? subjects.filter(s => s.applicableClasses.includes(inChargeClass.numericGrade))
+    : [];
+
+  // Mark Entry Segregation: "My Class" (In-charge) vs "Other Class"
+  const myClassAssignments = assignments.filter(a => {
+    if (!inChargeClass) return false;
+    const cls = classes.find(c => c.id === a.classId);
+    return (
+      a.classId === inChargeClass.id ||
+      (inChargeClassId && a.classId === inChargeClassId) ||
+      (cls && cls.numericGrade === inChargeClass.numericGrade)
+    );
+  });
+
+  const otherClassAssignments = assignments.filter(a => {
+    if (!inChargeClass) return true;
+    const cls = classes.find(c => c.id === a.classId);
+    const isMyClass =
+      a.classId === inChargeClass.id ||
+      (inChargeClassId && a.classId === inChargeClassId) ||
+      (cls && cls.numericGrade === inChargeClass.numericGrade);
+    return !isMyClass;
+  });
+
+  // Effective fee class
+  const activeFeeClass = classes.find(c => c.id === feeClassId) || inChargeClass || classes[0];
+  const feeClassStudents = activeFeeClass
+    ? sortStudentsBoysFirst(allStudents.filter(s => s.classId === activeFeeClass.id && s.status === 'active')).map((s, idx) => ({
+        ...s,
+        rollNo: idx + 1,
+      }))
     : [];
 
   return (
@@ -856,7 +1187,7 @@ export const TeacherDashboard: React.FC = () => {
             <select
               value={selectedExamId}
               onChange={e => handleExamChange(e.target.value)}
-              className="bg-emerald-950 text-white text-xs font-semibold px-3 py-1.5 rounded-lg border border-emerald-700 focus:outline-none"
+              className="bg-emerald-950 text-white text-xs font-semibold px-3 py-1.5 rounded-lg border border-emerald-700 focus:outline-none cursor-pointer"
             >
               {examinations.map(e => (
                 <option key={e.id} value={e.id}>
@@ -868,192 +1199,410 @@ export const TeacherDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Primary Tabs */}
-      <div className="flex border-b border-slate-200 gap-4 text-xs font-bold">
+      {/* Primary Tabs in EXACT STRICT ORDER: 1. Home, 2. My Class, 3. Mark Entry, 4. Attendance, 5. Fees, 6. News, 7. Notification, 8. Contact, 9. About */}
+      <div className="flex border-b border-slate-200 gap-1.5 sm:gap-2 text-xs font-bold overflow-x-auto no-scrollbar pb-1">
+        {/* 1. Home */}
         <button
-          onClick={() => setActiveTab('my_assignments')}
-          className={`pb-3 transition flex items-center gap-1.5 cursor-pointer ${
-            activeTab === 'my_assignments'
-              ? 'border-b-2 border-emerald-800 text-emerald-800'
-              : 'text-slate-500 hover:text-slate-800'
+          type="button"
+          onClick={() => setActiveTab('home')}
+          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'home'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
           }`}
         >
-          <BookOpen className="w-4 h-4" />
-          <span>My Assigned Subjects</span>
-          <span className="px-2 py-0.2 rounded-full text-[10px] bg-slate-100 text-slate-700">
-            {assignments.length}
-          </span>
+          <Home className="w-4 h-4" />
+          <span>Home</span>
         </button>
 
+        {/* 2. My Class */}
         <button
+          type="button"
           onClick={() => setActiveTab('my_class')}
-          className={`pb-3 transition flex items-center gap-1.5 cursor-pointer ${
+          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
             activeTab === 'my_class'
-              ? 'border-b-2 border-emerald-800 text-emerald-800'
-              : 'text-slate-500 hover:text-slate-800'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
           }`}
         >
           <Shield className="w-4 h-4" />
           <span>My Class</span>
           {inChargeClass ? (
-            <span className="px-2 py-0.2 rounded-full text-[10px] bg-emerald-100 text-emerald-800 font-bold">
+            <span
+              className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                activeTab === 'my_class' ? 'bg-emerald-950/60 text-emerald-200' : 'bg-emerald-100 text-emerald-800'
+              }`}
+            >
               {inChargeClass.name}
             </span>
           ) : (
-            <span className="px-2 py-0.2 rounded-full text-[10px] bg-slate-100 text-slate-500">
-              Not Assigned
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-200 text-slate-600">
+              —
             </span>
           )}
         </button>
 
+        {/* 3. Mark Entry */}
         <button
+          type="button"
+          onClick={() => setActiveTab('mark_entry')}
+          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'mark_entry'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+          }`}
+        >
+          <BookOpen className="w-4 h-4" />
+          <span>Mark Entry</span>
+          <span
+            className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+              activeTab === 'mark_entry' ? 'bg-emerald-950/60 text-emerald-200' : 'bg-slate-200 text-slate-700'
+            }`}
+          >
+            {assignments.length}
+          </span>
+        </button>
+
+        {/* 4. Attendance */}
+        <button
+          type="button"
           onClick={() => setActiveTab('attendance')}
-          className={`pb-3 transition flex items-center gap-1.5 cursor-pointer ${
+          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
             activeTab === 'attendance'
-              ? 'border-b-2 border-emerald-800 text-emerald-800'
-              : 'text-slate-500 hover:text-slate-800'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
           }`}
         >
           <CalendarCheck className="w-4 h-4" />
           <span>Attendance</span>
-          <span className="px-2 py-0.2 rounded-full text-[10px] bg-emerald-100 text-emerald-800 font-bold flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
-            Live
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        </button>
+
+        {/* 5. Fees */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('fees')}
+          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'fees'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+          }`}
+        >
+          <CreditCard className="w-4 h-4" />
+          <span>Fees</span>
+        </button>
+
+        {/* 6. News */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('news')}
+          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'news'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+          }`}
+        >
+          <Newspaper className="w-4 h-4" />
+          <span>News</span>
+          <span
+            className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+              activeTab === 'news' ? 'bg-emerald-950/60 text-emerald-200' : 'bg-slate-200 text-slate-700'
+            }`}
+          >
+            {newsList.length}
           </span>
+        </button>
+
+        {/* 7. Notification */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('notification')}
+          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'notification'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+          }`}
+        >
+          <Bell className="w-4 h-4" />
+          <span>Notification</span>
+          {notifications.some(n => !n.read) && (
+            <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+          )}
+        </button>
+
+        {/* 8. Contact */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('contact')}
+          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'contact'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+          }`}
+        >
+          <PhoneCall className="w-4 h-4" />
+          <span>Contact</span>
+        </button>
+
+        {/* 9. About */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('about')}
+          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'about'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+          }`}
+        >
+          <Sparkles className="w-4 h-4 text-amber-300" />
+          <span>About</span>
         </button>
       </div>
 
-      {/* Tab 1: My Assigned Subjects */}
-      {activeTab === 'my_assignments' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900">
-                {t.navMyAssignments} ({assignments.length})
-              </h2>
-              <p className="text-xs text-slate-500">
-                Select an assigned class and subject to enter, review, or submit examination marks.
-              </p>
+      {/* =========================================================================
+          TAB 1: HOME (Teacher Overview Dashboard & Shortcuts)
+         ========================================================================= */}
+      {activeTab === 'home' && (
+        <div className="space-y-6">
+          {/* Welcome Overview Card */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800">
+                    Faculty Portal
+                  </span>
+                  <span className="text-slate-400 text-xs">•</span>
+                  <span className="text-xs text-slate-500 font-mono">Academic Year 2026–2027</span>
+                </div>
+                <h2 className="text-lg sm:text-xl font-bold text-slate-900 font-serif mt-1">
+                  Assalamu Alaikum, {user?.name || 'Usthad'}
+                </h2>
+                <p className="text-xs text-slate-500 mt-1 leading-relaxed max-w-2xl">
+                  Welcome to your teaching and academic management console at Al-Madrasathul Islamiya Pallikkuth.
+                  Manage marks, record daily student attendance, monitor tuition fees, and publish official announcements.
+                </p>
+              </div>
+
+              {inChargeClass && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 sm:text-right shrink-0">
+                  <span className="text-[10px] uppercase font-bold text-emerald-700 block">Class In-Charge</span>
+                  <span className="text-sm font-bold text-emerald-950 mt-0.5 block">
+                    {inChargeClass.name} ({inChargeClass.nameMl})
+                  </span>
+                  <span className="text-xs text-emerald-800 font-mono font-medium block">
+                    {inChargeStudents.length} Students Enrolled
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* 4 Key KPI Metrics Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Card 1: My Class */}
+              <div className="bg-gradient-to-br from-emerald-50/70 to-teal-50/50 rounded-xl p-4 border border-emerald-100 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-bold uppercase text-emerald-800">
+                      My Class Roster
+                    </span>
+                    <Shield className="w-4 h-4 text-emerald-700" />
+                  </div>
+                  <div className="text-2xl font-black font-mono text-emerald-950">
+                    {inChargeStudents.length}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {inChargeClass ? `${inChargeClass.name} Active Students` : 'No Class In-charge assigned'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('my_class')}
+                  className="mt-4 flex items-center justify-between text-xs font-bold text-emerald-800 hover:text-emerald-950 pt-2 border-t border-emerald-200/60 cursor-pointer"
+                >
+                  <span>Open Student Grid</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Card 2: Mark Entry */}
+              <div className="bg-gradient-to-br from-blue-50/70 to-cyan-50/50 rounded-xl p-4 border border-blue-100 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-bold uppercase text-blue-800">
+                      Assigned Subjects
+                    </span>
+                    <BookOpen className="w-4 h-4 text-blue-700" />
+                  </div>
+                  <div className="text-2xl font-black font-mono text-blue-950">
+                    {assignments.length}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {selectedExam?.nameEn || 'Active Exam'} marks entry
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('mark_entry')}
+                  className="mt-4 flex items-center justify-between text-xs font-bold text-blue-800 hover:text-blue-950 pt-2 border-t border-blue-200/60 cursor-pointer"
+                >
+                  <span>Enter / Edit Marks</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Card 3: Attendance */}
+              <div className="bg-gradient-to-br from-purple-50/70 to-violet-50/50 rounded-xl p-4 border border-purple-100 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-bold uppercase text-purple-800">
+                      Morning Attendance
+                    </span>
+                    <CalendarCheck className="w-4 h-4 text-purple-700" />
+                  </div>
+                  <div className="text-xl font-black font-mono text-purple-950">
+                    Live Sync
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Daily &amp; Weekly marking modes
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('attendance')}
+                  className="mt-4 flex items-center justify-between text-xs font-bold text-purple-800 hover:text-purple-950 pt-2 border-t border-purple-200/60 cursor-pointer"
+                >
+                  <span>Mark Attendance</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Card 4: Fees */}
+              <div className="bg-gradient-to-br from-amber-50/70 to-orange-50/50 rounded-xl p-4 border border-amber-100 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-bold uppercase text-amber-800">
+                      Class Fees Ledger
+                    </span>
+                    <CreditCard className="w-4 h-4 text-amber-700" />
+                  </div>
+                  <div className="text-2xl font-black font-mono text-amber-950">
+                    {classFeePayments.length}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    12-Month Installment progress
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('fees')}
+                  className="mt-4 flex items-center justify-between text-xs font-bold text-amber-800 hover:text-amber-950 pt-2 border-t border-amber-200/60 cursor-pointer"
+                >
+                  <span>Review Fee Ledger</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           </div>
 
-          {assignments.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
-              <BookOpen className="w-10 h-10 mx-auto text-slate-400 mb-2" />
-              <h3 className="font-bold text-slate-800 text-sm">No Subjects Assigned</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                The administrator has not assigned you any individual subject slots yet. If you are a Class In-charge, switch to the "My Class" tab to manage all subjects for your class.
-              </p>
+          {/* Quick Action Navigation Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            <div
+              onClick={() => setActiveTab('my_class')}
+              className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
+            >
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
+                <Users className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">My Class Student Grid</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  View, edit, or delete enrolled students with instant cloud persistence.
+                </p>
+              </div>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {assignments.map(a => {
-                const cls = classes.find(c => c.id === a.classId);
-                const sub = subjects.find(s => s.id === a.subjectId);
-                const ms = markSheets.find(
-                  m => m.examinationId === selectedExamId && m.classId === a.classId && m.subjectId === a.subjectId
-                );
 
-                // Strictly Malayalam subject display
-                const subDisplayName =
-                  cls?.numericGrade === 9 && (sub?.id === 'sub_history_buhuth' || sub?.code === 'HST')
-                    ? 'ബുഹൂസ്'
-                    : sub?.nameMl || sub?.nameEn || '—';
-
-                const status = ms?.status || 'not_started';
-
-                return (
-                  <div
-                    key={a.id}
-                    className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:shadow-md transition flex flex-col justify-between"
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900">
-                          {isMl ? cls?.nameMl : cls?.name}
-                        </span>
-
-                        {/* Status Badge */}
-                        {status === 'not_started' && (
-                          <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                            {t.not_started}
-                          </span>
-                        )}
-                        {status === 'draft' && (
-                          <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            {t.draft}
-                          </span>
-                        )}
-                        {status === 'submitted' && (
-                          <span className="text-[11px] font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            Awaiting Approval
-                          </span>
-                        )}
-                        {status === 'approved' && (
-                          <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                            <CheckCircle className="w-3 h-3" />
-                            {t.approved}
-                          </span>
-                        )}
-                        {status === 'locked' && (
-                          <span className="text-[11px] font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                            <Lock className="w-3 h-3" />
-                            {t.locked}
-                          </span>
-                        )}
-                        {status === 'returned_for_correction' && (
-                          <span className="text-[11px] font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                            <AlertCircle className="w-3 h-3" />
-                            Returned
-                          </span>
-                        )}
-                      </div>
-
-                      <h3 className="font-bold text-slate-900 text-base mb-1">
-                        {subDisplayName}
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        Maximum Marks: 50
-                      </p>
-
-                      {status === 'returned_for_correction' && ms?.returnedReason && (
-                        <div className="mt-3 p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800">
-                          <strong>Principal note:</strong> {ms.returnedReason}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
-                      <span className="text-[11px] text-slate-400">
-                        {ms?.studentMarks ? `${Object.keys(ms.studentMarks).length} entered` : '0 entered'}
-                      </span>
-                      <button
-                        onClick={() =>
-                          setActiveEntry({
-                            classId: a.classId,
-                            subjectId: a.subjectId,
-                            examinationId: selectedExamId,
-                          })
-                        }
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs cursor-pointer"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                        {status === 'submitted' || status === 'approved' || status === 'locked'
-                          ? 'View Sheet'
-                          : t.navEnterMarks}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+            <div
+              onClick={() => setActiveTab('mark_entry')}
+              className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
+            >
+              <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-800 flex items-center justify-center shrink-0">
+                <BookOpen className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">Mark Entry Console</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Enter examination marks for My Class &amp; Other Classes with absent marking.
+                </p>
+              </div>
             </div>
-          )}
+
+            <div
+              onClick={() => setActiveTab('attendance')}
+              className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
+            >
+              <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center shrink-0">
+                <CalendarCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">Attendance System</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Mark daily attendance or use the weekly grid with real-time Parent sync.
+                </p>
+              </div>
+            </div>
+
+            <div
+              onClick={() => setActiveTab('fees')}
+              className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
+            >
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                <CreditCard className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">Fees Progress Tracker</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Monitor the 12 monthly installments (June 2026 – May 2027) for your students.
+                </p>
+              </div>
+            </div>
+
+            <div
+              onClick={() => setActiveTab('news')}
+              className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
+            >
+              <div className="w-10 h-10 rounded-xl bg-teal-100 text-teal-800 flex items-center justify-center shrink-0">
+                <Newspaper className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">Post Announcements</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Publish notices and circulars directly to parents and the school community.
+                </p>
+              </div>
+            </div>
+
+            <div
+              onClick={() => setActiveTab('contact')}
+              className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
+            >
+              <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-800 flex items-center justify-center shrink-0">
+                <PhoneCall className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">Madrasa Contact &amp; Office</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Access institutional telephone numbers, office hours, and Principal helpdesk.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Tab 2: My Class (Dedicated Class In-Charge View) */}
+      {/* =========================================================================
+          TAB 2: "MY CLASS" (Student Grid with Functional Edit & Delete Buttons)
+         ========================================================================= */}
       {activeTab === 'my_class' && (
         <div className="space-y-6">
           {!inChargeClass ? (
@@ -1061,7 +1610,8 @@ export const TeacherDashboard: React.FC = () => {
               <Shield className="w-12 h-12 mx-auto text-slate-400" />
               <h3 className="font-bold text-slate-800 text-base">No Class In-Charge Role Assigned</h3>
               <p className="text-xs text-slate-500 max-w-md mx-auto">
-                You are currently not designated as the official Class Teacher / In-charge for any class. Please contact the Principal to assign you as In-charge for your respective class (e.g. Class 1 through Class 10).
+                You are currently not designated as the official Class Teacher / In-charge for any class.
+                Please contact the Principal to assign you as In-charge for your respective class (e.g. Class 1 through Class 10).
               </p>
             </div>
           ) : (
@@ -1074,13 +1624,13 @@ export const TeacherDashboard: React.FC = () => {
                       <Shield className="w-3.5 h-3.5 text-emerald-700" />
                       Class In-Charge Authority
                     </span>
-                    <span className="text-xs text-slate-400">• Full View & Edit Permissions</span>
+                    <span className="text-xs text-slate-400">• Full View &amp; Edit Permissions</span>
                   </div>
                   <h2 className="text-xl font-bold text-slate-900 mt-1">
-                    {inChargeClass.name} ({inChargeClass.nameMl}) Overview
+                    {inChargeClass.name} ({inChargeClass.nameMl}) Student Roster
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    As Class In-charge, you have full authority to view all student profiles and enter/edit marks across ALL subjects for {inChargeClass.name}.
+                    Manage student profiles with instant edit and remove capabilities. Boys sorted A-Z first, followed by Girls A-Z.
                   </p>
                 </div>
 
@@ -1112,7 +1662,118 @@ export const TeacherDashboard: React.FC = () => {
                 </div>
               </div>
 
-              {/* Section 1: All Subjects for Assigned Class */}
+              {/* STUDENT DATA GRID (Grid of small rectangular cards with Edit & Delete buttons) */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                      <Users className="w-4 h-4 text-emerald-800" />
+                      <span>{inChargeClass.name} Students Grid ({inChargeStudents.length})</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Click the pencil icon to modify student details, or the trash icon to remove a student.
+                    </p>
+                  </div>
+                </div>
+
+                {inChargeStudents.length === 0 ? (
+                  <div className="text-center py-12 text-slate-400 text-xs">
+                    No active students enrolled in {inChargeClass.name}.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                    {inChargeStudents.map(st => {
+                      const regNo =
+                        st.examRegisterNumbers?.[selectedExamId] ||
+                        (st as any).examRegisterNos?.[selectedExamId] ||
+                        (st as any).examRegNo;
+
+                      return (
+                        <div
+                          key={st.id}
+                          className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs hover:shadow-xs transition flex flex-col justify-between relative group"
+                        >
+                          <div>
+                            {/* Top Row: Roll No Badge, Gender Badge & Action Buttons */}
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-6 h-6 rounded-lg bg-emerald-800 text-white font-mono font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
+                                  {st.rollNo}
+                                </span>
+                                <span
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                    st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                                  }`}
+                                >
+                                  {st.gender || 'M'}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditStudent(st)}
+                                  className="p-1.5 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
+                                  title={`Edit ${st.nameEn}`}
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteStudent(st)}
+                                  disabled={isDeletingStudent === st.id}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer disabled:opacity-50"
+                                  title={`Delete ${st.nameEn}`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Student Name */}
+                            <div className="font-bold text-slate-900 text-sm leading-tight truncate" title={st.nameEn}>
+                              {st.nameEn}
+                            </div>
+                            {st.nameMl && (
+                              <div className="text-[11px] text-slate-500 truncate" title={st.nameMl}>
+                                {st.nameMl}
+                              </div>
+                            )}
+
+                            {/* Details Metadata */}
+                            <div className="mt-2.5 pt-2 border-t border-slate-100 space-y-1 text-[11px]">
+                              <div className="flex items-center justify-between text-slate-500">
+                                <span>Adm No:</span>
+                                <span className="font-mono font-bold text-slate-700">{st.admissionNo}</span>
+                              </div>
+                              <div className="flex items-center justify-between text-slate-500">
+                                <span>Class:</span>
+                                <span className="font-semibold text-emerald-800">{inChargeClass.name}</span>
+                              </div>
+                              {regNo && (
+                                <div className="flex items-center justify-between text-slate-500">
+                                  <span>Reg No:</span>
+                                  <span className="font-mono font-bold text-emerald-900">{regNo}</span>
+                                </div>
+                              )}
+                              {st.parentNameEn && (
+                                <div className="flex items-center justify-between text-slate-500 truncate">
+                                  <span>Parent:</span>
+                                  <span className="truncate max-w-[90px] text-slate-700" title={st.parentNameEn}>
+                                    {st.parentNameEn}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* All Subjects for Assigned Class */}
               <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <div>
@@ -1121,7 +1782,7 @@ export const TeacherDashboard: React.FC = () => {
                       All Subjects for {inChargeClass.name} ({inChargeSubjects.length} subjects)
                     </h3>
                     <p className="text-xs text-slate-500">
-                      Full view & edit access for all subjects in {inChargeClass.name} under {selectedExam?.nameEn || 'Active Exam'}.
+                      Full view &amp; edit access for all subjects in {inChargeClass.name} under {selectedExam?.nameEn || 'Active Exam'}.
                     </p>
                   </div>
                 </div>
@@ -1135,7 +1796,6 @@ export const TeacherDashboard: React.FC = () => {
                         m.subjectId === sub.id
                     );
 
-                    // Strictly Malayalam subject display
                     const subDisplayName =
                       inChargeClass.numericGrade === 9 &&
                       (sub.id === 'sub_history_buhuth' || sub.code === 'HST')
@@ -1155,7 +1815,6 @@ export const TeacherDashboard: React.FC = () => {
                               {sub.code}
                             </span>
 
-                            {/* Status Badge */}
                             {status === 'not_started' && (
                               <span className="text-[10px] font-semibold text-slate-500 bg-slate-200/80 px-2 py-0.5 rounded-full">
                                 Not Started
@@ -1204,6 +1863,7 @@ export const TeacherDashboard: React.FC = () => {
                           </span>
 
                           <button
+                            type="button"
                             onClick={() =>
                               setActiveEntry({
                                 classId: inChargeClass.id,
@@ -1222,244 +1882,462 @@ export const TeacherDashboard: React.FC = () => {
                   })}
                 </div>
               </div>
+            </div>
+          )}
 
-              {/* Section 2: Student Attendance & Working Days Management */}
-              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-3">
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                      <Users className="w-4 h-4 text-emerald-800" />
-                      Attendance Roster & Working Days ({inChargeStudents.length} Students)
+          {/* EDIT STUDENT MODAL */}
+          {editingStudent && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+              <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4">
+                  <div className="flex items-center gap-2">
+                    <Edit2 className="w-4 h-4 text-emerald-800" />
+                    <h3 className="text-sm font-bold text-slate-900">
+                      Edit Student: {editingStudent.nameEn}
                     </h3>
-                    <p className="text-xs text-slate-500">
-                      Configure total working days and update student attendance count for {inChargeClass.name}.
-                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingStudent(null)}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveStudent} className="space-y-3.5 text-xs">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Student Name (English) *</label>
+                    <input
+                      type="text"
+                      required
+                      value={studentFormData.nameEn}
+                      onChange={e => setStudentFormData({ ...studentFormData, nameEn: e.target.value })}
+                      className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                    />
                   </div>
 
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-1.5 text-xs bg-slate-50 p-1.5 rounded-xl border border-slate-200">
-                      <label className="font-bold text-slate-700 whitespace-nowrap">Total Working Days:</label>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Student Name (Malayalam)</label>
+                    <input
+                      type="text"
+                      value={studentFormData.nameMl}
+                      onChange={e => setStudentFormData({ ...studentFormData, nameMl: e.target.value })}
+                      className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Roll No *</label>
                       <input
                         type="number"
                         min="1"
-                        max="365"
-                        value={attendanceTotalWorkingDays}
-                        onChange={e => setAttendanceTotalWorkingDays(Number(e.target.value) || 88)}
-                        className="w-16 p-1 text-center font-bold font-mono border rounded-lg bg-white"
+                        required
+                        value={studentFormData.rollNo}
+                        onChange={e => setStudentFormData({ ...studentFormData, rollNo: e.target.value })}
+                        className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none font-mono"
                       />
                     </div>
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Gender *</label>
+                      <select
+                        value={studentFormData.gender}
+                        onChange={e => setStudentFormData({ ...studentFormData, gender: e.target.value as 'M' | 'F' })}
+                        className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                      >
+                        <option value="M">Male / Boy</option>
+                        <option value="F">Female / Girl</option>
+                      </select>
+                    </div>
+                  </div>
 
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Admission Number *</label>
+                    <input
+                      type="text"
+                      required
+                      value={studentFormData.admissionNo}
+                      onChange={e => setStudentFormData({ ...studentFormData, admissionNo: e.target.value })}
+                      className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none font-mono"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Parent / Guardian</label>
+                      <input
+                        type="text"
+                        value={studentFormData.parentNameEn}
+                        onChange={e => setStudentFormData({ ...studentFormData, parentNameEn: e.target.value })}
+                        className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Parent Phone</label>
+                      <input
+                        type="tel"
+                        value={studentFormData.parentPhone}
+                        onChange={e => setStudentFormData({ ...studentFormData, parentPhone: e.target.value })}
+                        className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
                     <button
                       type="button"
-                      onClick={() => handleSaveAttendance(inChargeClass.id)}
-                      disabled={isSavingAttendance}
-                      className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs disabled:opacity-50 cursor-pointer"
+                      onClick={() => setEditingStudent(null)}
+                      className="px-3.5 py-2 text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition font-semibold cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSavingStudent}
+                      className="px-4 py-2 text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition font-bold disabled:opacity-50 cursor-pointer flex items-center gap-1.5 shadow-xs"
                     >
                       <Save className="w-3.5 h-3.5" />
-                      {isSavingAttendance ? 'Saving...' : attendanceSaved ? 'Saved!' : 'Save Attendance'}
+                      <span>{isSavingStudent ? 'Saving...' : 'Save Changes'}</span>
                     </button>
                   </div>
-                </div>
-
-                {inChargeStudents.length === 0 ? (
-                  <div className="text-center py-8 text-xs text-slate-400">
-                    No students currently enrolled in {inChargeClass.name}.
-                  </div>
-                ) : (
-                  <div className="border border-slate-200 rounded-xl overflow-x-auto w-full text-xs scrollbar-thin">
-                    <table className="w-full min-w-[700px] text-left">
-                      <thead className="bg-slate-100 text-slate-700 font-bold border-b">
-                        <tr>
-                          <th className="p-3 w-14 text-center font-mono">Roll</th>
-                          <th className="p-3 font-mono text-center w-28">Exam Reg No</th>
-                          <th className="p-3 font-mono">Adm No</th>
-                          <th className="p-3">Student Name</th>
-                          <th className="p-3 text-center">Gender</th>
-                          <th className="p-3">Parent Name</th>
-                          <th className="p-3 text-center w-36">Days Attended</th>
-                          <th className="p-3 text-center">Ratio</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {inChargeStudents.map(st => {
-                          const currentDays = studentDaysAttendedMap[st.id] !== undefined
-                            ? studentDaysAttendedMap[st.id]
-                            : (st.attendance?.daysAttended ?? attendanceTotalWorkingDays);
-                          const regNo =
-                            st.examRegisterNumbers?.[selectedExamId] ||
-                            (st as any).examRegisterNos?.[selectedExamId] ||
-                            (st as any).examRegNo ||
-                            '—';
-
-                          return (
-                            <tr key={st.id} className="hover:bg-slate-50 transition">
-                              <td className="p-3 text-center font-mono font-bold text-slate-600">
-                                {st.rollNo}
-                              </td>
-                              <td className="p-3 text-center font-mono font-bold text-emerald-950 bg-emerald-50/40">
-                                {regNo}
-                              </td>
-                              <td className="p-3 font-mono font-semibold text-slate-700">
-                                {st.admissionNo}
-                              </td>
-                              <td className="p-3">
-                                <div className="font-bold text-slate-900">{st.nameEn}</div>
-                                {st.nameMl && (
-                                  <div className="text-[11px] text-slate-500">{st.nameMl}</div>
-                                )}
-                              </td>
-                              <td className="p-3 text-center">
-                                <span
-                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                                    st.gender === 'F' ? 'bg-pink-100 text-pink-800' : 'bg-blue-100 text-blue-800'
-                                  }`}
-                                >
-                                  {st.gender || 'M'}
-                                </span>
-                              </td>
-                              <td className="p-3 text-slate-800 font-medium">
-                                {st.parentNameEn || '—'}
-                              </td>
-                              <td className="p-3 text-center">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max={attendanceTotalWorkingDays}
-                                  value={currentDays}
-                                  onChange={e => {
-                                    const val = Number(e.target.value);
-                                    setStudentDaysAttendedMap(prev => ({
-                                      ...prev,
-                                      [st.id]: val,
-                                    }));
-                                  }}
-                                  className="w-20 p-1 text-center font-mono font-bold border border-slate-300 rounded-lg bg-white focus:outline-emerald-800"
-                                />
-                              </td>
-                              <td className="p-3 text-center font-mono text-slate-600">
-                                {currentDays} / {attendanceTotalWorkingDays}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              {/* Section 3: Month-by-Month Tuition Installment Progress Tracker */}
-              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                      <CreditCard className="w-4 h-4 text-emerald-800" />
-                      Class Fee Payment Progress (12 Installments: June 2026 – May 2027)
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Live status of ₹300 monthly installments for students in {inChargeClass.name}.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="border border-slate-200 rounded-xl overflow-x-auto w-full text-xs scrollbar-thin">
-                  <table className="w-full min-w-[750px] text-left">
-                    <thead className="bg-slate-100 text-slate-700 font-bold border-b">
-                      <tr>
-                        <th className="p-2.5 w-12 text-center font-mono">Roll</th>
-                        <th className="p-2.5 font-mono text-center w-24">Exam Reg No</th>
-                        <th className="p-2.5 font-mono w-24">Adm No</th>
-                        <th className="p-2.5 min-w-[150px]">Student Name</th>
-                        {TUITION_FEE_MONTHS.map(m => (
-                          <th key={m} className="p-2 text-center font-mono text-[10px] w-12">
-                            {m.split(' ')[0].substring(0, 3)}
-                          </th>
-                        ))}
-                        <th className="p-2.5 text-center">Paid / 12</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {inChargeStudents.map(st => {
-                        const paidMonths = new Set<string>();
-                        classFeePayments
-                          .filter(p => p.studentId === st.id)
-                          .forEach(p => {
-                            (p.tuitionFeeMonths || []).forEach(m => paidMonths.add(m));
-                          });
-                        const count = paidMonths.size;
-                        const regNo =
-                          st.examRegisterNumbers?.[selectedExamId] ||
-                          (st as any).examRegisterNos?.[selectedExamId] ||
-                          (st as any).examRegNo ||
-                          '—';
-
-                        return (
-                          <tr key={st.id} className="hover:bg-slate-50 transition">
-                            <td className="p-2 text-center font-mono font-bold text-slate-600">
-                              {st.rollNo}
-                            </td>
-                            <td className="p-2 text-center font-mono font-bold text-emerald-950 bg-emerald-50/40">
-                              {regNo}
-                            </td>
-                            <td className="p-2 font-mono font-semibold text-slate-700">
-                              {st.admissionNo}
-                            </td>
-                            <td className="p-2 font-bold text-slate-900">
-                              {st.nameEn}
-                            </td>
-                            {TUITION_FEE_MONTHS.map(m => {
-                              const isPaid = paidMonths.has(m);
-                              return (
-                                <td key={m} className="p-2 text-center">
-                                  {isPaid ? (
-                                    <span
-                                      title={`${m}: Paid`}
-                                      className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-emerald-600 text-white text-[10px] font-bold shadow-2xs"
-                                    >
-                                      ✓
-                                    </span>
-                                  ) : (
-                                    <span
-                                      title={`${m}: Pending`}
-                                      className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-slate-100 text-slate-400 text-[10px]"
-                                    >
-                                      —
-                                    </span>
-                                  )}
-                                </td>
-                              );
-                            })}
-                            <td className="p-2 text-center">
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                  count === 12
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : count > 0
-                                    ? 'bg-blue-100 text-blue-800'
-                                    : 'bg-slate-100 text-slate-500'
-                                }`}
-                              >
-                                {count} / 12
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                </form>
               </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Tab 3: Dedicated Attendance Management System */}
+      {/* =========================================================================
+          TAB 3: "MARK ENTRY" TAB (Restructured from "My Assigned Subject")
+         ========================================================================= */}
+      {activeTab === 'mark_entry' && (
+        <div className="space-y-4">
+          {/* Header & Sub-tab Segments: "My Class" vs "Other Class" */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-emerald-800" />
+                <span>Mark Entry</span>
+                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                  {assignments.length} Total
+                </span>
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Select an assigned class and subject to enter, review, or submit examination marks.
+              </p>
+            </div>
+
+            {/* Segment Toggle: My Class vs Other Class */}
+            <div className="flex items-center gap-1.5 p-1 bg-slate-100/90 border border-slate-200/80 rounded-xl self-start sm:self-auto shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setMarkEntrySegment('my_class')}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  markEntrySegment === 'my_class'
+                    ? 'bg-emerald-800 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                }`}
+              >
+                <Shield className="w-3.5 h-3.5" />
+                <span>My Class</span>
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                    markEntrySegment === 'my_class'
+                      ? 'bg-emerald-950/60 text-emerald-200'
+                      : 'bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  {myClassAssignments.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setMarkEntrySegment('other_class')}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  markEntrySegment === 'other_class'
+                    ? 'bg-emerald-800 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Other Class</span>
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                    markEntrySegment === 'other_class'
+                      ? 'bg-emerald-950/60 text-emerald-200'
+                      : 'bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  {otherClassAssignments.length}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Segment Content */}
+          {assignments.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
+              <BookOpen className="w-10 h-10 mx-auto text-slate-400 mb-2" />
+              <h3 className="font-bold text-slate-800 text-sm">No Subjects Assigned</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                The administrator has not assigned you any individual subject slots yet. If you are a Class In-charge, switch to the "My Class" tab to manage all subjects for your class.
+              </p>
+            </div>
+          ) : markEntrySegment === 'my_class' ? (
+            !inChargeClass ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 space-y-3">
+                <Shield className="w-10 h-10 mx-auto text-slate-400" />
+                <h3 className="font-bold text-slate-800 text-sm">No Class In-Charge Designated</h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  You are currently not designated as the Class In-charge for any class. Please switch to the "Other Class" segment to view and enter marks for your assigned subjects.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setMarkEntrySegment('other_class')}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Switch to Other Class ({otherClassAssignments.length})</span>
+                </button>
+              </div>
+            ) : myClassAssignments.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 space-y-2">
+                <BookOpen className="w-10 h-10 mx-auto text-slate-400 mb-2" />
+                <h3 className="font-bold text-slate-800 text-sm">No Assigned Teaching Slots in {inChargeClass.name}</h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  You do not have individual subject teaching slots assigned directly for your in-charge class ({inChargeClass.name}). As Class In-charge, you can manage and enter marks for all subjects for this class under the "My Class" tab.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {myClassAssignments.map(a => {
+                  const cls = classes.find(c => c.id === a.classId);
+                  const sub = subjects.find(s => s.id === a.subjectId);
+                  const ms = markSheets.find(
+                    m => m.examinationId === selectedExamId && m.classId === a.classId && m.subjectId === a.subjectId
+                  );
+
+                  const subDisplayName =
+                    cls?.numericGrade === 9 && (sub?.id === 'sub_history_buhuth' || sub?.code === 'HST')
+                      ? 'ബുഹൂസ്'
+                      : sub?.nameMl || sub?.nameEn || '—';
+
+                  const status = ms?.status || 'not_started';
+
+                  return (
+                    <div
+                      key={a.id}
+                      className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:shadow-md transition flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900">
+                            {isMl ? cls?.nameMl : cls?.name}
+                          </span>
+
+                          {status === 'not_started' && (
+                            <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                              {t.not_started}
+                            </span>
+                          )}
+                          {status === 'draft' && (
+                            <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {t.draft}
+                            </span>
+                          )}
+                          {status === 'submitted' && (
+                            <span className="text-[11px] font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              Awaiting Approval
+                            </span>
+                          )}
+                          {status === 'approved' && (
+                            <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <CheckCircle className="w-3 h-3" />
+                              {t.approved}
+                            </span>
+                          )}
+                          {status === 'locked' && (
+                            <span className="text-[11px] font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <Lock className="w-3 h-3" />
+                              {t.locked}
+                            </span>
+                          )}
+                          {status === 'returned_for_correction' && (
+                            <span className="text-[11px] font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <AlertCircle className="w-3 h-3" />
+                              Returned
+                            </span>
+                          )}
+                        </div>
+
+                        <h3 className="font-bold text-slate-900 text-base mb-1">
+                          {subDisplayName}
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          Maximum Marks: 50
+                        </p>
+
+                        {status === 'returned_for_correction' && ms?.returnedReason && (
+                          <div className="mt-3 p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800">
+                            <strong>Principal note:</strong> {ms.returnedReason}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
+                        <span className="text-[11px] text-slate-400">
+                          {ms?.studentMarks ? `${Object.keys(ms.studentMarks).length} entered` : '0 entered'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setActiveEntry({
+                              classId: a.classId,
+                              subjectId: a.subjectId,
+                              examinationId: selectedExamId,
+                            })
+                          }
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          {status === 'submitted' || status === 'approved' || status === 'locked'
+                            ? 'View Sheet'
+                            : t.navEnterMarks}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          ) : (
+            otherClassAssignments.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 space-y-2">
+                <Layers className="w-10 h-10 mx-auto text-slate-400 mb-2" />
+                <h3 className="font-bold text-slate-800 text-sm">No Subjects in Other Classes</h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  All of your assigned subjects belong to your in-charge class.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {otherClassAssignments.map(a => {
+                  const cls = classes.find(c => c.id === a.classId);
+                  const sub = subjects.find(s => s.id === a.subjectId);
+                  const ms = markSheets.find(
+                    m => m.examinationId === selectedExamId && m.classId === a.classId && m.subjectId === a.subjectId
+                  );
+
+                  const subDisplayName =
+                    cls?.numericGrade === 9 && (sub?.id === 'sub_history_buhuth' || sub?.code === 'HST')
+                      ? 'ബുഹൂസ്'
+                      : sub?.nameMl || sub?.nameEn || '—';
+
+                  const status = ms?.status || 'not_started';
+
+                  return (
+                    <div
+                      key={a.id}
+                      className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:shadow-md transition flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900">
+                            {isMl ? cls?.nameMl : cls?.name}
+                          </span>
+
+                          {status === 'not_started' && (
+                            <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                              {t.not_started}
+                            </span>
+                          )}
+                          {status === 'draft' && (
+                            <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {t.draft}
+                            </span>
+                          )}
+                          {status === 'submitted' && (
+                            <span className="text-[11px] font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              Awaiting Approval
+                            </span>
+                          )}
+                          {status === 'approved' && (
+                            <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <CheckCircle className="w-3 h-3" />
+                              {t.approved}
+                            </span>
+                          )}
+                          {status === 'locked' && (
+                            <span className="text-[11px] font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <Lock className="w-3 h-3" />
+                              {t.locked}
+                            </span>
+                          )}
+                          {status === 'returned_for_correction' && (
+                            <span className="text-[11px] font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <AlertCircle className="w-3 h-3" />
+                              Returned
+                            </span>
+                          )}
+                        </div>
+
+                        <h3 className="font-bold text-slate-900 text-base mb-1">
+                          {subDisplayName}
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          Maximum Marks: 50
+                        </p>
+
+                        {status === 'returned_for_correction' && ms?.returnedReason && (
+                          <div className="mt-3 p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800">
+                            <strong>Principal note:</strong> {ms.returnedReason}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
+                        <span className="text-[11px] text-slate-400">
+                          {ms?.studentMarks ? `${Object.keys(ms.studentMarks).length} entered` : '0 entered'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setActiveEntry({
+                              classId: a.classId,
+                              subjectId: a.subjectId,
+                              examinationId: selectedExamId,
+                            })
+                          }
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          {status === 'submitted' || status === 'approved' || status === 'locked'
+                            ? 'View Sheet'
+                            : t.navEnterMarks}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {/* =========================================================================
+          TAB 4: ATTENDANCE (Strictly Preserved Verbatim)
+         ========================================================================= */}
       {activeTab === 'attendance' && (() => {
         const selectedClass = classes.find(c => c.id === attendanceClassId) || inChargeClass || classes[0];
         const effectiveClassId = selectedClass?.id || '';
 
-        // Standardized student order: Boys A-Z first (Roll 1, 2, 3...), then Girls A-Z (Roll n+1...)
         const classStudents = selectedClass
           ? sortStudentsBoysFirst(allStudents.filter(s => s.classId === effectiveClassId && s.status === 'active')).map((s, idx) => ({
               ...s,
@@ -1467,17 +2345,14 @@ export const TeacherDashboard: React.FC = () => {
             }))
           : [];
 
-        // Daily Present / Absent Counts
         const dailyPresentCount = classStudents.filter(st => dailyStatusMap[st.id] !== false).length;
         const dailyAbsentCount = classStudents.length - dailyPresentCount;
         const dailyPercentage = classStudents.length > 0
           ? ((dailyPresentCount / classStudents.length) * 100).toFixed(1)
           : '0.0';
 
-        // Week days
         const weekDays = getWeekDays(selectedWeekDate);
 
-        // Academic months for month-wise overview table
         const academicMonths = [
           { key: '2026-06', monthEn: 'June 2026', monthMl: 'ജൂൺ 2026', working: 18 },
           { key: '2026-07', monthEn: 'July 2026', monthMl: 'ജൂലൈ 2026', working: 22 },
@@ -1491,13 +2366,11 @@ export const TeacherDashboard: React.FC = () => {
           totalBenchmarkWorking
         );
 
-        // Formatted Date
         const dObj = new Date(selectedAttendanceDate);
         const dateFormattedEn = !isNaN(dObj.getTime())
           ? dObj.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
           : selectedAttendanceDate;
 
-        // Compute month-wise attended days for each student
         const getStudentMonthlyBreakdown = (st: Student) => {
           const totalAttended = studentDaysAttendedMap[st.id] ?? (st.attendance?.daysAttended ?? Math.max(0, totalEffectiveWorking - ((Number(st.rollNo || 1) * 3) % 4) - 2));
 
@@ -1791,7 +2664,6 @@ export const TeacherDashboard: React.FC = () => {
                                 {isPresent ? 'Present' : 'Absent'}
                               </span>
 
-                              {/* Large mobile-tap friendly checkbox / toggle button (min-h-10 min-w-10) */}
                               <button
                                 type="button"
                                 onClick={e => {
@@ -1824,7 +2696,6 @@ export const TeacherDashboard: React.FC = () => {
             {/* VIEW 2: WEEKLY ATTENDANCE MARKING */}
             {attendanceMode === 'weekly' && (
               <div className="space-y-4">
-                {/* Week Selector Bar */}
                 <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -1882,7 +2753,6 @@ export const TeacherDashboard: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Weekly Grid Table (Optimized with overflow-x-auto & whitespace-nowrap) */}
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
                   <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
                     <div>
@@ -1998,7 +2868,6 @@ export const TeacherDashboard: React.FC = () => {
                 </div>
               </div>
 
-              {/* Responsive Table Wrapped in overflow-x-auto */}
               <div className="overflow-x-auto w-full scrollbar-thin px-4 pb-4">
                 <table className="w-full text-left text-xs min-w-[850px] border-collapse">
                   <thead>
@@ -2073,7 +2942,6 @@ export const TeacherDashboard: React.FC = () => {
                 </table>
               </div>
 
-              {/* Bottom Quick KPI Summary Strip */}
               <div className="p-4 bg-slate-50/50 border-t border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                 <div className="bg-white p-3 rounded-xl border border-slate-200">
                   <span className="text-[10px] font-bold uppercase text-slate-500 block">Class Enrolled</span>
@@ -2096,6 +2964,946 @@ export const TeacherDashboard: React.FC = () => {
           </div>
         );
       })()}
+
+      {/* =========================================================================
+          TAB 5: NEW "FEES" TAB (Moved exact payment progress & fee ledger from My Class)
+         ========================================================================= */}
+      {activeTab === 'fees' && (
+        <div className="space-y-6">
+          {/* Header Card with Class Selector */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-xl bg-emerald-100 text-emerald-800">
+                  <CreditCard className="w-5 h-5 text-emerald-800" />
+                </span>
+                <h2 className="text-lg font-bold text-slate-900">
+                  Class Fee Payment Progress &amp; Ledger
+                </h2>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Live status of ₹300 monthly installments for students in {activeFeeClass?.name || 'Class'}.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+              <label className="text-xs font-bold text-slate-700 whitespace-nowrap">Class:</label>
+              <select
+                value={feeClassId}
+                onChange={e => handleFeeClassChange(e.target.value)}
+                className="bg-white text-xs font-bold text-slate-800 py-1.5 px-2.5 rounded-lg border border-slate-300 focus:outline-emerald-600 cursor-pointer"
+              >
+                {classes.map(c => {
+                  const isInCharge = inChargeClass && inChargeClass.id === c.id;
+                  return (
+                    <option key={c.id} value={c.id}>
+                      {c.name} {isInCharge ? '★ (Class In-Charge)' : ''}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          </div>
+
+          {/* Month-by-Month Tuition Installment Progress Tracker */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-emerald-800" />
+                  Class Fee Payment Progress (12 Installments: June 2026 – May 2027)
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Live status of ₹300 monthly installments for students in {activeFeeClass?.name || 'Class'}.
+                </p>
+              </div>
+            </div>
+
+            {feeClassStudents.length === 0 ? (
+              <div className="text-center py-10 text-slate-400 text-xs">
+                No students enrolled in {activeFeeClass?.name || 'this class'}.
+              </div>
+            ) : (
+              <div className="border border-slate-200 rounded-xl overflow-x-auto w-full text-xs scrollbar-thin">
+                <table className="w-full min-w-[750px] text-left">
+                  <thead className="bg-slate-100 text-slate-700 font-bold border-b">
+                    <tr>
+                      <th className="p-2.5 w-12 text-center font-mono">Roll</th>
+                      <th className="p-2.5 font-mono text-center w-24">Exam Reg No</th>
+                      <th className="p-2.5 font-mono w-24">Adm No</th>
+                      <th className="p-2.5 min-w-[150px]">Student Name</th>
+                      {TUITION_FEE_MONTHS.map(m => (
+                        <th key={m} className="p-2 text-center font-mono text-[10px] w-12">
+                          {m.split(' ')[0].substring(0, 3)}
+                        </th>
+                      ))}
+                      <th className="p-2.5 text-center">Paid / 12</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {feeClassStudents.map(st => {
+                      const paidMonths = new Set<string>();
+                      classFeePayments
+                        .filter(p => p.studentId === st.id)
+                        .forEach(p => {
+                          (p.tuitionFeeMonths || []).forEach(m => paidMonths.add(m));
+                        });
+                      const count = paidMonths.size;
+                      const regNo =
+                        st.examRegisterNumbers?.[selectedExamId] ||
+                        (st as any).examRegisterNos?.[selectedExamId] ||
+                        (st as any).examRegNo ||
+                        '—';
+
+                      return (
+                        <tr key={st.id} className="hover:bg-slate-50 transition">
+                          <td className="p-2 text-center font-mono font-bold text-slate-600">
+                            {st.rollNo}
+                          </td>
+                          <td className="p-2 text-center font-mono font-bold text-emerald-950 bg-emerald-50/40">
+                            {regNo}
+                          </td>
+                          <td className="p-2 font-mono font-semibold text-slate-700">
+                            {st.admissionNo}
+                          </td>
+                          <td className="p-2 font-bold text-slate-900">
+                            {st.nameEn}
+                          </td>
+                          {TUITION_FEE_MONTHS.map(m => {
+                            const isPaid = paidMonths.has(m);
+                            return (
+                              <td key={m} className="p-2 text-center">
+                                {isPaid ? (
+                                  <span
+                                    title={`${m}: Paid`}
+                                    className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-emerald-600 text-white text-[10px] font-bold shadow-2xs"
+                                  >
+                                    ✓
+                                  </span>
+                                ) : (
+                                  <span
+                                    title={`${m}: Pending`}
+                                    className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-slate-100 text-slate-400 text-[10px]"
+                                  >
+                                    —
+                                  </span>
+                                )}
+                              </td>
+                            );
+                          })}
+                          <td className="p-2 text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                count === 12
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : count > 0
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-slate-100 text-slate-500'
+                              }`}
+                            >
+                              {count} / 12
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          TAB 6: NEWS TAB (WITH CREATE CAPABILITY)
+         ========================================================================= */}
+      {activeTab === 'news' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Newspaper className="w-5 h-5 text-emerald-800" />
+                  <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                    {isMl ? 'മദ്റസ വാർത്തകളും സർക്കുലറുകളും' : 'Madrasa News & Announcements'}
+                  </h2>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Official circulars, academic notices, and fest announcements from Al-Madrasathul Islamiya Pallikkuth
+                </p>
+              </div>
+
+              {/* Action Buttons: Create News & Category Filter */}
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateNewsModal(true)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl transition shadow-xs cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Create News / Announcement</span>
+                </button>
+
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                  {(['all', 'academic', 'events', 'general'] as const).map(tabKey => (
+                    <button
+                      key={tabKey}
+                      type="button"
+                      onClick={() => setNewsFilter(tabKey)}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition capitalize cursor-pointer ${
+                        newsFilter === tabKey
+                          ? 'bg-emerald-800 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {tabKey}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* News Cards Feed */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-5">
+              {newsList
+                .filter(item => newsFilter === 'all' || item.categoryEn.toLowerCase() === newsFilter)
+                .map(item => (
+                  <div
+                    key={item.id}
+                    className="p-5 rounded-2xl border border-slate-200 bg-white hover:border-emerald-300 hover:shadow-xs transition flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                          {isMl ? item.categoryMl : item.categoryEn}
+                        </span>
+                        <span className="text-[11px] font-mono text-slate-400">
+                          {item.date}
+                        </span>
+                      </div>
+
+                      <h3 className="font-bold text-slate-900 text-sm leading-snug">
+                        {isMl ? item.titleMl : item.titleEn}
+                      </h3>
+
+                      <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                        {isMl ? item.summaryMl : item.summaryEn}
+                      </p>
+                    </div>
+
+                    <div className="pt-4 mt-3 border-t border-slate-100 flex items-center justify-between">
+                      <span className="text-[11px] text-slate-400 font-medium">
+                        By {item.author}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedNews(item)}
+                        className="text-xs font-bold text-emerald-800 hover:text-emerald-950 flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>Read More</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+
+          {/* CREATE NEWS MODAL FOR TEACHERS */}
+          {showCreateNewsModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+              <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4">
+                  <div className="flex items-center gap-2">
+                    <Plus className="w-4 h-4 text-emerald-800" />
+                    <h3 className="text-sm font-bold text-slate-900">
+                      Create News / Madrasa Announcement
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateNewsModal(false)}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handlePublishNews} className="space-y-3.5 text-xs">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">
+                      Announcement Title (English) *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Half-Yearly Examination Timetable Release"
+                      value={newsFormData.titleEn}
+                      onChange={e => setNewsFormData({ ...newsFormData, titleEn: e.target.value })}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">
+                      Announcement Title (Malayalam)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. അർദ്ധവാർഷിക പരീക്ഷാ ടൈംടേബിൾ പ്രസിദ്ധീകരിച്ചു"
+                      value={newsFormData.titleMl}
+                      onChange={e => setNewsFormData({ ...newsFormData, titleMl: e.target.value })}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Category *</label>
+                      <select
+                        value={newsFormData.categoryEn}
+                        onChange={e => {
+                          const cat = e.target.value;
+                          const catMl =
+                            cat === 'Academic'
+                              ? 'പരീക്ഷാ നിർവ്വഹണം'
+                              : cat === 'Events'
+                              ? 'ഇസ്ലാമിക പരിപാടികൾ'
+                              : 'ഭരണനിർവ്വഹണം';
+                          setNewsFormData({
+                            ...newsFormData,
+                            categoryEn: cat,
+                            categoryMl: catMl,
+                          });
+                        }}
+                        className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                      >
+                        <option value="Academic">Academic</option>
+                        <option value="Events">Events</option>
+                        <option value="General">General</option>
+                      </select>
+                    </div>
+
+                    <div className="flex items-center pt-6">
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={newsFormData.isImportant}
+                          onChange={e => setNewsFormData({ ...newsFormData, isImportant: e.target.checked })}
+                          className="w-4 h-4 text-emerald-800 rounded focus:ring-emerald-700"
+                        />
+                        <span className="font-bold text-slate-700">Mark as Important</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">
+                      Summary / Short Excerpt (English) *
+                    </label>
+                    <textarea
+                      rows={2}
+                      required
+                      placeholder="Brief overview visible on the card feed..."
+                      value={newsFormData.summaryEn}
+                      onChange={e => setNewsFormData({ ...newsFormData, summaryEn: e.target.value })}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                    ></textarea>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">
+                      Summary (Malayalam)
+                    </label>
+                    <textarea
+                      rows={2}
+                      placeholder="മലയാളത്തിലുള്ള സംഗ്രഹം..."
+                      value={newsFormData.summaryMl}
+                      onChange={e => setNewsFormData({ ...newsFormData, summaryMl: e.target.value })}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                    ></textarea>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">
+                      Full Content / Details (English) *
+                    </label>
+                    <textarea
+                      rows={4}
+                      required
+                      placeholder="Detailed announcement content..."
+                      value={newsFormData.contentEn}
+                      onChange={e => setNewsFormData({ ...newsFormData, contentEn: e.target.value })}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                    ></textarea>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">
+                      Full Content (Malayalam)
+                    </label>
+                    <textarea
+                      rows={3}
+                      placeholder="വിശദമായ വാർത്ത മലയാളത്തിൽ..."
+                      value={newsFormData.contentMl}
+                      onChange={e => setNewsFormData({ ...newsFormData, contentMl: e.target.value })}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                    ></textarea>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateNewsModal(false)}
+                      className="px-4 py-2 text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition font-semibold cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSavingNews}
+                      className="px-5 py-2 text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition font-bold disabled:opacity-50 cursor-pointer flex items-center gap-1.5 shadow-xs"
+                    >
+                      <Save className="w-4 h-4" />
+                      <span>{isSavingNews ? 'Publishing...' : 'Publish to Firestore'}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* VIEW DETAILED NEWS MODAL */}
+          {selectedNews && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+              <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 max-h-[85vh] overflow-y-auto">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-3">
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                    {isMl ? selectedNews.categoryMl : selectedNews.categoryEn}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedNews(null)}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="text-xs text-slate-400 font-mono mb-2">
+                  Published: {selectedNews.date} • {selectedNews.author}
+                </div>
+
+                <h2 className="text-base font-bold text-slate-900 mb-3">
+                  {isMl ? selectedNews.titleMl : selectedNews.titleEn}
+                </h2>
+
+                <div className="text-xs text-slate-600 leading-relaxed space-y-3">
+                  <p className="font-semibold text-slate-800">
+                    {isMl ? selectedNews.summaryMl : selectedNews.summaryEn}
+                  </p>
+                  <p className="whitespace-pre-line">
+                    {isMl ? selectedNews.contentMl : selectedNews.contentEn}
+                  </p>
+                </div>
+
+                <div className="pt-4 mt-6 border-t border-slate-200 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedNews(null)}
+                    className="px-4 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* =========================================================================
+          TAB 7: NOTIFICATION TAB (Exact same UI as Parent Portal)
+         ========================================================================= */}
+      {activeTab === 'notification' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Bell className="w-5 h-5 text-emerald-800" />
+                  <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                    {isMl ? 'അറിയിപ്പുകളും സന്ദേശങ്ങളും' : 'Notification Center & Alerts'}
+                  </h2>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Real-time alerts, circular notices, and fee receipts for your classes and students
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
+                  className="px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 border border-emerald-300 rounded-lg transition cursor-pointer"
+                >
+                  {isMl ? 'എല്ലാം വായിച്ചതായി അടയാളപ്പെടുത്തുക' : 'Mark All as Read'}
+                </button>
+              </div>
+            </div>
+
+            {/* Notifications List */}
+            <div className="divide-y divide-slate-100 pt-2">
+              {notifications.map(notif => (
+                <div
+                  key={notif.id}
+                  onClick={() => setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n))}
+                  className={`p-4 rounded-xl transition flex items-start justify-between gap-3 cursor-pointer ${
+                    notif.read ? 'bg-white hover:bg-slate-50' : 'bg-emerald-50/50 hover:bg-emerald-50'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                        notif.type === 'exam'
+                          ? 'bg-amber-100 text-amber-800'
+                          : notif.type === 'fee'
+                          ? 'bg-purple-100 text-purple-800'
+                          : 'bg-emerald-100 text-emerald-800'
+                      }`}
+                    >
+                      {notif.type === 'exam' ? (
+                        <Award className="w-4 h-4" />
+                      ) : notif.type === 'fee' ? (
+                        <CreditCard className="w-4 h-4" />
+                      ) : (
+                        <Bell className="w-4 h-4" />
+                      )}
+                    </div>
+
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className={`text-xs font-bold ${notif.read ? 'text-slate-800' : 'text-slate-900'}`}>
+                          {isMl ? notif.titleMl : notif.titleEn}
+                        </h4>
+                        {!notif.read && (
+                          <span className="w-2 h-2 rounded-full bg-emerald-600 shrink-0"></span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                        {isMl ? notif.descMl : notif.descEn}
+                      </p>
+                      <span className="text-[10px] text-slate-400 font-mono mt-1.5 block">
+                        {notif.time}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          TAB 8: CONTACT TAB (Exact same Madrasa contact card UI as Parent Portal)
+         ========================================================================= */}
+      {activeTab === 'contact' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-6">
+            <div className="border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-2">
+                <PhoneCall className="w-5 h-5 text-emerald-800" />
+                <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                  {isMl ? 'മദ്റസ ഓഫീസ് ബന്ധപ്പെടാനുള്ള വിവരങ്ങൾ' : 'Madrasa Contact & Helpdesk'}
+                </h2>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Reach out to the Principal and administration for admissions, fees, and examination inquiries
+              </p>
+            </div>
+
+            {/* Primary Madrasa Contact Card */}
+            <div className="bg-gradient-to-r from-emerald-950 to-emerald-900 text-white rounded-2xl p-6 relative overflow-hidden shadow-sm">
+              <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
+                <GraduationCap className="w-48 h-48" />
+              </div>
+
+              <div className="relative z-10 space-y-4">
+                <div className="font-serif text-emerald-300 text-sm font-bold" dir="rtl">
+                  بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
+                </div>
+
+                <div>
+                  <h3 className="text-xl sm:text-2xl font-black font-serif text-white">
+                    Al-Madrasathul Islamiya Pallikkuth
+                  </h3>
+                  <h4 className="text-sm font-bold text-emerald-200 mt-0.5">
+                    അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്
+                  </h4>
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <span className="bg-emerald-900/90 border border-emerald-400/50 text-emerald-200 px-2.5 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1 shadow-2xs">
+                      <ShieldCheck className="w-3 h-3 text-emerald-300" />
+                      <span>KMEB-affiliated</span>
+                    </span>
+                    <span className="bg-amber-400/20 border border-amber-300/50 text-amber-200 px-2.5 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1 shadow-2xs">
+                      <Award className="w-3 h-3 text-amber-300" />
+                      <span>A+ Accreditation</span>
+                    </span>
+                    <span className="text-xs text-emerald-300/80 font-mono">
+                      Reg: KEC-8492
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-emerald-100/90 leading-relaxed mt-2 max-w-2xl">
+                    Committed to excellence in Islamic education through innovative teaching methods, modern educational technology, and student-centered moral development.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-emerald-800/80 text-xs">
+                  {/* Address */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5 text-emerald-300 font-bold uppercase text-[10px] tracking-wider">
+                      <MapPin className="w-3.5 h-3.5" />
+                      <span>Address</span>
+                    </div>
+                    <p className="text-white font-medium">
+                      Pattikkad P.O, Malappuram Dt.
+                    </p>
+                    <p className="text-emerald-200/80 text-[11px]">
+                      Kerala, India – 679325
+                    </p>
+                  </div>
+
+                  {/* Phone */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5 text-emerald-300 font-bold uppercase text-[10px] tracking-wider">
+                      <Phone className="w-3.5 h-3.5" />
+                      <span>Phone / WhatsApp</span>
+                    </div>
+                    <a
+                      href="tel:9447485432"
+                      className="text-white font-bold font-mono text-sm hover:underline block"
+                    >
+                      9447 485 432
+                    </a>
+                    <p className="text-emerald-200/80 text-[11px]">
+                      Direct Office Line
+                    </p>
+                  </div>
+
+                  {/* Email */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5 text-emerald-300 font-bold uppercase text-[10px] tracking-wider">
+                      <Mail className="w-3.5 h-3.5" />
+                      <span>Email Address</span>
+                    </div>
+                    <a
+                      href="mailto:amipallikkuth@gmail.com"
+                      className="text-white font-semibold hover:underline block break-all text-xs"
+                    >
+                      amipallikkuth@gmail.com
+                    </a>
+                    <p className="text-emerald-200/80 text-[11px]">
+                      Official Correspondence
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Principal Info & Timings Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                <div className="flex items-center gap-2">
+                  <UserIcon className="w-4 h-4 text-emerald-800" />
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Sadr Muallim / Principal
+                  </span>
+                </div>
+                <div className="text-base font-bold text-slate-900">
+                  ASLAM TK (അസ്‌ലം ടി.കെ.)
+                </div>
+                <p className="text-xs text-slate-500">
+                  Available for consultation regarding student performance and moral training.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-emerald-800" />
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Office Working Hours
+                  </span>
+                </div>
+                <div className="text-xs font-semibold text-slate-800">
+                  Sat – Wed: 07:00 AM – 12:30 PM &amp; 04:30 PM – 06:30 PM
+                </div>
+                <div className="text-xs text-slate-600">
+                  Thursday: 07:00 AM – 11:30 AM • Friday: Closed (Jum'ah)
+                </div>
+              </div>
+            </div>
+
+            {/* Direct Action Buttons */}
+            <div className="flex flex-wrap items-center gap-3">
+              <a
+                href="tel:9447485432"
+                className="flex items-center gap-2 px-4 py-2.5 bg-emerald-800 text-white font-bold text-xs rounded-xl hover:bg-emerald-900 transition shadow-xs"
+              >
+                <Phone className="w-4 h-4" />
+                <span>Call 9447 485 432</span>
+              </a>
+
+              <a
+                href="mailto:amipallikkuth@gmail.com"
+                className="flex items-center gap-2 px-4 py-2.5 bg-white text-slate-700 font-bold text-xs rounded-xl border border-slate-300 hover:bg-slate-50 transition"
+              >
+                <Mail className="w-4 h-4" />
+                <span>Send Email</span>
+              </a>
+
+              <a
+                href="https://wa.me/919447485432"
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 text-emerald-900 font-bold text-xs rounded-xl border border-emerald-300 hover:bg-emerald-100 transition"
+              >
+                <ExternalLink className="w-4 h-4" />
+                <span>WhatsApp Inquiry</span>
+              </a>
+            </div>
+
+            {/* Send Query / Message Form */}
+            <div className="pt-4 border-t border-slate-200 space-y-3">
+              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                {isMl ? 'മദ്റസ ഓഫീസിലേക്ക് സന്ദേശം അയക്കുക' : 'Send a Message to Madrasa Office'}
+              </h4>
+
+              {contactSent ? (
+                <div className="bg-emerald-50 border border-emerald-300 p-4 rounded-xl flex items-center gap-3 text-emerald-900 text-xs">
+                  <CheckCircle className="w-5 h-5 text-emerald-700 shrink-0" />
+                  <div>
+                    <div className="font-bold">Message Submitted Successfully!</div>
+                    <div className="mt-0.5 text-emerald-800">
+                      Thank you. The Madrasa office has received your inquiry and will respond shortly.
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <form
+                  onSubmit={e => {
+                    e.preventDefault();
+                    if (contactMessage.trim()) {
+                      setContactSent(true);
+                      setTimeout(() => {
+                        setContactSubject('');
+                        setContactMessage('');
+                        setContactSent(false);
+                      }, 5000);
+                    }
+                  }}
+                  className="space-y-3"
+                >
+                  <input
+                    type="text"
+                    placeholder="Subject (e.g. Academic syllabus query, Leave note, Exam verification)"
+                    value={contactSubject}
+                    onChange={e => setContactSubject(e.target.value)}
+                    className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                  />
+                  <textarea
+                    rows={3}
+                    required
+                    placeholder="Write your message or inquiry here..."
+                    value={contactMessage}
+                    onChange={e => setContactMessage(e.target.value)}
+                    className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                  ></textarea>
+                  <button
+                    type="submit"
+                    className="flex items-center gap-2 px-4 py-2 bg-emerald-800 text-white font-bold text-xs rounded-xl hover:bg-emerald-900 transition cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Send Message</span>
+                  </button>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          TAB 9: ABOUT TAB (Exact same institutional description UI as Parent Portal)
+         ========================================================================= */}
+      {activeTab === 'about' && (
+        <div className="space-y-6">
+          <div className="bg-gradient-to-br from-emerald-950 via-emerald-900 to-emerald-950 text-white rounded-3xl p-6 sm:p-8 shadow-md border border-emerald-800/80 relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
+              <GraduationCap className="w-64 h-64 text-emerald-300" />
+            </div>
+
+            <div className="relative z-10 space-y-6">
+              {/* Bismillah Header */}
+              <div className="text-center font-serif text-emerald-300 text-base sm:text-lg" dir="rtl">
+                بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
+              </div>
+
+              {/* Top Header & Badges */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-emerald-800/80 pb-5">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-14 h-14 rounded-2xl bg-white/10 flex items-center justify-center text-emerald-200 shadow-inner shrink-0">
+                    <GraduationCap className="w-8 h-8" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[10px] font-bold tracking-wider uppercase px-2.5 py-0.5 rounded-full bg-emerald-800/90 text-emerald-200 border border-emerald-700/60 flex items-center gap-1">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                        <span>Institutional Overview</span>
+                      </span>
+                    </div>
+                    <h2 className="text-xl sm:text-2xl font-bold font-serif text-white tracking-tight">
+                      Al-Madrasathul Islamiya Pallikkuth
+                    </h2>
+                    <div className="text-xs sm:text-sm font-semibold text-emerald-200 font-mono mt-0.5 tracking-wider">
+                      Reg No: KMEB/MPM/026/M0161/19
+                    </div>
+                    <p className="text-xs font-semibold text-emerald-300 tracking-wide mt-1">
+                      Islamic Education &amp; Digital Learning
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 sm:self-start">
+                  <span className="bg-emerald-900/90 border border-emerald-400/50 text-emerald-200 px-3.5 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 shadow-xs">
+                    <ShieldCheck className="w-4 h-4 text-emerald-300" />
+                    <span>KMEB-affiliated</span>
+                  </span>
+                  <span className="bg-amber-400/20 border border-amber-300/50 text-amber-200 px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-xs">
+                    <Award className="w-4 h-4 text-amber-300" />
+                    <span>A+ Accreditation</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Concise Statement */}
+              <div className="bg-white/5 backdrop-blur-xs p-5 sm:p-6 rounded-2xl border border-white/10 space-y-3">
+                <div className="text-xs uppercase font-bold tracking-wider text-emerald-300 flex items-center gap-2">
+                  <BookOpen className="w-4 h-4" />
+                  <span>OFFICIAL STATEMENT</span>
+                </div>
+                <p className="text-sm sm:text-base text-emerald-50 leading-relaxed font-sans">
+                  Al-Madrasathul Islamiya Pallikkuth (KMEB-affiliated, A+ Accredited) blends traditional Islamic values with modern educational technology. We partner with parents and teachers to create an engaging, student-centered digital learning environment that nurtures academic excellence, moral character, and holistic development.
+                </p>
+              </div>
+
+              {/* 3 Core Highlight Pillars */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-1 text-xs">
+                <div className="bg-emerald-950/80 p-4 rounded-xl border border-emerald-800/60">
+                  <div className="font-bold text-amber-300 flex items-center gap-1.5 mb-1.5 text-xs uppercase tracking-wider">
+                    <Award className="w-4 h-4" />
+                    <span>KMEB A+ Accredited</span>
+                  </div>
+                  <p className="text-xs text-emerald-200/90 leading-relaxed">
+                    Certified with A+ grade by Kerala Madrasa Education Board for superior academic, ethical, and organizational standards.
+                  </p>
+                </div>
+
+                <div className="bg-emerald-950/80 p-4 rounded-xl border border-emerald-800/60">
+                  <div className="font-bold text-emerald-300 flex items-center gap-1.5 mb-1.5 text-xs uppercase tracking-wider">
+                    <Sparkles className="w-4 h-4" />
+                    <span>Modern Educational Tech</span>
+                  </div>
+                  <p className="text-xs text-emerald-200/90 leading-relaxed">
+                    Digital learning content, multimedia classrooms, and computerized evaluation and mark management systems.
+                  </p>
+                </div>
+
+                <div className="bg-emerald-950/80 p-4 rounded-xl border border-emerald-800/60">
+                  <div className="font-bold text-teal-300 flex items-center gap-1.5 mb-1.5 text-xs uppercase tracking-wider">
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>Values &amp; Character</span>
+                  </div>
+                  <p className="text-xs text-emerald-200/90 leading-relaxed">
+                    Nurturing deep Islamic moral values (akhlaq), Tajweed recitation, Subhi prayer habits, and active parent-teacher partnership.
+                  </p>
+                </div>
+              </div>
+
+              {/* Credentials Info Box */}
+              <div className="bg-white/10 rounded-2xl p-4 sm:p-5 border border-white/10 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs text-emerald-100">
+                <div>
+                  <span className="text-[11px] text-emerald-400 font-bold block uppercase tracking-wider">Affiliation</span>
+                  <span className="font-semibold text-white mt-0.5 block">Kerala Madrasa Education Board (KMEB)</span>
+                </div>
+                <div>
+                  <span className="text-[11px] text-emerald-400 font-bold block uppercase tracking-wider">Accreditation</span>
+                  <span className="font-semibold text-white mt-0.5 block">Mi'yar Grading A+ Accredited</span>
+                </div>
+                <div>
+                  <span className="text-[11px] text-emerald-400 font-bold block uppercase tracking-wider">Campus Location</span>
+                  <span className="font-semibold text-white mt-0.5 block">Pallikkuth, Pattikkad P.O, Malappuram Dt.</span>
+                </div>
+                <div>
+                  <span className="text-[11px] text-emerald-400 font-bold block uppercase tracking-wider">Head of the Institution</span>
+                  <span className="font-semibold text-white mt-0.5 block text-sm font-bold text-amber-200">ASLAM TK</span>
+                </div>
+              </div>
+
+              {/* Social Media Section */}
+              <div className="bg-white/5 backdrop-blur-xs p-5 sm:p-6 rounded-2xl border border-white/10 space-y-3.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-300 flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Follow us</span>
+                    </h3>
+                    <p className="text-xs text-emerald-100/80 mt-0.5">
+                      Connect with Al-Madrasathul Islamiya Pallikkuth on our official social media channels
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                  <a
+                    href="https://www.instagram.com/ami.pallikkuth?vrfl=Nmo4cGxnaDU0YTg1"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-700 to-green-600 hover:from-emerald-600 hover:to-green-500 text-white font-bold text-xs shadow-sm hover:shadow transition border border-emerald-500/40 group"
+                  >
+                    <Instagram className="w-4 h-4 text-emerald-200 group-hover:scale-110 transition-transform" />
+                    <span>Instagram</span>
+                    <ExternalLink className="w-3.5 h-3.5 text-emerald-200/70 ml-auto" />
+                  </a>
+
+                  <a
+                    href="https://www.facebook.com/share/1DfZmA6LPT/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-700 to-green-600 hover:from-emerald-600 hover:to-green-500 text-white font-bold text-xs shadow-sm hover:shadow transition border border-emerald-500/40 group"
+                  >
+                    <Facebook className="w-4 h-4 text-emerald-200 group-hover:scale-110 transition-transform" />
+                    <span>Facebook</span>
+                    <ExternalLink className="w-3.5 h-3.5 text-emerald-200/70 ml-auto" />
+                  </a>
+
+                  <a
+                    href="https://youtube.com/@amipallikkuth?si=Upv5bhFgIIK9LWgT"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-700 to-green-600 hover:from-emerald-600 hover:to-green-500 text-white font-bold text-xs shadow-sm hover:shadow transition border border-emerald-500/40 group"
+                  >
+                    <Youtube className="w-4 h-4 text-emerald-200 group-hover:scale-110 transition-transform" />
+                    <span>YouTube</span>
+                    <ExternalLink className="w-3.5 h-3.5 text-emerald-200/70 ml-auto" />
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
