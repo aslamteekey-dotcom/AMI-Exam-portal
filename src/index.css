@@ -1,22 +1,22 @@
 @import "tailwindcss";
 
+@page {
+  size: A4 portrait;
+  margin: 8mm 10mm;
+}
+
 @media print {
-  @page {
-    size: A4 portrait;
-    margin: 6mm;
-  }
-  body, html {
-    background: white !important;
-    color: black !important;
-    font-size: 10pt;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
+  html, body {
+    width: 210mm;
+    height: 297mm;
     margin: 0 !important;
     padding: 0 !important;
-    width: 100% !important;
-    height: auto !important;
+    background: #ffffff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
-  header, nav, footer, button, .print\:hidden, aside, .navbar-container {
+  /* Hide all UI elements except the printable card */
+  nav, header, footer, .no-print, button, .parent-nav, .print\:hidden, aside, .navbar-container {
     display: none !important;
   }
   main {
@@ -25,18 +25,19 @@
     max-width: 100% !important;
     width: 100% !important;
   }
-  #report-print-sheet, .report-print-sheet {
-    box-shadow: none !important;
-    border: 1.5px solid #064e3b !important;
+  .printable-progress-card {
     width: 100% !important;
-    max-width: 100% !important;
+    max-width: 190mm !important;
+    min-height: 275mm !important;
     margin: 0 auto !important;
-    padding: 10px 14px !important;
+    padding: 12px 16px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    page-break-after: avoid !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
     box-sizing: border-box !important;
-    min-height: auto !important;
-    height: auto !important;
   }
   .report-card-print-container {
     page-break-after: always !important;
@@ -54,3 +55,4 @@
     break-after: avoid !important;
   }
 }
+

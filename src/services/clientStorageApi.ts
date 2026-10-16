@@ -251,6 +251,7 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       nameMl: 'അബ്ദുൽ റഹ്മാൻ',
       role: 'teacher',
       plainPassword: 'teacher123',
+      inChargeClassId: 'cls_1',
       active: true,
       email: 'abdulrahman@madrasapallikkuth.edu',
       phone: '+91 9847123456',
@@ -263,6 +264,7 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       nameMl: 'മുഹമ്മദ് ഫൈസി',
       role: 'teacher',
       plainPassword: 'teacher123',
+      inChargeClassId: 'cls_2',
       active: true,
       email: 'muhammadfaizy@madrasapallikkuth.edu',
       phone: '+91 9847234567',
@@ -275,6 +277,7 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       nameMl: 'ഉസ്മാൻ മുസ്ലിയാർ',
       role: 'teacher',
       plainPassword: 'teacher123',
+      inChargeClassId: 'cls_7',
       active: true,
       email: 'usmanmusliyar@madrasapallikkuth.edu',
       phone: '+91 9847345678',
@@ -1731,8 +1734,25 @@ export class ClientStorageApi {
       (student as any).examRegisterNos?.[examId] ||
       (student as any).examRegNo ||
       String(student.rollNo);
-    const classInCharge = this.db.users.find(u => u.role === 'teacher' && (u as any).inChargeClassId === student.classId);
-    const classTeacherName = classInCharge ? ((classInCharge as any).nameEn || classInCharge.name) : undefined;
+    const classInCharge = this.db.users.find(
+      u =>
+        u.role === 'teacher' &&
+        ((u as any).inChargeClassId === student.classId ||
+          (u as any).inChargeClassId === cls.id ||
+          (u as any).inChargeClassId === `cls_${cls.numericGrade}`)
+    );
+    let classTeacherName = classInCharge ? ((classInCharge as any).nameEn || classInCharge.name) : undefined;
+    if (!classTeacherName) {
+      const asgn = this.db.teacherAssignments.find(a => a.classId === cls.id || a.classId === student.classId);
+      if (asgn) {
+        const t = this.db.users.find(u => u.id === asgn.teacherId);
+        if (t) classTeacherName = t.name;
+      }
+    }
+    if (!classTeacherName) {
+      const anyTeacher = this.db.users.find(u => u.role === 'teacher' && u.active);
+      if (anyTeacher) classTeacherName = anyTeacher.name;
+    }
 
     return {
       student,
@@ -1863,6 +1883,9 @@ export class ClientStorageApi {
 
         this.saveDB();
         this.setCurrentUser(adminUser);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_settings_updated', { detail: this.db.settings }));
+        }
         return this.jsonResponse({ success: true, user: adminUser });
       }
 
@@ -3125,6 +3148,7 @@ export class ClientStorageApi {
         const exam = this.db.examinations.find(e => e.id === eId);
         return this.jsonResponse({
           reports,
+          settings: this.db.settings,
           className: cls?.name,
           examName: exam?.nameEn,
           totalStudents: students.length,
@@ -3272,7 +3296,17 @@ export class ClientStorageApi {
 
       if (path === '/api/settings' && method === 'PUT') {
         Object.assign(this.db.settings, bodyData);
+        if (bodyData.principalNameEn) {
+          const adminUser = this.db.users.find(u => u.role === 'admin' || u.username === 'principal');
+          if (adminUser) {
+            adminUser.name = bodyData.principalNameEn.trim();
+            if (bodyData.principalNameMl) adminUser.nameMl = bodyData.principalNameMl.trim();
+          }
+        }
         this.saveDB();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_settings_updated', { detail: this.db.settings }));
+        }
         return this.jsonResponse(this.db.settings);
       }
 

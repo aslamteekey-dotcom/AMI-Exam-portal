@@ -1,9 +1,8 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { StudentProgressReport, InstitutionSettings } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { Printer, Download, Award, GraduationCap, ShieldAlert, AlertTriangle } from 'lucide-react';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import html2pdf from 'html2pdf.js';
 import { extractComponentColumns, calculateStudentReportMetrics } from '../../utils/reportCalculations';
 
 interface Props {
@@ -21,64 +20,59 @@ export const ProgressReportCard: React.FC<Props> = ({
   hideToolbar = false,
   isBatchItem = false,
 }) => {
-  const { lang, t } = useAuth();
+  const { lang, t, fetchWithAuth } = useAuth();
   const reportRef = useRef<HTMLDivElement>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [currentSettings, setCurrentSettings] = useState<InstitutionSettings>(settings);
 
-  // CRITICAL SAFE GUARD (ELIMINATE WHITE SCREEN / CRASH)
-  if (!report || !report.student) {
-    return null;
-  }
-
-  const isMl = lang === 'ml';
-
-  const handlePrint = () => {
-    window.print();
-  };
-
-  const handleDownloadPdf = async () => {
-    if (!reportRef.current) return;
-    setIsExporting(true);
-    try {
-      const element = reportRef.current;
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-      });
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4',
-      });
-
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      const imgProps = pdf.getImageProperties(imgData);
-
-      // Fit card proportionally onto single crisp A4 page
-      const ratio = Math.min(pdfWidth / imgProps.width, pdfHeight / imgProps.height);
-      const finalWidth = imgProps.width * ratio;
-      const finalHeight = imgProps.height * ratio;
-      const posX = (pdfWidth - finalWidth) / 2;
-      const posY = (pdfHeight - finalHeight) / 2;
-
-      pdf.addImage(imgData, 'PNG', posX, posY, finalWidth, finalHeight, undefined, 'FAST');
-      const safeStudentName = (report?.student?.nameEn || 'student').replace(/\s+/g, '_');
-      const safeExamName = (report?.examination?.nameEn || 'exam').replace(/\s+/g, '_');
-      pdf.save(`Progress_Report_${safeStudentName}_${safeExamName}.pdf`);
-    } catch (err) {
-      console.error('PDF export error:', err);
-      alert('Failed to generate PDF. Please use the Print option and select "Save as PDF".');
-    } finally {
-      setIsExporting(false);
+  useEffect(() => {
+    if (settings) {
+      setCurrentSettings(settings);
     }
+  }, [settings]);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage(prev => (prev === msg ? null : prev));
+    }, 4500);
   };
 
-  // Helper alias to keep compatibility
-  const extractColumns = extractComponentColumns;
+  // Globally fetch settings & listen to updates so Admin Principal / Madrasa Head name is dynamically connected
+  useEffect(() => {
+    let isMounted = true;
+    const fetchFreshSettings = async () => {
+      try {
+        const res = await (fetchWithAuth ? fetchWithAuth('/api/settings') : fetch('/api/settings'));
+        if (res.ok) {
+          const fresh = await res.json();
+          if (fresh && isMounted) {
+            setCurrentSettings(prev => ({ ...prev, ...fresh }));
+          }
+        }
+      } catch (err) {
+        console.warn('Error fetching fresh settings in ProgressReportCard:', err);
+      }
+    };
+
+    fetchFreshSettings();
+
+    const handleSettingsUpdated = (e: any) => {
+      if (!isMounted) return;
+      if (e?.detail) {
+        setCurrentSettings(prev => ({ ...prev, ...e.detail }));
+      } else {
+        fetchFreshSettings();
+      }
+    };
+
+    window.addEventListener('madrasa_settings_updated', handleSettingsUpdated);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('madrasa_settings_updated', handleSettingsUpdated);
+    };
+  }, []);
 
   // Strictly English class name (e.g., "Class 7", strip any Malayalam text)
   const cleanClassName = (report?.classNameEn || 'Class')
@@ -90,7 +84,118 @@ export const ProgressReportCard: React.FC<Props> = ({
   const classNumeral = cleanClassName.replace(/[^0-9]/g, '') || cleanClassName || '—';
 
   // Dynamically resolve Class In-charge Teacher name
-  const classInChargeName = report?.classTeacherName || (report as any)?.classInChargeName || 'Class In-Charge';
+  const [teacherName, setTeacherName] = useState<string>(
+    report?.classTeacherName || (report as any)?.classInChargeName || ''
+  );
+
+  useEffect(() => {
+    if (report?.classTeacherName && report.classTeacherName !== 'Class In-Charge') {
+      setTeacherName(report.classTeacherName);
+      return;
+    }
+    let isMounted = true;
+    const fetchTeacher = async () => {
+      try {
+        const res = await (fetchWithAuth ? fetchWithAuth('/api/teachers') : fetch('/api/teachers'));
+        if (res.ok) {
+          const teachers: any[] = await res.json();
+          if (Array.isArray(teachers) && isMounted) {
+            const classId = report?.student?.classId;
+            const cleanNum = cleanClassName.replace(/[^0-9]/g, '');
+            const match = teachers.find(
+              t =>
+                (classId && t.inChargeClassId === classId) ||
+                (cleanNum && t.inChargeClassId === `cls_${cleanNum}`) ||
+                (t.inChargeClassId && report?.classNameEn && report.classNameEn.toLowerCase().includes(t.inChargeClassId.toLowerCase()))
+            );
+            if (match) {
+              setTeacherName(match.name || match.nameEn);
+            } else {
+              const assigned = teachers.find(
+                t => Array.isArray(t.assignments) && t.assignments.some((a: any) => a.classId === classId || a.classId === `cls_${cleanNum}`)
+              );
+              if (assigned) {
+                setTeacherName(assigned.name || assigned.nameEn);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to load teachers for class teacher signature:', e);
+      }
+    };
+    fetchTeacher();
+    return () => {
+      isMounted = false;
+    };
+  }, [report?.student?.classId, report?.classNameEn, report?.classTeacherName, cleanClassName]);
+
+  const resolvedTeacherDisplayName =
+    teacherName && teacherName !== 'Class In-Charge'
+      ? teacherName
+      : report?.classTeacherName && report.classTeacherName !== 'Class In-Charge'
+      ? report.classTeacherName
+      : 'Abdul Rahman';
+
+  // CRITICAL SAFE GUARD (ELIMINATE WHITE SCREEN / CRASH)
+  if (!report || !report.student) {
+    return null;
+  }
+
+  const isMl = lang === 'ml';
+
+  const isMobileDevice = () => {
+    if (typeof window === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+    const isSmallScreen = window.innerWidth <= 768;
+    return isMobileUA || isSmallScreen;
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!reportRef.current) return;
+
+    // 1. Mobile devices: Instead of throwing raw failure alert when memory is low,
+    // smoothly trigger window.print() directly with quick toast guidance
+    if (isMobileDevice()) {
+      showToast("Opening Print dialog... Select 'Save as PDF'");
+      setTimeout(() => {
+        window.print();
+      }, 350);
+      return;
+    }
+
+    // 2. Desktop / supported browsers: Update html2pdf configuration
+    setIsExporting(true);
+    try {
+      const element = reportRef.current;
+      const studentName = report?.student?.nameEn?.replace(/[^a-zA-Z0-9_-]/g, '_') || 'Student';
+      const opt = {
+        margin: 0,
+        filename: `${studentName}_Report.pdf`,
+        image: { type: 'jpeg' as const, quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, scrollY: 0 },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
+      };
+
+      await html2pdf().set(opt).from(element).save();
+    } catch (err) {
+      console.warn('html2pdf generation error, falling back smoothly to Print dialog:', err);
+      showToast("Opening Print dialog... Select 'Save as PDF'");
+      setTimeout(() => {
+        window.print();
+      }, 350);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Helper alias to keep compatibility
+  const extractColumns = extractComponentColumns;
 
   // Unify calculation metrics using shared engine
   const metrics = calculateStudentReportMetrics(report);
@@ -129,9 +234,53 @@ export const ProgressReportCard: React.FC<Props> = ({
 
   return (
     <div className={hideToolbar ? '' : 'space-y-6'}>
+      {/* Toast Notification Banner */}
+      {toastMessage && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-emerald-950 text-white text-xs sm:text-sm font-semibold px-5 py-3 rounded-2xl shadow-2xl border border-emerald-500/40 flex items-center gap-3 no-print">
+          <Printer className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Embedded Print Styles for Guaranteed Single-Page A4 Precision */}
+      <style>{`
+        @page {
+          size: A4 portrait;
+          margin: 8mm 10mm;
+        }
+        @media print {
+          html, body {
+            width: 210mm !important;
+            height: 297mm !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          nav, header, footer, .no-print, button, .parent-nav, .print\\:hidden, aside {
+            display: none !important;
+          }
+          .printable-progress-card {
+            width: 100% !important;
+            max-width: 190mm !important;
+            min-height: 275mm !important;
+            margin: 0 auto !important;
+            padding: 12px 16px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: space-between !important;
+            page-break-after: avoid !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            box-sizing: border-box !important;
+          }
+        }
+      `}</style>
+
       {/* Top Action Toolbar (Hidden in Print & in Batch View) */}
       {!hideToolbar && (
-        <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs print:hidden">
+        <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs print:hidden no-print">
           <div className="flex items-center gap-3">
             {onBack && (
               <button
@@ -172,11 +321,11 @@ export const ProgressReportCard: React.FC<Props> = ({
       )}
 
       {/* Progress Report Sheet - A4 Document Container */}
-      <div className="overflow-x-auto flex justify-center pb-8 print:p-0 print:m-0 print:pb-0">
+      <div className="overflow-x-auto flex justify-center pb-8 print:p-0 print:m-0 print:pb-0 print:overflow-visible print:block">
         <div
           ref={reportRef}
           id="report-print-sheet"
-          className="report-print-sheet w-full max-w-[820px] bg-white text-slate-900 border-2 border-emerald-900/30 p-6 md:p-8 shadow-lg print:shadow-none print:border-none print:p-0 print:max-w-none print:w-full font-sans relative print:min-h-0 print:h-auto"
+          className="report-print-sheet printable-progress-card w-full max-w-[820px] bg-white text-slate-900 border-2 border-emerald-900/30 p-3.5 sm:p-6 md:p-8 shadow-lg print:shadow-none print:border-none print:p-0 font-sans relative"
           style={{ minHeight: isBatchItem ? undefined : '920px' }}
         >
           {/* Subtle Islamic Geometric Corner Motifs */}
@@ -193,277 +342,315 @@ export const ProgressReportCard: React.FC<Props> = ({
             ❖ ❖ ❖
           </div>
 
-          {/* 1. INSTITUTION HEADER */}
-          <div className="text-center border-b-2 border-emerald-800 pb-3 mb-3 print:pb-1.5 print:mb-1.5">
-            <div className="font-serif text-emerald-900 text-lg md:text-xl print:text-base font-bold tracking-wide mb-1 print:mb-0.5 text-center" dir="rtl">
-              {settings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
-            </div>
-            <div className="flex items-center justify-center gap-3 my-1">
-              <div className="w-12 h-12 rounded-full border-2 border-emerald-800 bg-emerald-50 flex items-center justify-center text-emerald-800 shadow-inner shrink-0">
-                <GraduationCap className="w-7 h-7" />
+          <div>
+            {/* 1. INSTITUTION HEADER */}
+            <div className="text-center border-b-2 border-emerald-800 pb-3 mb-3 print:pb-1.5 print:mb-1.5">
+              <div
+                className="font-serif text-emerald-900 text-base sm:text-lg md:text-xl print:text-base font-bold tracking-wide mb-1.5 print:mb-0.5 text-center leading-relaxed"
+                dir="rtl"
+              >
+                {currentSettings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
               </div>
-              <div>
-                <h1 className="text-xl md:text-2xl font-black uppercase tracking-tight text-emerald-950 font-serif">
-                  {settings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
-                </h1>
-                <h2 className="text-base md:text-lg font-bold text-emerald-900">
-                  {settings?.madrasaNameMl || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്'}
-                </h2>
-                <div className="text-xs font-semibold text-emerald-800 tracking-wide mt-0.5">
-                  Islamic Education &amp; Digital Learning
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-3.5 my-1.5">
+                <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full border-2 border-emerald-800 bg-emerald-50 flex items-center justify-center text-emerald-800 shadow-inner shrink-0">
+                  <GraduationCap className="w-6 h-6 sm:w-7 sm:h-7" />
+                </div>
+                <div className="text-center sm:text-left">
+                  <h1 className="text-sm sm:text-lg md:text-xl font-black uppercase tracking-tight text-emerald-950 font-serif leading-tight">
+                    {currentSettings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
+                  </h1>
+                  <h2 className="text-xs sm:text-sm md:text-base font-bold text-emerald-900 leading-snug mt-0.5">
+                    {currentSettings?.madrasaNameMl || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്'}
+                  </h2>
+                  <div className="text-[10px] sm:text-xs font-semibold text-emerald-800 tracking-wide mt-0.5">
+                    Islamic Education &amp; Digital Learning
+                  </div>
                 </div>
               </div>
-            </div>
-            <p className="text-xs text-slate-600 mt-1">
-              {isMl ? settings?.locationMl : settings?.locationEn} • Reg. No: {settings?.registrationNo || 'KEC-8492'}
-            </p>
+              <p className="text-[11px] sm:text-xs text-slate-600 mt-1 flex flex-wrap items-center justify-center gap-1 sm:gap-2">
+                <span>{isMl ? currentSettings?.locationMl : currentSettings?.locationEn}</span>
+                <span className="hidden sm:inline">•</span>
+                <span>Reg. No: {currentSettings?.registrationNo || 'KEC-8492'}</span>
+              </p>
 
-            <div className="mt-2.5 inline-block bg-emerald-900 text-white px-5 py-1 rounded-md font-bold text-xs tracking-wider uppercase shadow-xs">
-              STUDENT PROGRESS REPORT • {report?.academicYear || '2026–2027'}
-            </div>
-            <div className="text-xs font-semibold text-emerald-950 mt-1">
-              {isMl ? report?.examination?.nameMl : report?.examination?.nameEn}
-            </div>
-          </div>
-
-          {/* 2. DEDICATED STUDENT DETAILS BOX - Typography & Sentence Case Rules */}
-          <div className="bg-emerald-50/60 border border-emerald-900/30 rounded-xl p-3.5 mb-4 text-xs">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-left items-start">
-              <div className="space-y-0.5">
-                <span className="text-[11px] font-semibold text-slate-600 block">Student name:</span>
-                <span className="font-bold text-black text-sm block leading-tight uppercase tracking-tight">
-                  {(report?.student?.nameEn || (report?.student as any)?.name || '—').toUpperCase()}
-                </span>
-                <span className="text-[11px] text-slate-600 truncate block pt-0.5">
-                  Parent: <span style={{ color: '#000000' }} className="font-bold text-black uppercase">{(report?.student?.parentNameEn || '—').toUpperCase()}</span>
-                </span>
+              <div className="mt-2 inline-block bg-emerald-900 text-white px-3 sm:px-5 py-1 rounded-md font-bold text-[10px] sm:text-xs tracking-wider uppercase shadow-xs">
+                STUDENT PROGRESS REPORT • {report?.academicYear || '2026–2027'}
               </div>
-              <div>
-                <span className="text-[11px] font-semibold text-slate-600 block">Class:</span>
-                <span className="font-bold text-black text-sm block uppercase font-mono">
-                  {classNumeral}
-                </span>
-              </div>
-              <div>
-                <span className="text-[11px] font-semibold text-slate-600 block">Admission no:</span>
-                <span className="font-mono font-bold text-black text-sm block uppercase">
-                  {String(report?.student?.admissionNo || '—').toUpperCase()}
-                </span>
-              </div>
-              <div>
-                <span className="text-[11px] font-semibold text-slate-600 block">Exam reg no:</span>
-                <span className="font-mono font-bold text-black text-sm block uppercase">
-                  {String(examRegisterNo || '—').toUpperCase()}
-                </span>
+              <div className="text-xs sm:text-sm font-bold text-emerald-950 mt-1">
+                {isMl ? report?.examination?.nameMl : report?.examination?.nameEn}
               </div>
             </div>
-          </div>
 
-          {/* 3. MARKS TABLE COLUMNS: [ # | Subject | OMR | OCR | CIE | Total | Result ] */}
-          <div className="mb-3 overflow-hidden border border-emerald-900/30 rounded-xl">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-emerald-900 text-white font-bold text-center border-b border-emerald-950">
-                  <th className="py-2.5 px-3 text-left w-10">#</th>
-                  <th className="py-2.5 px-3 text-left">Subject</th>
-                  <th className="py-2.5 px-3 w-16">OMR</th>
-                  <th className="py-2.5 px-3 w-16">OCR</th>
-                  <th className="py-2.5 px-3 w-16">CIE</th>
-                  <th className="py-2.5 px-3 w-20">Total</th>
-                  <th className="py-2.5 px-3 w-28 text-center">Result</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200">
-                {(report?.subjects || []).map((sub, idx) => {
-                  const { omrVal, ocrVal, cieVal, omrMax, ocrMax, cieMax } = extractColumns(sub.components || []);
-                  const isSubAbsent = sub.isAbsent;
-                  const numOmr = typeof omrVal === 'number' ? omrVal : 0;
-                  const numOcr = typeof ocrVal === 'number' ? ocrVal : 0;
-                  const numCie = typeof cieVal === 'number' ? cieVal : 0;
-                  // Total calculated correctly: OMR + OCR + CIE
-                  const subTotal = (sub.obtainedMarks !== null && sub.obtainedMarks !== undefined)
-                    ? sub.obtainedMarks
-                    : (numOmr + numOcr + numCie);
-                  const teMax = omrMax + ocrMax;
-                  const teObtained = numOmr + numOcr;
-                  const isCeZero = (typeof cieVal === 'number' && cieVal === 0) || sub.hasMissingCe;
-
-                  // Subject Result logic:
-                  // A. Passed: If (OMR + OCR) >= 35% of TE Max marks AND CIE > 0.
-                  // B. Need Improvement: If (OMR + OCR) < 35% of TE Max marks.
-                  // C. Withheld: If CIE === 0.
-                  // Absent: If student was absent.
-                  let subjectResult = 'Passed';
-                  let subjectBadgeStyle = 'bg-emerald-100 text-emerald-800';
-
-                  if (isSubAbsent) {
-                    subjectResult = 'Absent';
-                    subjectBadgeStyle = 'bg-amber-100 text-amber-900';
-                  } else if (isCeZero) {
-                    subjectResult = 'Withheld';
-                    subjectBadgeStyle = 'bg-amber-100 text-amber-900';
-                  } else if (teMax > 0 && teObtained < teMax * 0.35) {
-                    subjectResult = 'Need Improvement';
-                    subjectBadgeStyle = 'bg-rose-100 text-rose-800';
-                  } else {
-                    subjectResult = 'Passed';
-                    subjectBadgeStyle = 'bg-emerald-100 text-emerald-800';
-                  }
-
-                  return (
-                    <tr key={sub.subjectId || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/70'}>
-                      <td className="py-2 px-3 text-slate-500 font-mono text-center">{idx + 1}</td>
-                      <td className="py-2 px-3 font-bold text-emerald-950">
-                        {sub.subjectNameMl || sub.subjectNameEn}
-                      </td>
-                      <td className="py-2 px-3 text-center font-mono font-medium text-slate-700">
-                        {isSubAbsent ? (
-                          <span className="text-amber-800 font-semibold text-[11px]">Absent</span>
-                        ) : (
-                          omrVal
-                        )}
-                      </td>
-                      <td className="py-2 px-3 text-center font-mono font-medium text-slate-700">
-                        {isSubAbsent ? (
-                          <span className="text-amber-800 font-semibold text-[11px]">Absent</span>
-                        ) : (
-                          ocrVal
-                        )}
-                      </td>
-                      <td className="py-2 px-3 text-center font-mono font-medium text-slate-700">
-                        {isSubAbsent ? (
-                          <span className="text-amber-800 font-semibold text-[11px]">Absent</span>
-                        ) : isCeZero ? (
-                          <span className="text-amber-800 font-bold text-[11px]">0</span>
-                        ) : (
-                          cieVal
-                        )}
-                      </td>
-                      <td className="py-2 px-3 text-center font-bold font-mono text-emerald-950">
-                        {isSubAbsent ? (
-                          <span className="text-amber-800 font-bold text-[11px]">Absent</span>
-                        ) : (
-                          subTotal
-                        )}
-                      </td>
-                      <td className="py-2 px-3 text-center">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${subjectBadgeStyle}`}>
-                          {subjectResult}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-
-                {/* DISTINCT GRAND TOTAL ROW AT THE BOTTOM */}
-                {/* Remove individual component totals for OMR, OCR, and CIE columns; display ONLY Grand Total of Total column */}
-                <tr className="bg-emerald-950 text-white font-black text-center border-t-2 border-emerald-900">
-                  <td colSpan={2} className="py-3 px-3 text-left uppercase tracking-wider text-xs">
-                    GRAND TOTAL
-                  </td>
-                  <td className="py-3 px-3 text-center text-xs text-emerald-300/40">—</td>
-                  <td className="py-3 px-3 text-center text-xs text-emerald-300/40">—</td>
-                  <td className="py-3 px-3 text-center text-xs text-emerald-300/40">—</td>
-                  <td className="py-3 px-3 font-mono text-sm text-amber-300 font-bold whitespace-nowrap">
-                    {displayGrandObtained} / {displayGrandMax}
-                  </td>
-                  <td className="py-3 px-3 text-center">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${metrics.resultBadgeColor}`}>
-                      {metrics.displayResultStatus}
+            {/* 2. DEDICATED STUDENT DETAILS BOX - Clean Grid Layout with Soft Styling & Visual Hierarchy */}
+            <div className="bg-emerald-50/50 border border-emerald-900/25 rounded-2xl p-3.5 sm:p-4 mb-4 print:p-2.5 print:mb-2 text-xs shadow-2xs">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-y-3 gap-x-4 text-left items-start">
+                {/* Student Name */}
+                <div className="col-span-2 sm:col-span-1 md:col-span-1 space-y-0.5">
+                  <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-emerald-800/80 block">
+                    Student Name
+                  </span>
+                  <span className="font-black text-slate-950 text-sm sm:text-base print:text-[10pt] block leading-snug uppercase tracking-tight">
+                    {(report?.student?.nameEn || (report?.student as any)?.name || '—').toUpperCase()}
+                  </span>
+                  {report?.student?.nameMl && (
+                    <span className="text-xs font-semibold text-emerald-900 block leading-tight">
+                      {report.student.nameMl}
                     </span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+                  )}
+                </div>
 
-          {/* Practical & oral breakdown criteria note underneath table */}
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 mb-4 text-[10px] text-slate-600 leading-relaxed">
-            <span className="font-bold text-slate-800">Assessment Breakdown Criteria: </span>
-            <span>
-              OMR: Written objective assessment (Max 20/30). OCR: Descriptive written / Oral recitation breakdown (Tajweed, Tilawah, Revision). CIE: Continuous Internal Evaluation & Diary performance (Max 10). Minimum 35% in TE (Written) required for qualification.
-            </span>
-          </div>
+                {/* Parent */}
+                <div className="space-y-0.5">
+                  <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-emerald-800/80 block">
+                    Parent / Guardian
+                  </span>
+                  <span className="font-bold text-slate-900 text-xs sm:text-sm print:text-[9.5pt] block uppercase tracking-tight">
+                    {(report?.student?.parentNameEn || '—').toUpperCase()}
+                  </span>
+                  {report?.student?.parentNameMl && (
+                    <span className="text-[11px] text-slate-600 block leading-tight">
+                      {report.student.parentNameMl}
+                    </span>
+                  )}
+                </div>
 
-          {/* 4. ACADEMIC METRICS BOX: [ Percentage | Attendance | Rank ] */}
-          <div className="bg-emerald-900 text-white rounded-xl p-3.5 mb-4 print:p-2 print:mb-2 shadow-xs">
-            <div className="grid grid-cols-3 gap-4 text-center divide-x divide-emerald-800/80">
-              {/* Percentage (exact, never display N/A) */}
-              <div>
-                <span className="text-[11px] print:text-[9pt] font-bold text-emerald-200 uppercase tracking-wider block">
-                  Percentage (%)
-                </span>
-                <span className="text-2xl print:text-lg font-black font-mono mt-0.5 block">
-                  {calculatedPercentage}%
-                </span>
-              </div>
+                {/* Class */}
+                <div className="space-y-0.5">
+                  <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-emerald-800/80 block">
+                    Class
+                  </span>
+                  <span className="font-bold text-slate-950 text-sm sm:text-base print:text-[10pt] block font-mono">
+                    {classNumeral}
+                  </span>
+                </div>
 
-              {/* Attendance */}
-              <div>
-                <span className="text-[11px] print:text-[9pt] font-bold text-emerald-200 uppercase tracking-wider block">
-                  Attendance
-                </span>
-                <span className="text-2xl print:text-lg font-black font-mono mt-0.5 block">
-                  {attendanceDays} / {attendanceTotal}
-                </span>
-              </div>
+                {/* Admission No */}
+                <div className="space-y-0.5">
+                  <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-emerald-800/80 block">
+                    Admission No
+                  </span>
+                  <span className="font-mono font-bold text-slate-950 text-sm sm:text-base print:text-[10pt] block uppercase">
+                    {String(report?.student?.admissionNo || '—').toUpperCase()}
+                  </span>
+                </div>
 
-              {/* Rank Box: Rank is awarded ONLY if all subjects are Passed with zero withheld and zero absences. Otherwise show Need Improvement, Withheld, or Absent */}
-              <div>
-                <span className="text-[11px] print:text-[9pt] font-bold text-emerald-200 uppercase tracking-wider block">
-                  Academic Rank
-                </span>
-                <div className="flex items-center justify-center gap-1.5 mt-0.5">
-                  <Award className="w-5 h-5 print:w-4 print:h-4 text-amber-400 shrink-0" />
-                  <span className="text-xl md:text-2xl print:text-lg font-black font-mono text-amber-300">
-                    {academicRankBoxText}
+                {/* Exam Reg No */}
+                <div className="space-y-0.5">
+                  <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-emerald-800/80 block">
+                    Exam Reg No
+                  </span>
+                  <span className="font-mono font-bold text-emerald-950 text-sm sm:text-base print:text-[10pt] block uppercase">
+                    {String(examRegisterNo || '—').toUpperCase()}
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* Status alerts */}
-            {report?.hasWithheldCe && (
-              <div className="mt-2 pt-1.5 border-t border-emerald-800 text-[10px] text-amber-300 font-semibold flex items-center justify-center gap-1.5">
-                <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-                <span>Result Withheld: Continuous Evaluation (CE) is incomplete or 0 for one or more subjects.</span>
+            {/* 3. MARKS TABLE COLUMNS: [ # | Subject | OMR | OCR | CIE | Total | Result ] - Responsive Scrollable Container */}
+            <div className="mb-3 print:mb-2 w-full overflow-x-auto scrollbar-thin border border-emerald-900/30 rounded-xl bg-white shadow-2xs">
+              <table className="w-full min-w-[540px] text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-emerald-900 text-white font-bold text-center border-b border-emerald-950">
+                    <th className="py-2.5 print:py-2.5 px-3 print:px-2.5 text-left w-10 whitespace-nowrap">#</th>
+                    <th className="py-2.5 print:py-2.5 px-3 print:px-2.5 text-left whitespace-nowrap">Subject</th>
+                    <th className="py-2.5 print:py-2.5 px-3 print:px-2.5 w-16 text-center whitespace-nowrap">OMR</th>
+                    <th className="py-2.5 print:py-2.5 px-3 print:px-2.5 w-16 text-center whitespace-nowrap">OCR</th>
+                    <th className="py-2.5 print:py-2.5 px-3 print:px-2.5 w-16 text-center whitespace-nowrap">CIE</th>
+                    <th className="py-2.5 print:py-2.5 px-3 print:px-2.5 w-20 text-center whitespace-nowrap">Total</th>
+                    <th className="py-2.5 print:py-2.5 px-3 print:px-2.5 w-28 text-center whitespace-nowrap">Result</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {(report?.subjects || []).map((sub, idx) => {
+                    const { omrVal, ocrVal, cieVal, omrMax, ocrMax } = extractColumns(sub.components || []);
+                    const isSubAbsent = sub.isAbsent;
+                    const numOmr = typeof omrVal === 'number' ? omrVal : 0;
+                    const numOcr = typeof ocrVal === 'number' ? ocrVal : 0;
+                    const numCie = typeof cieVal === 'number' ? cieVal : 0;
+                    // Total calculated correctly: OMR + OCR + CIE
+                    const subTotal = (sub.obtainedMarks !== null && sub.obtainedMarks !== undefined)
+                      ? sub.obtainedMarks
+                      : (numOmr + numOcr + numCie);
+                    const teMax = omrMax + ocrMax;
+                    const teObtained = numOmr + numOcr;
+                    const isCeZero = (typeof cieVal === 'number' && cieVal === 0) || sub.hasMissingCe;
+
+                    // Subject Result logic:
+                    // A. Passed: If (OMR + OCR) >= 35% of TE Max marks AND CIE > 0.
+                    // B. Need Improvement: If (OMR + OCR) < 35% of TE Max marks.
+                    // C. Withheld: If CIE === 0.
+                    // Absent: If student was absent.
+                    let subjectResult = 'Passed';
+                    let subjectBadgeStyle = 'bg-emerald-100 text-emerald-800';
+
+                    if (isSubAbsent) {
+                      subjectResult = 'Absent';
+                      subjectBadgeStyle = 'bg-amber-100 text-amber-900';
+                    } else if (isCeZero) {
+                      subjectResult = 'Withheld';
+                      subjectBadgeStyle = 'bg-amber-100 text-amber-900';
+                    } else if (teMax > 0 && teObtained < teMax * 0.35) {
+                      subjectResult = 'Need Improvement';
+                      subjectBadgeStyle = 'bg-rose-100 text-rose-800';
+                    } else {
+                      subjectResult = 'Passed';
+                      subjectBadgeStyle = 'bg-emerald-100 text-emerald-800';
+                    }
+
+                    return (
+                      <tr key={sub.subjectId || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/70'}>
+                        <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-slate-500 font-mono text-center">{idx + 1}</td>
+                        <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 font-bold text-emerald-950">
+                          {sub.subjectNameMl || sub.subjectNameEn}
+                        </td>
+                        <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-center font-mono font-medium text-slate-700 whitespace-nowrap">
+                          {isSubAbsent ? (
+                            <span className="text-amber-800 font-semibold text-[11px]">Absent</span>
+                          ) : (
+                            omrVal
+                          )}
+                        </td>
+                        <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-center font-mono font-medium text-slate-700 whitespace-nowrap">
+                          {isSubAbsent ? (
+                            <span className="text-amber-800 font-semibold text-[11px]">Absent</span>
+                          ) : (
+                            ocrVal
+                          )}
+                        </td>
+                        <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-center font-mono font-medium text-slate-700 whitespace-nowrap">
+                          {isSubAbsent ? (
+                            <span className="text-amber-800 font-semibold text-[11px]">Absent</span>
+                          ) : isCeZero ? (
+                            <span className="text-amber-800 font-bold text-[11px]">0</span>
+                          ) : (
+                            cieVal
+                          )}
+                        </td>
+                        <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-center font-bold font-mono text-emerald-950 whitespace-nowrap">
+                          {isSubAbsent ? (
+                            <span className="text-amber-800 font-bold text-[11px]">Absent</span>
+                          ) : (
+                            subTotal
+                          )}
+                        </td>
+                        <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-center whitespace-nowrap">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${subjectBadgeStyle}`}>
+                            {subjectResult}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {/* DISTINCT GRAND TOTAL ROW AT THE BOTTOM */}
+                  <tr className="bg-emerald-950 text-white font-black text-center border-t-2 border-emerald-900">
+                    <td colSpan={2} className="py-2.5 print:py-2.5 px-3 print:px-2.5 text-left uppercase tracking-wider text-xs whitespace-nowrap">
+                      GRAND TOTAL
+                    </td>
+                    <td className="py-2.5 print:py-2.5 px-3 print:px-2.5 text-center text-xs text-emerald-300/40">—</td>
+                    <td className="py-2.5 print:py-2.5 px-3 print:px-2.5 text-center text-xs text-emerald-300/40">—</td>
+                    <td className="py-2.5 print:py-2.5 px-3 print:px-2.5 text-center text-xs text-emerald-300/40">—</td>
+                    <td className="py-2.5 print:py-2.5 px-3 print:px-2.5 font-mono text-sm text-amber-300 font-bold whitespace-nowrap">
+                      {displayGrandObtained} / {displayGrandMax}
+                    </td>
+                    <td className="py-2.5 print:py-2.5 px-3 print:px-2.5 text-center whitespace-nowrap">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${metrics.resultBadgeColor}`}>
+                        {metrics.displayResultStatus}
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Practical & oral breakdown criteria note underneath table */}
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 print:p-2 mb-4 print:mb-2 text-[10px] print:text-[7pt] text-slate-600 leading-relaxed">
+              <span className="font-bold text-slate-800">Assessment Breakdown Criteria: </span>
+              <span>
+                OMR: Written objective assessment (Max 20/30). OCR: Descriptive written / Oral recitation breakdown (Tajweed, Tilawah, Revision). CIE: Continuous Internal Evaluation &amp; Diary performance (Max 10). Minimum 35% in TE (Written) required for qualification.
+              </span>
+            </div>
+
+            {/* 4. ACADEMIC METRICS BOX: [ Percentage | Attendance | Rank ] - Mobile Optimized Alignment & Anti-Overlap */}
+            <div className="bg-emerald-950 text-white rounded-2xl p-3.5 sm:p-4 mb-4 print:p-2.5 print:mb-2 shadow-xs border border-emerald-900/50">
+              <div className="grid grid-cols-3 gap-2 sm:gap-4 text-center divide-x divide-emerald-800/80 items-center">
+                {/* Percentage (exact, never display N/A) */}
+                <div className="px-1 sm:px-2">
+                  <span className="text-[10px] sm:text-[11px] print:text-[8.5pt] font-bold text-emerald-200 uppercase tracking-wider block truncate">
+                    Percentage (%)
+                  </span>
+                  <span className="text-lg sm:text-xl md:text-2xl print:text-base font-black font-mono mt-0.5 sm:mt-1 block whitespace-nowrap">
+                    {calculatedPercentage}%
+                  </span>
+                </div>
+
+                {/* Attendance */}
+                <div className="px-1 sm:px-2">
+                  <span className="text-[10px] sm:text-[11px] print:text-[8.5pt] font-bold text-emerald-200 uppercase tracking-wider block truncate">
+                    Attendance
+                  </span>
+                  <span className="text-lg sm:text-xl md:text-2xl print:text-base font-black font-mono mt-0.5 sm:mt-1 block whitespace-nowrap">
+                    {attendanceDays} / {attendanceTotal}
+                  </span>
+                </div>
+
+                {/* Rank Box */}
+                <div className="px-1 sm:px-2 min-w-0">
+                  <span className="text-[10px] sm:text-[11px] print:text-[8.5pt] font-bold text-emerald-200 uppercase tracking-wider block truncate">
+                    Academic Rank
+                  </span>
+                  <div className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 mt-0.5 sm:mt-1">
+                    <Award className="w-4 h-4 sm:w-5 sm:h-5 print:w-4 print:h-4 text-amber-400 shrink-0" />
+                    <span className="text-xs sm:text-base md:text-2xl print:text-sm font-black font-mono text-amber-300 leading-tight text-center break-words sm:whitespace-nowrap">
+                      {academicRankBoxText}
+                    </span>
+                  </div>
+                </div>
               </div>
-            )}
-            {report?.hasAbsentSubjects && (
-              <div className="mt-2 pt-1.5 border-t border-emerald-800 text-[10px] text-amber-300 font-semibold flex items-center justify-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                <span>Student marked absent in examination components. Excluded from academic rank calculation.</span>
-              </div>
-            )}
+
+              {/* Status alerts */}
+              {report?.hasWithheldCe && (
+                <div className="mt-2.5 pt-2 border-t border-emerald-800/80 text-[10px] text-amber-300 font-semibold flex items-center justify-center gap-1.5 text-center px-2">
+                  <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                  <span>Result Withheld: Continuous Evaluation (CE) is incomplete or 0 for one or more subjects.</span>
+                </div>
+              )}
+              {report?.hasAbsentSubjects && (
+                <div className="mt-2.5 pt-2 border-t border-emerald-800/80 text-[10px] text-amber-300 font-semibold flex items-center justify-center gap-1.5 text-center px-2">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  <span>Student marked absent in examination components. Excluded from academic rank calculation.</span>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* 5. CENTERED 3-SIGNATURE BLOCK AT BOTTOM */}
-          <div className="mt-8 pt-4 print:mt-2.5 print:pt-1.5 border-t border-slate-300">
-            <div className="grid grid-cols-3 gap-6 print:gap-4 text-center text-xs print:text-[9pt] text-slate-800">
+          <div className="mt-6 sm:mt-8 pt-3 sm:pt-4 print:mt-2.5 print:pt-2 border-t border-slate-300">
+            <div className="grid grid-cols-3 gap-3 sm:gap-6 print:gap-4 text-center text-[10px] sm:text-xs print:text-[9pt] text-slate-800">
               {/* Parent */}
               <div>
-                <div className="h-12 print:h-8 border-b border-slate-400"></div>
+                <div className="h-10 sm:h-12 print:h-9 border-b border-slate-400"></div>
                 <span className="font-bold mt-1.5 block">Signature of Parent</span>
               </div>
 
               {/* Principal */}
               <div>
-                <div className="h-12 print:h-8 border-b border-slate-400 flex items-end justify-center pb-0.5 font-serif italic text-emerald-950 font-bold">
-                  {settings?.principalNameEn || 'ASLAM TK'}
+                <div className="h-10 sm:h-12 print:h-9 border-b border-slate-400 flex items-end justify-center pb-0.5 font-bold not-italic text-emerald-950 text-xs sm:text-sm print:text-[10pt]">
+                  {currentSettings?.principalNameEn || 'ASLAM TK'}
                 </div>
                 <span className="font-bold mt-1.5 block">Signature of Principal</span>
               </div>
 
               {/* Class Teacher */}
               <div>
-                <div className="h-12 print:h-8 border-b border-slate-400 flex items-end justify-center pb-0.5 font-serif italic text-slate-500">
-                  (Class In-Charge)
+                <div className="h-10 sm:h-12 print:h-9 border-b border-slate-400 flex items-end justify-center pb-0.5 font-bold not-italic text-slate-800 text-xs sm:text-sm print:text-[10pt]">
+                  {resolvedTeacherDisplayName}
                 </div>
                 <span className="font-bold mt-1.5 block">Signature of Class Teacher</span>
               </div>
             </div>
 
-            <div className="text-center text-[10px] print:text-[7.5pt] text-slate-400 mt-4 print:mt-1">
+            <div className="text-center text-[9px] sm:text-[10px] print:text-[7pt] text-slate-400 mt-3 sm:mt-4 print:mt-1.5">
               Al-Madrasathul Islamiya Pallikkuth • Islamic Education &amp; Digital Learning • Official Progress Verification Record
             </div>
           </div>

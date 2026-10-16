@@ -35,6 +35,7 @@ export const TeacherManagement: React.FC = () => {
   const [tUsername, setTUsername] = useState('');
   const [tPassword, setTPassword] = useState('teacher123');
   const [tPhone, setTPhone] = useState('');
+  const [tEmail, setTEmail] = useState('');
   const [tInChargeClassId, setTInChargeClassId] = useState('');
 
   // Edit Teacher Modal
@@ -43,6 +44,7 @@ export const TeacherManagement: React.FC = () => {
   const [editNameMl, setEditNameMl] = useState('');
   const [editUsername, setEditUsername] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  const [editEmail, setEditEmail] = useState('');
   const [editInChargeClassId, setEditInChargeClassId] = useState('');
 
   // Class In-Charge Modal
@@ -168,6 +170,7 @@ export const TeacherManagement: React.FC = () => {
       role: 'teacher',
       plainPassword: tPassword.trim() || 'teacher123',
       phone: tPhone.trim(),
+      email: tEmail.trim() || undefined,
       inChargeClassId: tInChargeClassId || undefined,
       active: true,
       createdAt: new Date().toISOString(),
@@ -196,6 +199,7 @@ export const TeacherManagement: React.FC = () => {
           plainPassword: tPassword.trim() || 'teacher123',
           password: tPassword.trim() || 'teacher123',
           phone: tPhone.trim(),
+          email: tEmail.trim() || undefined,
           inChargeClassId: tInChargeClassId || undefined,
         }),
       });
@@ -211,6 +215,7 @@ export const TeacherManagement: React.FC = () => {
       setTUsername('');
       setTPassword('teacher123');
       setTPhone('');
+      setTEmail('');
       setTInChargeClassId('');
       await loadData();
     } catch (err: any) {
@@ -285,6 +290,7 @@ export const TeacherManagement: React.FC = () => {
     setEditNameMl(teacher.nameMl || '');
     setEditUsername(teacher.username);
     setEditPhone(teacher.phone || '');
+    setEditEmail(teacher.email || '');
     setEditInChargeClassId(teacher.inChargeClassId || '');
   };
 
@@ -297,6 +303,7 @@ export const TeacherManagement: React.FC = () => {
         nameMl: editNameMl.trim() || editName.trim(),
         username: editUsername.trim(),
         phone: editPhone.trim(),
+        email: editEmail.trim() || undefined,
         inChargeClassId: editInChargeClassId || undefined,
       };
 
@@ -648,6 +655,9 @@ export const TeacherManagement: React.FC = () => {
                   {teacher.phone && (
                     <p className="text-xs text-slate-500 mt-0.5">📞 {teacher.phone}</p>
                   )}
+                  {teacher.email && (
+                    <p className="text-xs text-slate-500 mt-0.5 truncate">✉️ {teacher.email}</p>
+                  )}
 
                   {/* Class In-Charge (Class Teacher) Role Box */}
                   {(() => {
@@ -843,6 +853,17 @@ export const TeacherManagement: React.FC = () => {
               </div>
 
               <div>
+                <label className="block font-bold text-slate-700 mb-1">Email Address</label>
+                <input
+                  type="email"
+                  value={tEmail}
+                  onChange={e => setTEmail(e.target.value)}
+                  placeholder="e.g. teacher@madrasa.com"
+                  className="w-full p-2 border rounded-lg focus:outline-emerald-700"
+                />
+              </div>
+
+              <div>
                 <label className="block font-bold text-slate-700 mb-1">
                   Assign Class In-Charge (Class Teacher)
                 </label>
@@ -936,6 +957,17 @@ export const TeacherManagement: React.FC = () => {
                   type="text"
                   value={editPhone}
                   onChange={e => setEditPhone(e.target.value)}
+                  className="w-full p-2 border rounded-lg focus:outline-emerald-700"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Email Address</label>
+                <input
+                  type="email"
+                  value={editEmail}
+                  onChange={e => setEditEmail(e.target.value)}
+                  placeholder="e.g. teacher@madrasa.com"
                   className="w-full p-2 border rounded-lg focus:outline-emerald-700"
                 />
               </div>

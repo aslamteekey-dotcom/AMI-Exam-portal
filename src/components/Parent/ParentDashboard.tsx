@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
+  User as AppUser,
   Student,
   Examination,
   StudentProgressReport,
@@ -14,6 +15,7 @@ import {
   DEFAULT_NEWS_ITEMS,
 } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
+import { StudyMaterialsView } from './StudyMaterialsView';
 import {
   User,
   GraduationCap,
@@ -61,6 +63,7 @@ export type ParentPortalTab =
   | 'attendance'
   | 'report'
   | 'fees'
+  | 'study_materials'
   | 'news'
   | 'notification'
   | 'contact';
@@ -70,15 +73,19 @@ export const ParentDashboard: React.FC = () => {
   const { user, fetchWithAuth, lang, t } = useAuth();
   const [loading, setLoading] = useState(true);
   const [children, setChildren] = useState<Student[]>([]);
+  const parentStudents = children;
+  const [activeChild, setActiveChild] = useState<Student | null>(null);
+  const selectedChild = activeChild;
+  const selectedChildId = activeChild?.id ? String(activeChild.id) : '';
   const [classesMap, setClassesMap] = useState<Record<string, string>>({});
   const [examinations, setExaminations] = useState<Examination[]>([]);
-  const [selectedChildId, setSelectedChildId] = useState<string>('');
   const [selectedExamId, setSelectedExamId] = useState<string>('');
   const [activeTab, setActiveTab] = useState<ParentPortalTab>('home');
   const [childPayments, setChildPayments] = useState<FeePayment[]>([]);
   const [activeReceipt, setActiveReceipt] = useState<FeePayment | null>(null);
   const [settings, setSettings] = useState<InstitutionSettings | null>(null);
   const [attendanceConfigs, setAttendanceConfigs] = useState<Record<string, ClassAttendanceConfig>>({});
+  const [teachers, setTeachers] = useState<AppUser[]>([]);
 
   // Notifications State
   const [notifications, setNotifications] = useState<NotificationItem[]>([
@@ -145,14 +152,22 @@ export const ParentDashboard: React.FC = () => {
 
   const isMl = lang === 'ml';
 
+  const selectedChildIdRef = useRef(selectedChildId);
+  selectedChildIdRef.current = selectedChildId;
+  const selectedExamIdRef = useRef(selectedExamId);
+  selectedExamIdRef.current = selectedExamId;
+  const childrenRef = useRef(children);
+  childrenRef.current = children;
+
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      const [resAuth, resClasses, resExams, resSettings] = await Promise.all([
+      const [resAuth, resClasses, resExams, resSettings, resTeachers] = await Promise.all([
         fetchWithAuth('/api/auth/me'),
         fetchWithAuth('/api/classes'),
         fetchWithAuth('/api/examinations'),
         fetchWithAuth('/api/settings'),
+        fetchWithAuth('/api/teachers').catch(() => null),
       ]);
 
       const authData = await resAuth.json();
@@ -160,6 +175,11 @@ export const ParentDashboard: React.FC = () => {
       const examsData: Examination[] = await resExams.json();
       const settingsData: InstitutionSettings = await resSettings.json();
       setSettings(settingsData);
+
+      if (resTeachers && resTeachers.ok) {
+        const teachersData: AppUser[] = await resTeachers.json();
+        setTeachers(teachersData);
+      }
 
       const cMap: Record<string, string> = {};
       classesData.forEach((c: any) => {
@@ -173,7 +193,13 @@ export const ParentDashboard: React.FC = () => {
       setExaminations(examsData);
 
       if (sortedKids.length > 0) {
-        setSelectedChildId(sortedKids[0].id);
+        setActiveChild(prev => {
+          if (prev) {
+            const found = sortedKids.find(k => String(k.id) === String(prev.id));
+            if (found) return found;
+          }
+          return sortedKids[0];
+        });
       }
       if (examsData.length > 0) {
         // Prefer published/approved exam first, otherwise first exam
@@ -181,7 +207,7 @@ export const ParentDashboard: React.FC = () => {
           examsData.find(
             e => e.isPublished || e.status === 'published' || e.status === 'approved' || e.status === 'completed'
           ) || examsData[0];
-        setSelectedExamId(publishedExam.id);
+        setSelectedExamId(prev => (prev && examsData.some(e => String(e.id) === String(prev)) ? prev : publishedExam.id));
       }
     } catch (err) {
       console.error('Error loading parent data:', err);
@@ -243,8 +269,8 @@ export const ParentDashboard: React.FC = () => {
           });
           return Array.from(map.values());
         });
-        if (selectedChildId && selectedExamId) {
-          loadReport(selectedChildId, selectedExamId);
+        if (selectedChildIdRef.current && selectedExamIdRef.current) {
+          loadReport(selectedChildIdRef.current, selectedExamIdRef.current);
         }
       };
 
@@ -270,8 +296,8 @@ export const ParentDashboard: React.FC = () => {
     // 3. Real-time Firestore listener for marks: listen to published/approved marks for active child
     try {
       const unsubMarks = onSnapshot(collection(db, 'marks'), snapshot => {
-        if (!snapshot.empty && selectedChildId && selectedExamId) {
-          const activeChild = children.find(c => c.id === selectedChildId);
+        if (!snapshot.empty && selectedChildIdRef.current && selectedExamIdRef.current) {
+          const activeChild = childrenRef.current.find(c => String(c.id) === String(selectedChildIdRef.current));
           if (activeChild) {
             const marksDocs = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as any));
             const studentMarks = marksDocs.filter(
@@ -282,7 +308,7 @@ export const ParentDashboard: React.FC = () => {
                 (activeChild.admissionNo && m.studentMarks?.[activeChild.admissionNo])
             );
             if (studentMarks.length > 0) {
-              loadReport(activeChild.id, selectedExamId);
+              loadReport(activeChild.id, selectedExamIdRef.current);
             }
           }
         }
@@ -324,6 +350,19 @@ export const ParentDashboard: React.FC = () => {
       console.warn('Real-time news listener error in ParentDashboard:', e);
     }
 
+    // 6. Real-time Firestore listener for teachers
+    try {
+      const unsubTeachers = onSnapshot(collection(db, 'teachers'), snapshot => {
+        if (!snapshot.empty) {
+          const remoteTeachers = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as AppUser));
+          setTeachers(remoteTeachers);
+        }
+      });
+      unsubs.push(unsubTeachers);
+    } catch (e) {
+      console.warn('Real-time teachers listener error in ParentDashboard:', e);
+    }
+
     const handleStudentsUpdated = (e: any) => {
       const list = e.detail;
       if (Array.isArray(list)) {
@@ -343,8 +382,8 @@ export const ParentDashboard: React.FC = () => {
                 examRegisterNos: regNos,
                 examRegNo:
                   (found as any).examRegNo ||
-                  (found as any).examRegisterNos?.[selectedExamId] ||
-                  regNos[selectedExamId] ||
+                  (found as any).examRegisterNos?.[selectedExamIdRef.current] ||
+                  regNos[selectedExamIdRef.current] ||
                   '',
               };
             }
@@ -357,8 +396,8 @@ export const ParentDashboard: React.FC = () => {
     unsubs.push(() => window.removeEventListener('madrasa_students_updated', handleStudentsUpdated));
 
     const handleMarksUpdated = () => {
-      if (selectedChildId && selectedExamId) {
-        loadReport(selectedChildId, selectedExamId);
+      if (selectedChildIdRef.current && selectedExamIdRef.current) {
+        loadReport(selectedChildIdRef.current, selectedExamIdRef.current);
       }
     };
     window.addEventListener('madrasa_marks_updated', handleMarksUpdated);
@@ -375,7 +414,7 @@ export const ParentDashboard: React.FC = () => {
         } catch {}
       });
     };
-  }, [lang, selectedExamId, selectedChildId]);
+  }, [lang]);
 
   // Automatically fetch and load progress report card whenever selected student or examination changes
   const loadReport = async (childId: string, examId: string) => {
@@ -446,17 +485,28 @@ export const ParentDashboard: React.FC = () => {
     }
   };
 
+  // Keep activeChild synced with parentStudents / children array if remote updates occur
   useEffect(() => {
-    if (selectedChildId) {
-      loadChildFees(selectedChildId);
+    if (children.length > 0) {
+      setActiveChild(prev => {
+        if (!prev) return children[0];
+        const match = children.find(c => String(c.id) === String(prev.id));
+        return match || children[0];
+      });
     }
-  }, [selectedChildId]);
+  }, [children]);
 
   useEffect(() => {
-    if (selectedChildId && selectedExamId) {
-      loadReport(selectedChildId, selectedExamId);
+    if (activeChild?.id) {
+      loadChildFees(String(activeChild.id));
     }
-  }, [selectedChildId, selectedExamId]);
+  }, [activeChild?.id]);
+
+  useEffect(() => {
+    if (activeChild?.id && selectedExamId) {
+      loadReport(String(activeChild.id), selectedExamId);
+    }
+  }, [activeChild?.id, selectedExamId]);
 
   if (loading) {
     return (
@@ -467,7 +517,6 @@ export const ParentDashboard: React.FC = () => {
     );
   }
 
-  const selectedChild = children.find(c => c.id === selectedChildId);
   const selectedExam = examinations.find(e => e.id === selectedExamId);
 
   const activeReport = reportData?.report;
@@ -508,30 +557,6 @@ export const ParentDashboard: React.FC = () => {
             <p className="text-xs text-emerald-200 mt-1">
               {t.parentRole} • Al-Madrasathul Islamiya Pallikkuth
             </p>
-            <p className="text-[11px] text-emerald-300 font-medium">
-              Islamic Education &amp; Digital Learning
-            </p>
-            {selectedChild && (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="bg-emerald-950/80 border border-emerald-400/50 text-emerald-200 px-3 py-1 rounded-full text-xs font-mono font-bold flex items-center gap-1.5 shadow-2xs max-w-full">
-                  <Hash className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
-                  <span className="text-[10px] uppercase font-sans text-emerald-300 font-bold shrink-0">Exam Reg No:</span>
-                  <span className="text-white text-sm truncate">
-                    {selectedChild.examRegisterNumbers?.[selectedExamId] ||
-                      (selectedChild as any).examRegisterNos?.[selectedExamId] ||
-                      (selectedChild as any).examRegNo ||
-                      reportData?.report?.examRegisterNo ||
-                      '—'}
-                  </span>
-                </span>
-                <span className="bg-white/10 text-emerald-100 px-2.5 py-1 rounded-full text-xs font-mono">
-                  Roll: {selectedChild.rollNo} • Adm: {selectedChild.admissionNo}
-                </span>
-                <span className="bg-white/15 text-white px-2.5 py-1 rounded-full text-xs font-semibold">
-                  Class: {(classesMap[selectedChild.classId] || selectedChild.classId || '').replace(/^Class\s*/i, '')}
-                </span>
-              </div>
-            )}
           </div>
 
           {/* Exam Selector Pill/Dropdown in Banner with mobile overflow fix */}
@@ -575,7 +600,7 @@ export const ParentDashboard: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Multi-Student Sibling Selector: Clean Tabs & Mobile Dropdown */}
+          {/* Multi-Student Sibling Selector: Clean Dropdown & Single Prominent Child Card */}
           <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs print:hidden space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
               <div className="flex items-center gap-2">
@@ -585,84 +610,99 @@ export const ParentDashboard: React.FC = () => {
                 </h2>
               </div>
               <span className="text-[11px] text-slate-500">
-                Click any student below to switch and view their report card immediately
+                {parentStudents.length > 1
+                  ? 'Use dropdown to switch student profile'
+                  : 'Active Student Record'}
               </span>
             </div>
 
-            {/* Mobile Dropdown Selector */}
-            <div className="sm:hidden">
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Select Student:
-              </label>
-              <div className="relative">
-                <select
-                  value={selectedChildId}
-                  onChange={e => setSelectedChildId(e.target.value)}
-                  className="w-full p-2.5 pr-8 border border-emerald-300 rounded-xl bg-emerald-50/60 font-bold text-slate-800 text-xs focus:ring-2 focus:ring-emerald-700 focus:outline-none cursor-pointer appearance-none"
-                >
-                  {children.map(child => (
-                    <option key={child.id} value={child.id}>
-                      {child.nameEn || (child as any).name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="w-4 h-4 text-emerald-800 absolute right-3 top-3 pointer-events-none" />
-              </div>
-            </div>
-
-            {/* Desktop & Tablet Student Selection Cards / Tabs */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {children.map(child => {
-                const isSelected = child.id === selectedChildId;
-                const childRegNo =
-                  child.examRegisterNumbers?.[selectedExamId] ||
-                  (child as any).examRegisterNos?.[selectedExamId] ||
-                  (child as any).examRegNo;
-
-                return (
-                  <button
-                    type="button"
-                    key={child.id}
-                    onClick={() => setSelectedChildId(child.id)}
-                    className={`p-3.5 rounded-2xl border text-left cursor-pointer transition flex items-center justify-between ${
-                      isSelected
-                        ? 'bg-emerald-50/90 border-emerald-600 shadow-xs ring-2 ring-emerald-600/20'
-                        : 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
-                    }`}
+            {/* Dropdown Selector (Active when multiple children exist) */}
+            {parentStudents.length > 1 && (
+              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Select Student:
+                </label>
+                <div className="relative">
+                  <select
+                    value={activeChild?.id ? String(activeChild.id) : ''}
+                    onChange={e => {
+                      const targetId = e.target.value;
+                      const found = parentStudents.find(s => String(s.id) === String(targetId));
+                      if (found) {
+                        setActiveChild(found);
+                      }
+                    }}
+                    className="w-full p-2.5 pr-8 border border-emerald-300 rounded-xl bg-white font-bold text-slate-800 text-xs focus:ring-2 focus:ring-emerald-700 focus:outline-none cursor-pointer appearance-none shadow-2xs"
                   >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm ${
-                          isSelected
-                            ? 'bg-emerald-800 text-white shadow-xs'
-                            : 'bg-slate-100 text-slate-600'
-                        }`}
-                      >
-                        {child.rollNo}
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-slate-900 text-sm">
-                          {isMl && child.nameMl ? child.nameMl : child.nameEn}
+                    {parentStudents.map(student => (
+                      <option key={String(student.id)} value={String(student.id)}>
+                        {student.nameEn} {student.nameMl ? `(${student.nameMl})` : ''} • Adm: {student.admissionNo} (Roll: {student.rollNo})
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-4 h-4 text-emerald-800 absolute right-3 top-3 pointer-events-none" />
+                </div>
+              </div>
+            )}
+
+            {/* Single Prominent Selected Child Card */}
+            {activeChild && (() => {
+              const student = activeChild;
+              const childRegNo =
+                student.examRegisterNumbers?.[selectedExamId] ||
+                (student as any).examRegisterNos?.[selectedExamId] ||
+                (student as any).examRegNo;
+
+              return (
+                <div className="p-4 sm:p-5 rounded-2xl border-2 border-emerald-600 bg-emerald-50/70 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5 sm:gap-4 min-w-0">
+                    {/* Large prominent badge on the left showing Admission Number */}
+                    <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-emerald-800 text-white shadow-md flex flex-col items-center justify-center shrink-0 border border-emerald-700">
+                      <span className="text-[9px] uppercase tracking-wider font-bold text-emerald-200">Adm No</span>
+                      <span className="font-mono font-black text-sm sm:text-base tracking-tight">{student.admissionNo}</span>
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="font-bold text-slate-900 text-base sm:text-lg">
+                          {student.nameEn}
                         </h3>
-                        <p className="text-xs text-slate-500 font-medium flex flex-wrap items-center gap-1.5 mt-0.5">
-                          <span>{classesMap[child.classId] || child.classId}</span>
-                          <span>•</span>
-                          <span>Adm: <span className="font-mono">{child.admissionNo}</span></span>
-                          {childRegNo && (
-                            <span className="font-mono text-emerald-900 font-bold bg-emerald-100/90 border border-emerald-300/60 px-1.5 py-0.5 rounded text-[10px]">
-                              Reg: {childRegNo}
+                        {student.nameMl && (
+                          <span className="text-xs sm:text-sm font-semibold text-emerald-900 bg-emerald-100/90 border border-emerald-200/80 px-2 py-0.5 rounded-md">
+                            {student.nameMl}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="text-xs text-slate-600 font-medium flex flex-wrap items-center gap-2 mt-1.5">
+                        <span className="bg-white border border-slate-200 text-slate-800 font-bold px-2 py-0.5 rounded-md shadow-2xs">
+                          Class: {(classesMap[student.classId] || student.classId || '').replace(/^Class\s*/i, '')}
+                        </span>
+                        <span>•</span>
+                        <span className="font-mono font-bold text-emerald-950 bg-emerald-100/70 border border-emerald-200/60 px-2 py-0.5 rounded-md">
+                          Roll: {student.rollNo}
+                        </span>
+                        {childRegNo && (
+                          <>
+                            <span>•</span>
+                            <span className="font-mono text-emerald-900 font-bold bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-md text-[11px]">
+                              Exam Reg: {childRegNo}
                             </span>
-                          )}
-                        </p>
+                          </>
+                        )}
                       </div>
                     </div>
-                    {isSelected && (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0" />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0 sm:self-center">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-white border border-emerald-300 px-3 py-1.5 rounded-xl shadow-2xs">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span>Active Student Profile</span>
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
           {/* View Mode Toggle: All Portal Navigation Tabs with Mobile Horizontal Scroll */}
@@ -717,6 +757,19 @@ export const ParentDashboard: React.FC = () => {
             >
               <CreditCard className="w-4 h-4" />
               <span>{isMl ? `ഫീസ് (${childPayments.length})` : `Fees (${childPayments.length})`}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('study_materials')}
+              className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
+                activeTab === 'study_materials'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              }`}
+            >
+              <BookOpen className="w-4 h-4" />
+              <span>{isMl ? 'പഠന സാമഗ്രികൾ' : 'Study Materials'}</span>
             </button>
 
             <button
@@ -930,34 +983,70 @@ export const ParentDashboard: React.FC = () => {
                     );
                   })()}
 
-                  {/* Card 4: Madrasa Contact */}
-                  <div className="bg-gradient-to-br from-amber-50/70 to-orange-50/50 rounded-xl p-4 border border-amber-100 flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] font-bold uppercase text-amber-800">
-                          Madrasa Helpdesk
-                        </span>
-                        <PhoneCall className="w-4 h-4 text-amber-700" />
+                  {/* Card 4: Class Teacher (Dynamic Help Desk) */}
+                  {(() => {
+                    const classTeacher = activeChild?.classId
+                      ? teachers.find(t => t.inChargeClassId === activeChild.classId)
+                      : null;
+                    const className = (classesMap[activeChild?.classId || ''] || activeChild?.classId || '').replace(/^Class\s*/i, 'Class ');
+
+                    return (
+                      <div className="bg-gradient-to-br from-amber-50/70 to-orange-50/50 rounded-xl p-4 border border-amber-100 flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] font-bold uppercase text-amber-800 tracking-wider">
+                              {classTeacher ? 'Class Teacher (Help Desk)' : 'Madrasa Help Desk'}
+                            </span>
+                            <PhoneCall className="w-4 h-4 text-amber-700" />
+                          </div>
+
+                          <div className="text-sm font-bold text-slate-900 truncate">
+                            {classTeacher
+                              ? (isMl && classTeacher.nameMl ? classTeacher.nameMl : classTeacher.name)
+                              : 'Al-Madrasathul Islamiya Office'}
+                          </div>
+
+                          <div className="text-[11px] text-amber-900 font-semibold mt-0.5">
+                            {classTeacher
+                              ? `${className} In-Charge`
+                              : 'General Madrasa Contact'}
+                          </div>
+
+                          <div className="mt-2 space-y-1 text-xs">
+                            <p className="text-slate-600 font-mono flex items-center gap-1.5">
+                              <span>📞</span>
+                              {classTeacher?.phone ? (
+                                <a href={`tel:${classTeacher.phone}`} className="hover:underline font-bold text-slate-800">
+                                  {classTeacher.phone}
+                                </a>
+                              ) : (
+                                <span className="font-bold text-slate-800">+91 9447 485 432</span>
+                              )}
+                            </p>
+                            <p className="text-slate-600 truncate flex items-center gap-1.5 text-[11px]">
+                              <span>✉️</span>
+                              {classTeacher?.email ? (
+                                <a href={`mailto:${classTeacher.email}`} className="hover:underline truncate text-slate-700">
+                                  {classTeacher.email}
+                                </a>
+                              ) : (
+                                <span className="text-slate-500 truncate">amipallikkuth@gmail.com</span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('contact')}
+                          className="mt-4 flex items-center justify-between text-xs font-bold text-amber-800 hover:text-amber-950 pt-2 border-t border-amber-200/60 cursor-pointer"
+                        >
+                          <span>Institutional Contact</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-                      <div className="text-sm font-bold text-slate-900">
-                        Principal: ASLAM TK
-                      </div>
-                      <p className="text-xs text-slate-500 mt-1 font-mono">
-                        Phone: 9447 485 432
-                      </p>
-                      <p className="text-[11px] text-slate-500 truncate mt-0.5">
-                        amipallikkuth@gmail.com
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('contact')}
-                      className="mt-4 flex items-center justify-between text-xs font-bold text-amber-800 hover:text-amber-950 pt-2 border-t border-amber-200/60 cursor-pointer"
-                    >
-                      <span>Contact Info</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -1004,6 +1093,21 @@ export const ParentDashboard: React.FC = () => {
                     <h3 className="font-bold text-slate-900 text-sm">Progress Report Card</h3>
                     <p className="text-xs text-slate-500 mt-0.5">
                       View subject marks, grand totals, KMEB grades, and principal verification.
+                    </p>
+                  </div>
+                </div>
+
+                <div
+                  onClick={() => setActiveTab('study_materials')}
+                  className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-teal-100 text-teal-800 flex items-center justify-center shrink-0">
+                    <BookOpen className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">Study Materials &amp; Question Papers</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Access question papers, Hikma competition preparation, and official digital textbooks.
                     </p>
                   </div>
                 </div>
@@ -2059,6 +2163,11 @@ export const ParentDashboard: React.FC = () => {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* TAB: STUDY MATERIALS VIEW */}
+          {activeTab === 'study_materials' && (
+            <StudyMaterialsView onBackToHome={() => setActiveTab('home')} />
           )}
 
           {/* MODAL: VIEW DETAILED NEWS / CIRCULAR */}

@@ -11,6 +11,7 @@ import { AuditLogsView } from './AuditLogsView';
 import { BackupSettings } from './BackupSettings';
 import { FeeManagement } from './FeeManagement';
 import { MarkVerificationModal } from './MarkVerificationModal';
+import { StudyMaterialsManagement } from './StudyMaterialsManagement';
 import {
   Users,
   GraduationCap,
@@ -40,6 +41,7 @@ export const AdminDashboard: React.FC = () => {
     | 'teachers'
     | 'parents'
     | 'fees'
+    | 'study_materials'
     | 'monitoring'
     | 'reports'
     | 'audit_logs'
@@ -291,6 +293,17 @@ export const AdminDashboard: React.FC = () => {
         )}
 
         <button
+          onClick={() => setActiveTab('study_materials')}
+          className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+            activeTab === 'study_materials'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          {t.navStudyMaterials || 'Study Materials'}
+        </button>
+
+        <button
           onClick={() => setActiveTab('audit_logs')}
           className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
             activeTab === 'audit_logs'
@@ -486,6 +499,7 @@ export const AdminDashboard: React.FC = () => {
       {activeTab === 'teachers' && <TeacherManagement />}
       {activeTab === 'parents' && <ParentManagement />}
       {activeTab === 'fees' && <FeeManagement />}
+      {activeTab === 'study_materials' && <StudyMaterialsManagement />}
       {activeTab === 'audit_logs' && <AuditLogsView />}
       {activeTab === 'settings' && <BackupSettings />}
     </div>

@@ -27,6 +27,7 @@ export const translations = {
     navEnterMarks: 'Enter Marks',
     navMyChildren: 'My Children',
     navProgressReport: 'Progress Report',
+    navStudyMaterials: 'Study Materials',
     navLogout: 'Logout',
     
     // Statuses
@@ -125,6 +126,7 @@ export const translations = {
     navEnterMarks: 'മാർക്ക് രേഖപ്പെടുത്തുക',
     navMyChildren: 'എന്റെ മക്കൾ',
     navProgressReport: 'പ്രോഗ്രസ്സ് റിപ്പോർട്ട്',
+    navStudyMaterials: 'പഠന സാമഗ്രികൾ',
     navLogout: 'ലോഗൗട്ട്',
     
     // Statuses

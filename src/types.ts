@@ -464,3 +464,54 @@ export const DEFAULT_NEWS_ITEMS: NewsItem[] = [
     createdAt: '2026-08-01T07:15:00Z',
   },
 ];
+
+export interface StudyMaterialFolder {
+  id: string;
+  name: string;
+  nameMl?: string;
+  parentId: string | null;
+  isPermanent?: boolean;
+  createdAt: string;
+  updatedAt?: string;
+  createdBy?: string;
+}
+
+export interface StudyMaterialFile {
+  id: string;
+  name: string;
+  folderId: string;
+  downloadUrl: string;
+  storagePath?: string;
+  fileType: string;
+  fileSize: number;
+  uploadedAt: string;
+  uploadedBy?: string;
+  description?: string;
+}
+
+export const DEFAULT_ROOT_FOLDERS: StudyMaterialFolder[] = [
+  {
+    id: 'root_question_papers',
+    name: 'Question paper',
+    nameMl: 'ചോദ്യപേപ്പർ',
+    parentId: null,
+    isPermanent: true,
+    createdAt: '2026-01-01T00:00:00Z',
+  },
+  {
+    id: 'root_hikma_questions',
+    name: 'Hikma Questions',
+    nameMl: 'ഹിക്മ ചോദ്യങ്ങൾ',
+    parentId: null,
+    isPermanent: true,
+    createdAt: '2026-01-01T00:00:00Z',
+  },
+  {
+    id: 'root_textbooks',
+    name: 'Textbooks',
+    nameMl: 'പാഠപുസ്തകങ്ങൾ',
+    parentId: null,
+    isPermanent: true,
+    createdAt: '2026-01-01T00:00:00Z',
+  },
+];
