@@ -290,6 +290,16 @@ export interface FeePayment {
   createdAt: string;
 }
 
+export interface InstitutionHoliday {
+  id: string; // date "YYYY-MM-DD"
+  date: string; // "YYYY-MM-DD"
+  reason: string; // e.g. "Friday Holiday", "Eid", "Milad-un-Nabi", "Study Leave"
+  markedBy?: string;
+  markedAt?: string;
+  academicYear?: string;
+  createdAt?: string;
+}
+
 export interface DailyAttendanceRecord {
   date: string; // "YYYY-MM-DD"
   presentStudentIds: string[];
@@ -297,6 +307,8 @@ export interface DailyAttendanceRecord {
   statusMap: Record<string, boolean>; // studentId -> true (Present) / false (Absent)
   markedAt?: string;
   markedBy?: string;
+  isHoliday?: boolean;
+  holidayReason?: string;
 }
 
 export interface MonthlyAttendanceStat {
@@ -312,6 +324,7 @@ export interface ClassAttendanceConfig {
   dailyRecords?: Record<string, DailyAttendanceRecord>; // date ("YYYY-MM-DD") -> record
   monthlyStats?: Record<string, MonthlyAttendanceStat>; // month key -> stat
   updatedAt?: string;
+  holidays?: Record<string, { date: string; reason: string }>;
 }
 
 /**

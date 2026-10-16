@@ -13,6 +13,7 @@ import {
   NewsItem,
   NotificationItem,
   DEFAULT_NEWS_ITEMS,
+  InstitutionHoliday,
 } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
 import { StudyMaterialsView } from './StudyMaterialsView';
@@ -85,6 +86,7 @@ export const ParentDashboard: React.FC = () => {
   const [activeReceipt, setActiveReceipt] = useState<FeePayment | null>(null);
   const [settings, setSettings] = useState<InstitutionSettings | null>(null);
   const [attendanceConfigs, setAttendanceConfigs] = useState<Record<string, ClassAttendanceConfig>>({});
+  const [institutionHolidays, setInstitutionHolidays] = useState<Record<string, InstitutionHoliday>>({});
   const [teachers, setTeachers] = useState<AppUser[]>([]);
 
   // Notifications State
@@ -334,6 +336,20 @@ export const ParentDashboard: React.FC = () => {
       console.warn('Real-time attendance listener error in ParentDashboard:', e);
     }
 
+    // 4b. Real-time Firestore listener for institution holidays
+    try {
+      const unsubHolidays = onSnapshot(collection(db, 'institutionHolidays'), snapshot => {
+        const holMap: Record<string, InstitutionHoliday> = {};
+        snapshot.docs.forEach(docSnap => {
+          holMap[docSnap.id] = { ...docSnap.data(), id: docSnap.id, date: docSnap.data().date || docSnap.id } as InstitutionHoliday;
+        });
+        setInstitutionHolidays(holMap);
+      });
+      unsubs.push(unsubHolidays);
+    } catch (e) {
+      console.warn('Real-time institutionHolidays listener error in ParentDashboard:', e);
+    }
+
     // 5. Real-time Firestore listener for news & announcements
     try {
       const unsubNews = onSnapshot(collection(db, 'news'), snapshot => {
@@ -406,6 +422,18 @@ export const ParentDashboard: React.FC = () => {
       window.removeEventListener('madrasa_marks_updated', handleMarksUpdated);
       window.removeEventListener('madrasa_exams_updated', handleMarksUpdated);
     });
+
+    const handleHolidaysUpdated = (e: any) => {
+      if (Array.isArray(e.detail)) {
+        const map: Record<string, InstitutionHoliday> = {};
+        e.detail.forEach((h: InstitutionHoliday) => {
+          if (h.date) map[h.date] = h;
+        });
+        setInstitutionHolidays(map);
+      }
+    };
+    window.addEventListener('madrasa_holidays_updated', handleHolidaysUpdated);
+    unsubs.push(() => window.removeEventListener('madrasa_holidays_updated', handleHolidaysUpdated));
 
     return () => {
       unsubs.forEach(u => {
@@ -1340,14 +1368,39 @@ export const ParentDashboard: React.FC = () => {
               {(() => {
                 const childClassId = selectedChild?.classId || '';
                 const classAttConfig = attendanceConfigs[childClassId];
+                const records = classAttConfig?.dailyRecords || {};
+
+                // Aggregate holidays from Firestore institutionHolidays collection and class daily records
+                const allHolidaysMap: Record<string, { date: string; reason: string; markedBy?: string }> = {};
+                Object.values(institutionHolidays).forEach(h => {
+                  if (h.date) {
+                    allHolidaysMap[h.date] = {
+                      date: h.date,
+                      reason: h.reason || 'Official Holiday / Non-Working Day',
+                      markedBy: h.markedBy || 'Madrasa Administration',
+                    };
+                  }
+                });
+                Object.entries(records).forEach(([dKey, rec]) => {
+                  if (rec.isHoliday) {
+                    allHolidaysMap[dKey] = {
+                      date: dKey,
+                      reason: rec.holidayReason || allHolidaysMap[dKey]?.reason || 'Official Holiday',
+                      markedBy: rec.markedBy || 'Class Teacher',
+                    };
+                  }
+                });
+                const totalHolidaysCount = Object.keys(allHolidaysMap).length;
 
                 const seed = selectedChild ? ((Number(selectedChild.rollNo || 1) * 3) % 4) : 1;
-                const totalWorkingDays = classAttConfig?.totalWorkingDays ?? selectedChild?.attendance?.totalWorkingDays ?? 92;
+                // Exclude holidays from working days
+                const baseWorkingDays = classAttConfig?.totalWorkingDays ?? Math.max(1, (selectedChild?.attendance?.totalWorkingDays ?? 92) - totalHolidaysCount);
+                const totalWorkingDays = Math.max(1, baseWorkingDays);
                 const attendedDays = (selectedChild && classAttConfig?.studentDaysAttended?.[selectedChild.id] !== undefined)
                   ? classAttConfig.studentDaysAttended[selectedChild.id]
                   : (selectedChild?.attendance?.daysAttended ?? Math.max(84, totalWorkingDays - seed - 2));
                 const leavesTaken = Math.max(0, totalWorkingDays - attendedDays);
-                const percentage = totalWorkingDays > 0 ? ((attendedDays / totalWorkingDays) * 100).toFixed(1) : '100.0';
+                const percentage = totalWorkingDays > 0 ? ((attendedDays / totalWorkingDays) * 100).toFixed(2) : '100.00';
 
                 const baseMonths = [
                   { key: '2026-06', month: isMl ? 'ജൂൺ 2026' : 'June 2026', working: 18 },
@@ -1358,40 +1411,49 @@ export const ParentDashboard: React.FC = () => {
                 ];
 
                 const totalBenchmark = baseMonths.reduce((sum, m) => sum + m.working, 0);
-                const effectiveTotalWorking = Math.max(totalWorkingDays, totalBenchmark);
-
-                const records = classAttConfig?.dailyRecords || {};
+                const effectiveTotalWorking = Math.max(totalWorkingDays, totalBenchmark - totalHolidaysCount);
 
                 let remainingAttended = attendedDays;
                 const monthlyRecords = baseMonths.map((m, idx) => {
+                  const monthHolidays = Object.keys(allHolidaysMap).filter(k => k.startsWith(m.key));
+                  const mHolidaysCount = monthHolidays.length;
+                  const mActualWorking = Math.max(1, m.working - mHolidaysCount);
+
                   const monthDateKeys = Object.keys(records).filter(k => k.startsWith(m.key));
+                  const nonHolidayDates = monthDateKeys.filter(k => !allHolidaysMap[k]);
                   let mAttended: number;
 
-                  if (monthDateKeys.length > 0) {
-                    mAttended = monthDateKeys.filter(k => records[k]?.statusMap?.[selectedChild?.id || ''] !== false).length;
-                    const unrecorded = Math.max(0, m.working - monthDateKeys.length);
-                    const estRemainder = Math.min(unrecorded, Math.round(remainingAttended * (m.working / effectiveTotalWorking)));
-                    mAttended = Math.min(m.working, mAttended + estRemainder);
+                  if (nonHolidayDates.length > 0) {
+                    mAttended = nonHolidayDates.filter(k => records[k]?.statusMap?.[selectedChild?.id || ''] !== false).length;
+                    const unrecorded = Math.max(0, mActualWorking - nonHolidayDates.length);
+                    const estRemainder = Math.min(unrecorded, Math.round(remainingAttended * (mActualWorking / effectiveTotalWorking)));
+                    mAttended = Math.min(mActualWorking, mAttended + estRemainder);
                   } else {
                     if (idx === baseMonths.length - 1) {
-                      mAttended = Math.min(m.working, Math.max(0, remainingAttended));
+                      mAttended = Math.min(mActualWorking, Math.max(0, remainingAttended));
                     } else {
-                      mAttended = Math.min(m.working, Math.round((attendedDays * m.working) / effectiveTotalWorking));
+                      mAttended = Math.min(mActualWorking, Math.round((attendedDays * mActualWorking) / effectiveTotalWorking));
                       remainingAttended = Math.max(0, remainingAttended - mAttended);
                     }
                   }
 
-                  const mLeaves = Math.max(0, m.working - mAttended);
-                  const mPct = m.working > 0 ? ((mAttended / m.working) * 100).toFixed(1) + '%' : '100%';
+                  const mLeaves = Math.max(0, mActualWorking - mAttended);
+                  const mPct = mActualWorking > 0 ? ((mAttended / mActualWorking) * 100).toFixed(2) + '%' : '100.00%';
                   return {
                     month: m.month,
-                    working: m.working,
+                    working: mActualWorking,
+                    holidays: mHolidaysCount,
                     attended: mAttended,
                     leaves: mLeaves,
                     pct: mPct,
                     status: Number(mPct.replace('%', '')) >= 80 ? 'Good' : 'Needs Regularity',
                   };
                 });
+
+                // Combined Recent Activity & Holiday Log
+                const allLoggedDates = Array.from(new Set([...Object.keys(records), ...Object.keys(allHolidaysMap)]));
+                allLoggedDates.sort((a, b) => b.localeCompare(a));
+                const recentLoggedDates = allLoggedDates.slice(0, 10);
 
                 return (
                   <div className="space-y-6">
@@ -1417,20 +1479,20 @@ export const ParentDashboard: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* 4 Dedicated Attendance KPI Badges */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 pt-5 text-xs">
+                      {/* 5 Dedicated Attendance & Holiday KPI Badges */}
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-5 text-xs">
                         <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                          <span className="text-[11px] font-bold text-slate-500 uppercase block">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase block">
                             Total Working Days
                           </span>
                           <span className="text-2xl font-black text-slate-900 font-mono mt-1 block">
                             {totalWorkingDays}
                           </span>
-                          <span className="text-[10px] text-slate-400">Academic Year 2026–27</span>
+                          <span className="text-[10px] text-slate-400">Excludes Holidays</span>
                         </div>
 
                         <div className="bg-emerald-50/70 p-4 rounded-xl border border-emerald-200">
-                          <span className="text-[11px] font-bold text-emerald-800 uppercase block">
+                          <span className="text-[10px] font-bold text-emerald-800 uppercase block">
                             Attended Days
                           </span>
                           <span className="text-2xl font-black text-emerald-900 font-mono mt-1 block">
@@ -1439,18 +1501,29 @@ export const ParentDashboard: React.FC = () => {
                           <span className="text-[10px] text-emerald-700 font-semibold">Present in Classes</span>
                         </div>
 
-                        <div className="bg-amber-50/70 p-4 rounded-xl border border-amber-200">
-                          <span className="text-[11px] font-bold text-amber-800 uppercase block">
-                            Leaves Taken
+                        <div className="bg-amber-50/80 p-4 rounded-xl border border-amber-300">
+                          <span className="text-[10px] font-bold text-amber-900 uppercase block flex items-center gap-1">
+                            <span>🏖️</span>
+                            <span>Official Holidays</span>
                           </span>
-                          <span className="text-2xl font-black text-amber-900 font-mono mt-1 block">
-                            {leavesTaken}
+                          <span className="text-2xl font-black text-amber-950 font-mono mt-1 block">
+                            {totalHolidaysCount}
                           </span>
-                          <span className="text-[10px] text-amber-700">Authorized / Medical</span>
+                          <span className="text-[10px] text-amber-800 font-medium">Exempt / Non-Penalized</span>
                         </div>
 
-                        <div className="bg-emerald-900 text-white p-4 rounded-xl shadow-xs">
-                          <span className="text-[11px] font-bold text-emerald-200 uppercase block">
+                        <div className="bg-rose-50/70 p-4 rounded-xl border border-rose-200">
+                          <span className="text-[10px] font-bold text-rose-800 uppercase block">
+                            Leaves Taken
+                          </span>
+                          <span className="text-2xl font-black text-rose-900 font-mono mt-1 block">
+                            {leavesTaken}
+                          </span>
+                          <span className="text-[10px] text-rose-700">Authorized / Medical</span>
+                        </div>
+
+                        <div className="bg-emerald-900 text-white p-4 rounded-xl shadow-xs col-span-2 sm:col-span-1">
+                          <span className="text-[10px] font-bold text-emerald-200 uppercase block">
                             Attendance Badge
                           </span>
                           <span className="text-2xl font-black text-emerald-300 font-mono mt-1 block">
@@ -1483,17 +1556,18 @@ export const ParentDashboard: React.FC = () => {
                         <h3 className="text-sm font-bold text-slate-900">
                           Month-wise Attendance Breakdown (2026–2027)
                         </h3>
-                        <span className="text-xs text-slate-500">Morning Session Records</span>
+                        <span className="text-xs text-slate-500">Official Institution Records</span>
                       </div>
 
                       <div className="overflow-x-auto w-full scrollbar-thin">
-                        <table className="w-full text-left text-xs min-w-[600px] border-collapse">
+                        <table className="w-full text-left text-xs min-w-[650px] border-collapse">
                           <thead>
                             <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                               <th className="py-2.5 px-4 whitespace-nowrap">Month</th>
                               <th className="py-2.5 px-4 text-center whitespace-nowrap">Working Days</th>
                               <th className="py-2.5 px-4 text-center whitespace-nowrap">Days Present</th>
                               <th className="py-2.5 px-4 text-center whitespace-nowrap">Leaves</th>
+                              <th className="py-2.5 px-4 text-center whitespace-nowrap">Holidays</th>
                               <th className="py-2.5 px-4 text-right whitespace-nowrap">Attendance %</th>
                               <th className="py-2.5 px-4 text-center whitespace-nowrap">Status</th>
                             </tr>
@@ -1505,6 +1579,16 @@ export const ParentDashboard: React.FC = () => {
                                 <td className="py-3 px-4 text-center font-mono text-slate-600">{rec.working}</td>
                                 <td className="py-3 px-4 text-center font-mono font-bold text-emerald-900">{rec.attended}</td>
                                 <td className="py-3 px-4 text-center font-mono text-amber-800">{rec.leaves}</td>
+                                <td className="py-3 px-4 text-center font-mono text-amber-900 font-semibold">
+                                  {rec.holidays > 0 ? (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[10px]">
+                                      <span>🏖️</span>
+                                      <span>{rec.holidays}d</span>
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400">-</span>
+                                  )}
+                                </td>
                                 <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">{rec.pct}</td>
                                 <td className="py-3 px-4 text-center">
                                   <span
@@ -1524,15 +1608,116 @@ export const ParentDashboard: React.FC = () => {
                       </div>
                     </div>
 
+                    {/* RECENT ATTENDANCE & HOLIDAY CALENDAR LOG */}
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                      <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="p-1 rounded-lg bg-emerald-100 text-emerald-800">
+                            <Calendar className="w-4 h-4" />
+                          </span>
+                          <h3 className="text-sm font-bold text-slate-900">
+                            Recent Daily Attendance &amp; Holiday Log
+                          </h3>
+                        </div>
+                        <span className="text-xs text-slate-500">Morning Assembly (07:15 AM)</span>
+                      </div>
+
+                      {recentLoggedDates.length === 0 ? (
+                        <div className="p-8 text-center text-xs text-slate-400">
+                          No daily attendance sessions or holidays logged for this period yet.
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-slate-100">
+                          {recentLoggedDates.map(dKey => {
+                            const isHoliday = !!allHolidaysMap[dKey];
+                            const holInfo = allHolidaysMap[dKey];
+                            const rec = records[dKey];
+                            const isPresent = rec?.statusMap?.[selectedChild?.id || ''] !== false;
+                            const dObj = new Date(dKey);
+                            const formattedDate = !isNaN(dObj.getTime())
+                              ? dObj.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+                              : dKey;
+
+                            if (isHoliday) {
+                              return (
+                                <div key={dKey} className="p-3.5 sm:px-5 flex items-center justify-between gap-3 bg-amber-50/40 hover:bg-amber-50/70 transition">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-8 h-8 rounded-xl bg-amber-100 border border-amber-300 flex items-center justify-center text-sm shadow-2xs">
+                                      🏖️
+                                    </div>
+                                    <div>
+                                      <div className="text-xs font-bold text-amber-950 flex items-center gap-2">
+                                        <span>{formattedDate}</span>
+                                        <span className="font-mono text-[10px] text-amber-800">({dKey})</span>
+                                      </div>
+                                      <div className="text-[11px] text-amber-800 mt-0.5">
+                                        Official Holiday: <strong className="text-amber-950">{holInfo?.reason || 'Non-Working Day'}</strong>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="text-right">
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-200/80 text-amber-950 border border-amber-300">
+                                      🏖️ Holiday (Exempt)
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div key={dKey} className="p-3.5 sm:px-5 flex items-center justify-between gap-3 hover:bg-slate-50 transition">
+                                <div className="flex items-center gap-3">
+                                  <div
+                                    className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold border shadow-2xs ${
+                                      isPresent
+                                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                        : 'bg-rose-100 text-rose-800 border-rose-300'
+                                    }`}
+                                  >
+                                    {isPresent ? '✓' : '✕'}
+                                  </div>
+                                  <div>
+                                    <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                                      <span>{formattedDate}</span>
+                                      <span className="font-mono text-[10px] text-slate-400">({dKey})</span>
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                      {rec?.markedAt
+                                        ? `Logged at ${new Date(rec.markedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                                        : 'Morning Assembly Session'}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="text-right">
+                                  <span
+                                    className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-bold border ${
+                                      isPresent
+                                        ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                        : 'bg-rose-100 text-rose-900 border-rose-300'
+                                    }`}
+                                  >
+                                    {isPresent ? '✓ Present' : '✕ Absent'}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
                     {/* Guidelines & Teacher Note */}
                     <div className="bg-emerald-50/60 rounded-2xl border border-emerald-200 p-5 text-xs text-emerald-950 space-y-2">
                       <div className="flex items-center gap-2 font-bold text-emerald-900">
                         <BookOpen className="w-4 h-4 text-emerald-800" />
-                        <span>Madrasa Attendance & Punctuality Policy</span>
+                        <span>Madrasa Attendance &amp; Punctuality Policy</span>
                       </div>
                       <p className="leading-relaxed text-emerald-900/80">
                         Class teachers take attendance promptly during the morning assembly at 07:15 AM.
-                        If a student is unable to attend due to illness or family obligations, please inform the class teacher
+                        Designated official holidays are completely exempt from attendance and do not count against students' percentage records.
+                        If a student is unable to attend on a regular working day due to illness or family obligations, please inform the class teacher
                         in advance or provide a written leave note from the parent/guardian.
                       </p>
                     </div>

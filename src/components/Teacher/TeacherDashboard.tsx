@@ -12,6 +12,7 @@ import {
   FeePayment,
   ClassAttendanceConfig,
   DailyAttendanceRecord,
+  InstitutionHoliday,
   NewsItem,
   NotificationItem,
   DEFAULT_NEWS_ITEMS,
@@ -84,6 +85,31 @@ export type TeacherPortalTab =
   | 'contact'
   | 'about';
 
+export const formatLocalDate = (d: Date): string => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+export const parseLocalDate = (dateStr: string): Date => {
+  if (!dateStr) return new Date();
+  const parts = dateStr.split('-');
+  const y = parseInt(parts[0], 10) || new Date().getFullYear();
+  const m = (parseInt(parts[1], 10) || (new Date().getMonth() + 1)) - 1;
+  const d = parseInt(parts[2], 10) || new Date().getDate();
+  return new Date(y, m, d);
+};
+
+export const getWeekMondayStr = (baseDateStr: string): string => {
+  const d = parseLocalDate(baseDateStr);
+  if (isNaN(d.getTime())) return formatLocalDate(new Date());
+  const day = d.getDay(); // 0 = Sun, 1 = Mon ... 6 = Sat
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diffToMonday);
+  return formatLocalDate(d);
+};
+
 export const TeacherDashboard: React.FC = () => {
   const { user, fetchWithAuth, lang, t } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -111,15 +137,20 @@ export const TeacherDashboard: React.FC = () => {
   const [classFeePayments, setClassFeePayments] = useState<FeePayment[]>([]);
   const [feeClassId, setFeeClassId] = useState<string>('');
 
-  // Comprehensive Attendance Management System State (Preserved Verbatim)
+  const todayStr = formatLocalDate(new Date());
   const [attendanceClassId, setAttendanceClassId] = useState<string>('');
   const [attendanceMode, setAttendanceMode] = useState<'daily' | 'weekly'>('daily');
   const [selectedAttendanceDate, setSelectedAttendanceDate] = useState<string>(() => {
-    return new Date().toISOString().split('T')[0];
+    return formatLocalDate(new Date());
   });
   const [selectedWeekDate, setSelectedWeekDate] = useState<string>(() => {
-    return new Date().toISOString().split('T')[0];
+    return formatLocalDate(new Date());
   });
+  const [unlockedDates, setUnlockedDates] = useState<Record<string, boolean>>({});
+  const [institutionHolidays, setInstitutionHolidays] = useState<Record<string, InstitutionHoliday>>({});
+  const [holidayModalDate, setHolidayModalDate] = useState<string | null>(null);
+  const [holidayReasonInput, setHolidayReasonInput] = useState<string>('');
+  const [isSavingHoliday, setIsSavingHoliday] = useState<boolean>(false);
   const [dailyStatusMap, setDailyStatusMap] = useState<Record<string, boolean>>({});
   const [weeklyStatusMap, setWeeklyStatusMap] = useState<Record<string, Record<string, boolean>>>({});
   const [classAttendanceConfig, setClassAttendanceConfig] = useState<ClassAttendanceConfig | null>(null);
@@ -128,6 +159,21 @@ export const TeacherDashboard: React.FC = () => {
   const [dailySaveSuccess, setDailySaveSuccess] = useState(false);
   const [isSavingWeekly, setIsSavingWeekly] = useState(false);
   const [weeklySaveSuccess, setWeeklySaveSuccess] = useState(false);
+
+  // Strict Hard Restriction: Instantly clamp back if date or week is in the future
+  useEffect(() => {
+    if (selectedAttendanceDate > todayStr) {
+      setSelectedAttendanceDate(todayStr);
+    }
+  }, [selectedAttendanceDate, todayStr]);
+
+  useEffect(() => {
+    const selectedWeekMonday = getWeekMondayStr(selectedWeekDate);
+    const currentWeekMonday = getWeekMondayStr(todayStr);
+    if (selectedWeekMonday > currentWeekMonday) {
+      setSelectedWeekDate(todayStr);
+    }
+  }, [selectedWeekDate, todayStr]);
 
   // Active Mark Entry Selection
   const [activeEntry, setActiveEntry] = useState<{
@@ -500,6 +546,22 @@ export const TeacherDashboard: React.FC = () => {
       );
       unsubs.push(unsubAttendance);
 
+      // Real-time Firestore Institution Holidays listener
+      const unsubHolidays = onSnapshot(
+        collection(db, 'institutionHolidays'),
+        snapshot => {
+          const holMap: Record<string, InstitutionHoliday> = {};
+          snapshot.docs.forEach(docSnap => {
+            holMap[docSnap.id] = { ...docSnap.data(), id: docSnap.id } as InstitutionHoliday;
+          });
+          setInstitutionHolidays(holMap);
+        },
+        error => {
+          console.warn('Firestore institutionHolidays onSnapshot error:', error);
+        }
+      );
+      unsubs.push(unsubHolidays);
+
       // Real-time Firestore News listener
       const unsubNews = onSnapshot(
         collection(db, 'news'),
@@ -603,12 +665,8 @@ export const TeacherDashboard: React.FC = () => {
 
   // Helper to compute 6 days of the week (Monday through Saturday)
   const getWeekDays = (baseDateStr: string) => {
-    const d = new Date(baseDateStr);
-    if (isNaN(d.getTime())) return [];
-    const day = d.getDay(); // 0 = Sun, 1 = Mon ... 6 = Sat
-    const diffToMonday = day === 0 ? -6 : 1 - day;
-    const monday = new Date(d);
-    monday.setDate(d.getDate() + diffToMonday);
+    const mondayStr = getWeekMondayStr(baseDateStr);
+    const monday = parseLocalDate(mondayStr);
 
     const days: { dateStr: string; dayName: string; dayNameMl: string; shortDate: string }[] = [];
     const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -617,7 +675,7 @@ export const TeacherDashboard: React.FC = () => {
     for (let i = 0; i < 6; i++) {
       const cur = new Date(monday);
       cur.setDate(monday.getDate() + i);
-      const dateStr = cur.toISOString().split('T')[0];
+      const dateStr = formatLocalDate(cur);
       const shortDate = `${cur.getDate()} ${cur.toLocaleString('default', { month: 'short' })}`;
       days.push({
         dateStr,
@@ -628,6 +686,215 @@ export const TeacherDashboard: React.FC = () => {
     }
     return days;
   };
+
+  // Check if attendance has already been saved to Firestore for a given date
+  const isDateRecorded = (dateStr: string): boolean => {
+    return !!classAttendanceConfig?.dailyRecords?.[dateStr];
+  };
+
+  // Check if a date is locked (already saved to Firestore and not explicitly unlocked this session)
+  const isDateLocked = (dateStr: string): boolean => {
+    return isDateRecorded(dateStr) && !unlockedDates[dateStr];
+  };
+
+  // Check if date is designated as an Institution Holiday / Non-Working Day
+  const isDateHoliday = (dateStr: string): boolean => {
+    if (institutionHolidays[dateStr]) return true;
+    if (classAttendanceConfig?.dailyRecords?.[dateStr]?.isHoliday) return true;
+    return false;
+  };
+
+  // Get metadata for a holiday
+  const getHolidayInfo = (dateStr: string): { date: string; reason: string; markedBy?: string } | null => {
+    if (institutionHolidays[dateStr]) {
+      return institutionHolidays[dateStr];
+    }
+    const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
+    if (rec?.isHoliday) {
+      return {
+        date: dateStr,
+        reason: rec.holidayReason || 'Official Holiday / Non-Working Day',
+        markedBy: rec.markedBy || 'Class Teacher',
+      };
+    }
+    return null;
+  };
+
+  // Open Holiday Designation Modal
+  const handleOpenMarkHoliday = (dateStr: string) => {
+    const existing = getHolidayInfo(dateStr);
+    const dayOfWeek = parseLocalDate(dateStr).getDay();
+    const defaultReason = existing?.reason || (dayOfWeek === 5 ? 'Friday Holiday' : 'Official Holiday');
+    setHolidayReasonInput(defaultReason);
+    setHolidayModalDate(dateStr);
+  };
+
+  // Confirm and persist holiday designation to Firestore 'institutionHolidays' & attendance config
+  const handleConfirmMarkHoliday = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!holidayModalDate) return;
+    setIsSavingHoliday(true);
+    try {
+      const reason = holidayReasonInput.trim() || 'Official Holiday / Non-Working Day';
+      const holidayData: InstitutionHoliday = {
+        id: holidayModalDate,
+        date: holidayModalDate,
+        reason,
+        markedBy: user?.name || 'Class Teacher',
+        markedAt: new Date().toISOString(),
+        academicYear: '2026-2027',
+        createdAt: new Date().toISOString(),
+      };
+
+      // 1. Direct write to Firestore 'institutionHolidays'
+      await setDoc(doc(db, 'institutionHolidays', holidayModalDate), cleanForFirestore(holidayData), { merge: true });
+
+      // 2. Update local state
+      setInstitutionHolidays(prev => ({
+        ...prev,
+        [holidayModalDate]: holidayData,
+      }));
+
+      // 3. Update classAttendanceConfig.dailyRecords with isHoliday
+      if (attendanceClassId) {
+        const updatedDailyRecords = {
+          ...(classAttendanceConfig?.dailyRecords || {}),
+          [holidayModalDate]: {
+            date: holidayModalDate,
+            presentStudentIds: [],
+            absentStudentIds: [],
+            statusMap: {},
+            isHoliday: true,
+            holidayReason: reason,
+            markedAt: new Date().toISOString(),
+            markedBy: user?.name || 'Class Teacher',
+          },
+        };
+
+        const totalHolidays = Object.keys(updatedDailyRecords).filter(
+          k => updatedDailyRecords[k]?.isHoliday || institutionHolidays[k] || k === holidayModalDate
+        ).length;
+        const totalWorking = Math.max(1, (attendanceTotalWorkingDays || 88) - totalHolidays);
+
+        const updatedConfig: ClassAttendanceConfig = {
+          classId: attendanceClassId,
+          totalWorkingDays: totalWorking,
+          studentDaysAttended: classAttendanceConfig?.studentDaysAttended || {},
+          dailyRecords: updatedDailyRecords,
+          updatedAt: new Date().toISOString(),
+        };
+
+        await setDoc(doc(db, 'attendance', attendanceClassId), cleanForFirestore(updatedConfig), { merge: true });
+        setClassAttendanceConfig(updatedConfig);
+
+        await fetchWithAuth(`/api/attendance/class/${attendanceClassId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedConfig),
+        });
+      }
+
+      // 4. Update local API
+      await fetchWithAuth('/api/institution-holidays', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(holidayData),
+      });
+
+      setHolidayModalDate(null);
+      alert(`Date ${holidayModalDate} officially designated as Holiday ("${reason}"). Working days and student percentages are safeguarded without penalties.`);
+    } catch (err: any) {
+      console.error('Error marking holiday:', err);
+      alert('Failed to mark holiday: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsSavingHoliday(false);
+    }
+  };
+
+  // Remove holiday designation
+  const handleRemoveHoliday = async (dateStr: string) => {
+    const confirmed = window.confirm(
+      `Remove Holiday status for ${dateStr}?\n\nThis will restore this date as a regular working day for attendance.`
+    );
+    if (!confirmed) return;
+    try {
+      await deleteDoc(doc(db, 'institutionHolidays', dateStr));
+
+      setInstitutionHolidays(prev => {
+        const copy = { ...prev };
+        delete copy[dateStr];
+        return copy;
+      });
+
+      if (attendanceClassId && classAttendanceConfig?.dailyRecords?.[dateStr]) {
+        const updatedDailyRecords = { ...(classAttendanceConfig.dailyRecords) };
+        delete updatedDailyRecords[dateStr];
+
+        const totalHolidays = Object.keys(updatedDailyRecords).filter(
+          k => (updatedDailyRecords[k]?.isHoliday || institutionHolidays[k]) && k !== dateStr
+        ).length;
+        const totalWorking = Math.max(1, (attendanceTotalWorkingDays || 88) - totalHolidays);
+
+        const updatedConfig: ClassAttendanceConfig = {
+          ...classAttendanceConfig,
+          totalWorkingDays: totalWorking,
+          dailyRecords: updatedDailyRecords,
+          updatedAt: new Date().toISOString(),
+        };
+
+        await setDoc(doc(db, 'attendance', attendanceClassId), cleanForFirestore(updatedConfig), { merge: true });
+        setClassAttendanceConfig(updatedConfig);
+
+        await fetchWithAuth(`/api/attendance/class/${attendanceClassId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedConfig),
+        });
+      }
+
+      await fetchWithAuth(`/api/institution-holidays/${dateStr}`, { method: 'DELETE' });
+      alert(`Holiday designation removed for ${dateStr}. Restored as regular working day.`);
+    } catch (err: any) {
+      console.error('Error removing holiday:', err);
+      alert('Failed to remove holiday: ' + (err.message || 'Unknown error'));
+    }
+  };
+
+  // Explicit Unlock Handler with user confirmation
+  const handleUnlockDate = (dateStr: string) => {
+    if (dateStr > todayStr) {
+      alert('Future dates cannot be unlocked or marked.');
+      return;
+    }
+    const dObj = parseLocalDate(dateStr);
+    const formatted = !isNaN(dObj.getTime())
+      ? dObj.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })
+      : dateStr;
+
+    const confirmed = window.confirm(
+      `Edit / Unlock Attendance for ${formatted}?\n\nThis date is currently marked and locked to prevent accidental duplicate entries.\n\nAre you sure you want to unlock this record to make authorized corrections?`
+    );
+    if (confirmed) {
+      setUnlockedDates(prev => ({
+        ...prev,
+        [dateStr]: true,
+      }));
+    }
+  };
+
+  // Re-lock an unlocked date
+  const handleRelockDate = (dateStr: string) => {
+    setUnlockedDates(prev => ({
+      ...prev,
+      [dateStr]: false,
+    }));
+  };
+
+  // Current week vs selected week calculation
+  const currentWeekMondayStr = getWeekMondayStr(todayStr);
+  const selectedWeekMondayStr = getWeekMondayStr(selectedWeekDate);
+  const isCurrentWeekOrFuture = selectedWeekMondayStr >= currentWeekMondayStr;
+  const isDailyAtToday = selectedAttendanceDate >= todayStr;
 
   // Sync dailyStatusMap when selectedAttendanceDate, attendanceClassId, classAttendanceConfig, or allStudents change
   useEffect(() => {
@@ -671,29 +938,52 @@ export const TeacherDashboard: React.FC = () => {
     setWeeklyStatusMap(newWeeklyMap);
   }, [selectedWeekDate, attendanceClassId, classAttendanceConfig, allStudents]);
 
-  // Quick navigation helpers for dates
+  // Quick navigation helpers for dates - STRICTLY CLAMPED TO <= TODAY
   const stepDailyDate = (offsetDays: number) => {
-    const d = new Date(selectedAttendanceDate);
+    if (offsetDays > 0 && isDailyAtToday) {
+      return;
+    }
+    const d = parseLocalDate(selectedAttendanceDate);
     d.setDate(d.getDate() + offsetDays);
-    setSelectedAttendanceDate(d.toISOString().split('T')[0]);
+    const nextDateStr = formatLocalDate(d);
+    if (nextDateStr > todayStr) {
+      setSelectedAttendanceDate(todayStr);
+    } else {
+      setSelectedAttendanceDate(nextDateStr);
+    }
   };
 
   const stepWeeklyDate = (offsetWeeks: number) => {
-    const d = new Date(selectedWeekDate);
+    if (offsetWeeks > 0 && isCurrentWeekOrFuture) {
+      return;
+    }
+    const d = parseLocalDate(selectedWeekDate);
     d.setDate(d.getDate() + offsetWeeks * 7);
-    setSelectedWeekDate(d.toISOString().split('T')[0]);
+    const nextDateStr = formatLocalDate(d);
+    const nextMonday = getWeekMondayStr(nextDateStr);
+    if (nextMonday > currentWeekMondayStr) {
+      setSelectedWeekDate(todayStr);
+    } else {
+      setSelectedWeekDate(nextDateStr);
+    }
   };
 
-  // Toggle single student in Daily view
+  // Toggle single student in Daily view (disallowed if holiday, locked, or future)
   const toggleDailyStudent = (studentId: string) => {
+    if (isDateHoliday(selectedAttendanceDate) || isDateLocked(selectedAttendanceDate) || selectedAttendanceDate > todayStr) {
+      return;
+    }
     setDailyStatusMap(prev => ({
       ...prev,
       [studentId]: prev[studentId] === false ? true : false,
     }));
   };
 
-  // Mark all present in Daily view
+  // Mark all present in Daily view (disallowed if holiday, locked, or future)
   const markAllDailyPresent = () => {
+    if (isDateHoliday(selectedAttendanceDate) || isDateLocked(selectedAttendanceDate) || selectedAttendanceDate > todayStr) {
+      return;
+    }
     const currentStudents = allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active');
     const newMap: Record<string, boolean> = {};
     currentStudents.forEach(st => {
@@ -702,8 +992,11 @@ export const TeacherDashboard: React.FC = () => {
     setDailyStatusMap(newMap);
   };
 
-  // Mark all absent in Daily view
+  // Mark all absent in Daily view (disallowed if holiday, locked, or future)
   const markAllDailyAbsent = () => {
+    if (isDateHoliday(selectedAttendanceDate) || isDateLocked(selectedAttendanceDate) || selectedAttendanceDate > todayStr) {
+      return;
+    }
     const currentStudents = allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active');
     const newMap: Record<string, boolean> = {};
     currentStudents.forEach(st => {
@@ -712,8 +1005,11 @@ export const TeacherDashboard: React.FC = () => {
     setDailyStatusMap(newMap);
   };
 
-  // Toggle student day in Weekly view
+  // Toggle student day in Weekly view (strictly disallow holiday, future days, and locked days)
   const toggleWeeklyStudentDay = (studentId: string, dateStr: string) => {
+    if (isDateHoliday(dateStr) || dateStr > todayStr || isDateLocked(dateStr)) {
+      return;
+    }
     setWeeklyStatusMap(prev => {
       const studentMap = prev[studentId] || {};
       const currentVal = studentMap[dateStr] !== false;
@@ -727,23 +1023,39 @@ export const TeacherDashboard: React.FC = () => {
     });
   };
 
-  // Mark all present in Weekly view
+  // Mark all present in Weekly view (strictly ONLY for unrecorded or unlocked days <= todayStr that are NOT holidays)
   const markAllWeeklyPresent = () => {
     const currentStudents = allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active');
     const weekDays = getWeekDays(selectedWeekDate);
-    const newMap: Record<string, Record<string, boolean>> = {};
+    const newMap: Record<string, Record<string, boolean>> = { ...weeklyStatusMap };
+
     currentStudents.forEach(st => {
-      newMap[st.id] = {};
+      if (!newMap[st.id]) newMap[st.id] = {};
       weekDays.forEach(wDay => {
-        newMap[st.id][wDay.dateStr] = true;
+        if (wDay.dateStr <= todayStr && !isDateLocked(wDay.dateStr) && !isDateHoliday(wDay.dateStr)) {
+          newMap[st.id][wDay.dateStr] = true;
+        }
       });
     });
     setWeeklyStatusMap(newMap);
   };
 
-  // Save Daily Attendance
+  // Save Daily Attendance (safeguards working days count by excluding holidays)
   const handleSaveDailyAttendance = async () => {
     if (!attendanceClassId) return;
+    if (selectedAttendanceDate > todayStr) {
+      alert('Cannot mark attendance for future dates.');
+      return;
+    }
+    if (isDateHoliday(selectedAttendanceDate)) {
+      alert('This date is designated as an Official Holiday. Attendance marking is exempt.');
+      return;
+    }
+    if (isDateLocked(selectedAttendanceDate)) {
+      alert('This date record is locked against duplicate submission. Click "Edit / Unlock Attendance" if you need to make corrections.');
+      return;
+    }
+
     setIsSavingDaily(true);
     setDailySaveSuccess(false);
     try {
@@ -761,7 +1073,7 @@ export const TeacherDashboard: React.FC = () => {
         else absentStudentIds.push(st.id);
       });
 
-      const updatedDailyRecords = {
+      const updatedDailyRecords: Record<string, DailyAttendanceRecord> = {
         ...(classAttendanceConfig?.dailyRecords || {}),
         [selectedAttendanceDate]: {
           date: selectedAttendanceDate,
@@ -770,6 +1082,7 @@ export const TeacherDashboard: React.FC = () => {
           statusMap,
           markedAt: new Date().toISOString(),
           markedBy: user?.name || 'Class Teacher',
+          isHoliday: false,
         },
       };
 
@@ -778,122 +1091,21 @@ export const TeacherDashboard: React.FC = () => {
       };
 
       const distinctDates = Object.keys(updatedDailyRecords);
-      const totalWorking = Math.max(distinctDates.length, attendanceTotalWorkingDays || 88);
-
-      currentStudents.forEach(st => {
-        let currentDays = updatedDaysAttended[st.id];
-        if (currentDays === undefined) {
-          currentDays = st.attendance?.daysAttended ?? Math.max(0, totalWorking - ((Number(st.rollNo || 1) * 3) % 4) - 2);
-        }
-        const prevRecord = classAttendanceConfig?.dailyRecords?.[selectedAttendanceDate];
-        if (prevRecord) {
-          const wasPresent = prevRecord.statusMap?.[st.id] !== false;
-          const nowPresent = statusMap[st.id];
-          if (wasPresent && !nowPresent) {
-            currentDays = Math.max(0, currentDays - 1);
-          } else if (!wasPresent && nowPresent) {
-            currentDays = Math.min(totalWorking, currentDays + 1);
-          }
-        } else {
-          if (!statusMap[st.id]) {
-            currentDays = Math.max(0, currentDays - 1);
-          }
-        }
-        updatedDaysAttended[st.id] = currentDays;
-      });
-
-      const updatedConfig: ClassAttendanceConfig = {
-        classId: attendanceClassId,
-        totalWorkingDays: totalWorking,
-        studentDaysAttended: updatedDaysAttended,
-        dailyRecords: updatedDailyRecords,
-        updatedAt: new Date().toISOString(),
-      };
-
-      await setDoc(doc(db, 'attendance', attendanceClassId), cleanForFirestore(updatedConfig), { merge: true });
-
-      for (const st of currentStudents) {
-        try {
-          await setDoc(
-            doc(db, 'students', st.id),
-            cleanForFirestore({
-              attendance: {
-                daysAttended: updatedDaysAttended[st.id],
-                totalWorkingDays: totalWorking,
-              },
-            }),
-            { merge: true }
-          );
-        } catch {}
-      }
-
-      await fetchWithAuth(`/api/attendance/class/${attendanceClassId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedConfig),
-      });
-
-      setClassAttendanceConfig(updatedConfig);
-      setStudentDaysAttendedMap(updatedDaysAttended);
-      setAttendanceTotalWorkingDays(totalWorking);
-      setDailySaveSuccess(true);
-      setTimeout(() => setDailySaveSuccess(false), 3500);
-    } catch (err: any) {
-      console.error('Error saving daily attendance:', err);
-      alert('Failed to save daily attendance: ' + (err.message || 'Unknown error'));
-    } finally {
-      setIsSavingDaily(false);
-    }
-  };
-
-  // Save Weekly Attendance
-  const handleSaveWeeklyAttendance = async () => {
-    if (!attendanceClassId) return;
-    setIsSavingWeekly(true);
-    setWeeklySaveSuccess(false);
-    try {
-      const currentStudents = sortStudentsBoysFirst(
-        allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active')
+      const holidayDates = distinctDates.filter(
+        dKey => updatedDailyRecords[dKey]?.isHoliday || institutionHolidays[dKey]
       );
-      const weekDays = getWeekDays(selectedWeekDate);
-      const updatedDailyRecords = { ...(classAttendanceConfig?.dailyRecords || {}) };
-
-      weekDays.forEach(wDay => {
-        const presentStudentIds: string[] = [];
-        const absentStudentIds: string[] = [];
-        const statusMap: Record<string, boolean> = {};
-
-        currentStudents.forEach(st => {
-          const isPres = weeklyStatusMap[st.id]?.[wDay.dateStr] !== false;
-          statusMap[st.id] = isPres;
-          if (isPres) presentStudentIds.push(st.id);
-          else absentStudentIds.push(st.id);
-        });
-
-        updatedDailyRecords[wDay.dateStr] = {
-          date: wDay.dateStr,
-          presentStudentIds,
-          absentStudentIds,
-          statusMap,
-          markedAt: new Date().toISOString(),
-          markedBy: user?.name || 'Class Teacher',
-        };
-      });
-
-      const updatedDaysAttended: Record<string, number> = {
-        ...(classAttendanceConfig?.studentDaysAttended || {}),
-      };
-      const distinctDates = Object.keys(updatedDailyRecords);
-      const totalWorking = Math.max(distinctDates.length, attendanceTotalWorkingDays || 88);
+      const totalWorking = Math.max(1, (attendanceTotalWorkingDays || 88) - holidayDates.length);
 
       currentStudents.forEach(st => {
         let count = 0;
         distinctDates.forEach(dKey => {
-          if (updatedDailyRecords[dKey]?.statusMap?.[st.id] !== false) {
+          const isHol = updatedDailyRecords[dKey]?.isHoliday || institutionHolidays[dKey];
+          if (!isHol && updatedDailyRecords[dKey]?.statusMap?.[st.id] !== false) {
             count++;
           }
         });
-        const studentDays = Math.min(totalWorking, count + Math.max(0, totalWorking - distinctDates.length - 2));
+        const nonHolidayDatesCount = Math.max(1, distinctDates.length - holidayDates.length);
+        const studentDays = Math.min(totalWorking, count + Math.max(0, totalWorking - nonHolidayDatesCount - 2));
         updatedDaysAttended[st.id] = studentDays;
       });
 
@@ -931,6 +1143,144 @@ export const TeacherDashboard: React.FC = () => {
       setClassAttendanceConfig(updatedConfig);
       setStudentDaysAttendedMap(updatedDaysAttended);
       setAttendanceTotalWorkingDays(totalWorking);
+
+      // Re-lock the date immediately upon save
+      setUnlockedDates(prev => ({ ...prev, [selectedAttendanceDate]: false }));
+
+      setDailySaveSuccess(true);
+      setTimeout(() => setDailySaveSuccess(false), 3500);
+    } catch (err: any) {
+      console.error('Error saving daily attendance:', err);
+      alert('Failed to save daily attendance: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsSavingDaily(false);
+    }
+  };
+
+  // Save Weekly Attendance (safeguards working days count by excluding holidays)
+  const handleSaveWeeklyAttendance = async () => {
+    if (!attendanceClassId) return;
+    setIsSavingWeekly(true);
+    setWeeklySaveSuccess(false);
+    try {
+      const currentStudents = sortStudentsBoysFirst(
+        allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active')
+      );
+      const weekDays = getWeekDays(selectedWeekDate);
+      const updatedDailyRecords = { ...(classAttendanceConfig?.dailyRecords || {}) };
+
+      // Strictly only process past or today dates (<= todayStr)
+      const eligibleDays = weekDays.filter(wDay => wDay.dateStr <= todayStr);
+
+      eligibleDays.forEach(wDay => {
+        // If day is a marked holiday, keep or set as holiday without marking students absent
+        if (isDateHoliday(wDay.dateStr)) {
+          const holInfo = getHolidayInfo(wDay.dateStr);
+          updatedDailyRecords[wDay.dateStr] = {
+            date: wDay.dateStr,
+            presentStudentIds: [],
+            absentStudentIds: [],
+            statusMap: {},
+            isHoliday: true,
+            holidayReason: holInfo?.reason || 'Official Holiday / Non-Working Day',
+            markedAt: new Date().toISOString(),
+            markedBy: user?.name || 'Class Teacher',
+          };
+          return;
+        }
+
+        // If day was already marked & saved and not unlocked, keep its existing record
+        if (isDateLocked(wDay.dateStr) && updatedDailyRecords[wDay.dateStr]) {
+          return;
+        }
+
+        const presentStudentIds: string[] = [];
+        const absentStudentIds: string[] = [];
+        const statusMap: Record<string, boolean> = {};
+
+        currentStudents.forEach(st => {
+          const isPres = weeklyStatusMap[st.id]?.[wDay.dateStr] !== false;
+          statusMap[st.id] = isPres;
+          if (isPres) presentStudentIds.push(st.id);
+          else absentStudentIds.push(st.id);
+        });
+
+        updatedDailyRecords[wDay.dateStr] = {
+          date: wDay.dateStr,
+          presentStudentIds,
+          absentStudentIds,
+          statusMap,
+          markedAt: new Date().toISOString(),
+          markedBy: user?.name || 'Class Teacher',
+        };
+      });
+
+      const updatedDaysAttended: Record<string, number> = {
+        ...(classAttendanceConfig?.studentDaysAttended || {}),
+      };
+      const distinctDates = Object.keys(updatedDailyRecords);
+      const holidayDates = distinctDates.filter(
+        dKey => updatedDailyRecords[dKey]?.isHoliday || institutionHolidays[dKey]
+      );
+      const totalWorking = Math.max(1, (attendanceTotalWorkingDays || 88) - holidayDates.length);
+
+      currentStudents.forEach(st => {
+        let count = 0;
+        distinctDates.forEach(dKey => {
+          const isHol = updatedDailyRecords[dKey]?.isHoliday || institutionHolidays[dKey];
+          if (!isHol && updatedDailyRecords[dKey]?.statusMap?.[st.id] !== false) {
+            count++;
+          }
+        });
+        const nonHolidayDatesCount = Math.max(1, distinctDates.length - holidayDates.length);
+        const studentDays = Math.min(totalWorking, count + Math.max(0, totalWorking - nonHolidayDatesCount - 2));
+        updatedDaysAttended[st.id] = studentDays;
+      });
+
+      const updatedConfig: ClassAttendanceConfig = {
+        classId: attendanceClassId,
+        totalWorkingDays: totalWorking,
+        studentDaysAttended: updatedDaysAttended,
+        dailyRecords: updatedDailyRecords,
+        updatedAt: new Date().toISOString(),
+      };
+
+      await setDoc(doc(db, 'attendance', attendanceClassId), cleanForFirestore(updatedConfig), { merge: true });
+
+      for (const st of currentStudents) {
+        try {
+          await setDoc(
+            doc(db, 'students', st.id),
+            cleanForFirestore({
+              attendance: {
+                daysAttended: updatedDaysAttended[st.id],
+                totalWorkingDays: totalWorking,
+              },
+            }),
+            { merge: true }
+          );
+        } catch {}
+      }
+
+      await fetchWithAuth(`/api/attendance/class/${attendanceClassId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedConfig),
+      });
+
+      setClassAttendanceConfig(updatedConfig);
+      setStudentDaysAttendedMap(updatedDaysAttended);
+      setAttendanceTotalWorkingDays(totalWorking);
+
+      // Lock all dates in this week
+      setUnlockedDates(prev => {
+        const copy = { ...prev };
+        weekDays.forEach(w => {
+          copy[w.dateStr] = false;
+        });
+        return copy;
+      });
+
       setWeeklySaveSuccess(true);
       setTimeout(() => setWeeklySaveSuccess(false), 3500);
     } catch (err: any) {
@@ -2502,196 +2852,390 @@ export const TeacherDashboard: React.FC = () => {
             </div>
 
             {/* VIEW 1: DAILY ATTENDANCE MARKING */}
-            {attendanceMode === 'daily' && (
-              <div className="space-y-4">
-                {/* Date Controls & Quick Actions Banner */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    {/* Date Picker & Navigators */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() => stepDailyDate(-1)}
-                        className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer transition"
-                        title="Previous Day"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                      </button>
+            {attendanceMode === 'daily' && (() => {
+              const isDailyRecorded = isDateRecorded(selectedAttendanceDate);
+              const isDailyLocked = isDateLocked(selectedAttendanceDate);
+              const isDailyEditing = isDailyRecorded && unlockedDates[selectedAttendanceDate];
+              const isDailyHoliday = isDateHoliday(selectedAttendanceDate);
+              const dailyHolidayInfo = getHolidayInfo(selectedAttendanceDate);
+              const dailyRecord = classAttendanceConfig?.dailyRecords?.[selectedAttendanceDate];
 
-                      <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5">
-                        <Calendar className="w-4 h-4 text-slate-500" />
-                        <input
-                          type="date"
-                          value={selectedAttendanceDate}
-                          onChange={e => setSelectedAttendanceDate(e.target.value)}
-                          className="bg-transparent text-xs font-bold text-slate-900 focus:outline-none cursor-pointer"
-                        />
+              return (
+                <div className="space-y-4">
+                  {/* Date Controls & Quick Actions Banner */}
+                  <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      {/* Date Picker & Navigators */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => stepDailyDate(-1)}
+                          className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer transition"
+                          title="Previous Day"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+
+                        <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5">
+                          <Calendar className="w-4 h-4 text-slate-500" />
+                          <input
+                            type="date"
+                            max={todayStr}
+                            value={selectedAttendanceDate}
+                            onChange={e => {
+                              const val = e.target.value;
+                              if (!val) return;
+                              if (val > todayStr) {
+                                setSelectedAttendanceDate(todayStr);
+                              } else {
+                                setSelectedAttendanceDate(val);
+                              }
+                            }}
+                            className="bg-transparent text-xs font-bold text-slate-900 focus:outline-none cursor-pointer"
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => stepDailyDate(1)}
+                          disabled={isDailyAtToday}
+                          className={`p-2 rounded-xl border border-slate-200 transition ${
+                            isDailyAtToday
+                              ? 'bg-slate-100 text-slate-300 opacity-40 cursor-not-allowed pointer-events-none'
+                              : 'bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer'
+                          }`}
+                          title={isDailyAtToday ? "Next day disabled: cannot navigate into future dates" : "Next Day"}
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setSelectedAttendanceDate(todayStr)}
+                          disabled={selectedAttendanceDate === todayStr}
+                          className={`px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 transition ${
+                            selectedAttendanceDate === todayStr
+                              ? 'bg-slate-100 text-slate-400 cursor-default'
+                              : 'bg-white hover:bg-slate-50 text-slate-700 cursor-pointer'
+                          }`}
+                        >
+                          Today
+                        </button>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => stepDailyDate(1)}
-                        className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer transition"
-                        title="Next Day"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
+                      {/* Date Label & Locking / Holiday Status */}
+                      <div className="text-xs font-bold text-slate-700 sm:text-right flex flex-col sm:items-end gap-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-emerald-950 font-bold">{dateFormattedEn}</span>
+                          {selectedAttendanceDate === todayStr && (
+                            <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded">
+                              Today
+                            </span>
+                          )}
+                        </div>
 
-                      <button
-                        type="button"
-                        onClick={() => setSelectedAttendanceDate(new Date().toISOString().split('T')[0])}
-                        className="px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 cursor-pointer transition"
-                      >
-                        Today
-                      </button>
-                    </div>
-
-                    {/* Date Label */}
-                    <div className="text-xs font-bold text-slate-700 sm:text-right">
-                      <span className="text-emerald-900 block">{dateFormattedEn}</span>
-                      <span className="text-[11px] text-slate-400 font-normal">Morning Session (07:15 AM)</span>
-                    </div>
-                  </div>
-
-                  {/* Actions & Metrics Bar */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={markAllDailyPresent}
-                        className="px-3 py-1.5 text-xs font-bold rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer flex items-center gap-1"
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                        Mark All Present
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={markAllDailyAbsent}
-                        className="px-3 py-1.5 text-xs font-bold rounded-xl bg-rose-50 text-rose-800 border border-rose-200 hover:bg-rose-100 transition cursor-pointer flex items-center gap-1"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                        Mark All Absent
-                      </button>
-                    </div>
-
-                    {/* Counter Badges & Save Button */}
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <div className="flex items-center gap-2 text-xs font-mono font-bold">
-                        <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900 border border-emerald-200">
-                          Present: {dailyPresentCount} / {classStudents.length} ({dailyPercentage}%)
-                        </span>
-                        <span className="px-2.5 py-1 rounded-lg bg-rose-100 text-rose-900 border border-rose-200">
-                          Absent: {dailyAbsentCount}
-                        </span>
+                        {isDailyHoliday ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+                              <span>🏖️</span>
+                              <span>Official Holiday: {dailyHolidayInfo?.reason || 'Non-Working Day'}</span>
+                            </span>
+                          </div>
+                        ) : isDailyLocked ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
+                              <CheckCircle className="w-3.5 h-3.5 text-emerald-700" />
+                              ✓ Attendance Marked (Locked)
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-normal">
+                              ({dailyRecord?.markedAt ? new Date(dailyRecord.markedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Morning Session'})
+                            </span>
+                          </div>
+                        ) : isDailyEditing ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                            <Edit3 className="w-3.5 h-3.5 text-amber-700" />
+                            Unlocked for Editing
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-slate-400 font-normal">
+                            Morning Session (07:15 AM) · Open for marking
+                          </span>
+                        )}
                       </div>
-
-                      <button
-                        type="button"
-                        onClick={handleSaveDailyAttendance}
-                        disabled={isSavingDaily}
-                        className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs disabled:opacity-50 cursor-pointer"
-                      >
-                        <Save className="w-4 h-4" />
-                        {isSavingDaily ? 'Saving...' : dailySaveSuccess ? 'Saved!' : 'Save Attendance'}
-                      </button>
                     </div>
-                  </div>
-                </div>
 
-                {/* Student Daily Marking List */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3">
-                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                    <span className="text-xs font-bold text-slate-700">
-                      Enrolled Students ({classStudents.length})
-                    </span>
-                    <span className="text-[11px] text-slate-400">
-                      Tap checkbox or anywhere on the row to toggle Present / Absent
-                    </span>
-                  </div>
-
-                  {classStudents.length === 0 ? (
-                    <div className="text-center py-10 text-slate-400 text-xs">
-                      No active students found in this class.
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                      {classStudents.map(st => {
-                        const isPresent = dailyStatusMap[st.id] !== false;
-
-                        return (
-                          <div
-                            key={st.id}
-                            onClick={() => toggleDailyStudent(st.id)}
-                            className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer select-none ${
-                              isPresent
-                                ? 'bg-emerald-50/60 border-emerald-200 hover:bg-emerald-50'
-                                : 'bg-rose-50/50 border-rose-200 hover:bg-rose-50'
-                            }`}
+                    {/* Actions & Metrics Bar */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Holiday Toggle Button */}
+                        {isDailyHoliday ? (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveHoliday(selectedAttendanceDate)}
+                            className="px-3 py-1.5 text-xs font-bold rounded-xl border border-amber-300 bg-amber-100 hover:bg-amber-200 text-amber-950 transition flex items-center gap-1 cursor-pointer"
+                            title="Remove holiday status and restore as regular working day"
                           >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <span className="w-8 h-8 rounded-lg bg-white border border-slate-200 font-mono font-bold text-xs flex items-center justify-center shrink-0 text-slate-700 shadow-2xs">
-                                {st.rollNo}
+                            <span>🏖️</span>
+                            <span>Restore Working Day</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenMarkHoliday(selectedAttendanceDate)}
+                            className="px-3 py-1.5 text-xs font-bold rounded-xl border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-900 transition flex items-center gap-1 cursor-pointer"
+                            title="Designate selected date as Holiday / Non-Working Day"
+                          >
+                            <span>🏖️</span>
+                            <span>Mark as Holiday / Non-Working Day</span>
+                          </button>
+                        )}
+
+                        {!isDailyHoliday && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={markAllDailyPresent}
+                              disabled={isDailyLocked}
+                              className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition flex items-center gap-1 ${
+                                isDailyLocked
+                                  ? 'bg-slate-100 text-slate-400 border-slate-200 opacity-50 cursor-not-allowed'
+                                  : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 cursor-pointer'
+                              }`}
+                              title={isDailyLocked ? "Record is locked to prevent double entry" : "Mark All Present"}
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              Mark All Present
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={markAllDailyAbsent}
+                              disabled={isDailyLocked}
+                              className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition flex items-center gap-1 ${
+                                isDailyLocked
+                                  ? 'bg-slate-100 text-slate-400 border-slate-200 opacity-50 cursor-not-allowed'
+                                  : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100 cursor-pointer'
+                              }`}
+                              title={isDailyLocked ? "Record is locked to prevent double entry" : "Mark All Absent"}
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              Mark All Absent
+                            </button>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Counter Badges & Save / Unlock Button */}
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {isDailyHoliday ? (
+                          <div className="px-3 py-1.5 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 text-xs font-bold flex items-center gap-1.5">
+                            <span>🏖️</span>
+                            <span>Official Holiday · Working Day Exempt</span>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-2 text-xs font-mono font-bold">
+                              <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900 border border-emerald-200">
+                                Present: {dailyPresentCount} / {classStudents.length} ({dailyPercentage}%)
                               </span>
-                              <div className="min-w-0">
-                                <div className="font-bold text-slate-900 text-sm truncate flex items-center gap-1.5">
-                                  <span className="whitespace-nowrap">{st.nameEn}</span>
-                                  <span
-                                    className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
-                                      st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
-                                    }`}
-                                  >
-                                    {st.gender || 'M'}
-                                  </span>
-                                </div>
-                                <div className="text-[11px] text-slate-500 whitespace-nowrap">
-                                  Adm: <span className="font-mono font-bold text-slate-700">{st.admissionNo}</span>
-                                  {st.nameMl && (
-                                    <span className="ml-2 text-slate-400 font-normal">{st.nameMl}</span>
-                                  )}
-                                </div>
-                              </div>
+                              <span className="px-2.5 py-1 rounded-lg bg-rose-100 text-rose-900 border border-rose-200">
+                                Absent: {dailyAbsentCount}
+                              </span>
                             </div>
 
-                            <div className="flex items-center gap-2 shrink-0">
-                              <span
-                                className={`text-[11px] font-bold px-2 py-0.5 rounded-md hidden sm:inline-block ${
-                                  isPresent
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-rose-100 text-rose-800'
-                                }`}
-                              >
-                                {isPresent ? 'Present' : 'Absent'}
-                              </span>
-
+                            {isDailyLocked ? (
                               <button
                                 type="button"
-                                onClick={e => {
-                                  e.stopPropagation();
-                                  toggleDailyStudent(st.id);
-                                }}
-                                className={`min-h-10 min-w-10 w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer border ${
-                                  isPresent
-                                    ? 'bg-emerald-700 text-white border-emerald-800 shadow-2xs'
-                                    : 'bg-white text-rose-600 border-rose-300'
-                                }`}
-                                aria-label={`Toggle attendance for ${st.nameEn}`}
+                                onClick={() => handleUnlockDate(selectedAttendanceDate)}
+                                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 rounded-xl transition border border-slate-300 shadow-2xs cursor-pointer hover:border-slate-400"
+                                title="Unlock this marked attendance record to make authorized corrections"
                               >
-                                {isPresent ? (
-                                  <Check className="w-5 h-5 stroke-[3]" />
-                                ) : (
-                                  <X className="w-5 h-5 stroke-[3]" />
-                                )}
+                                <Lock className="w-4 h-4 text-emerald-700" />
+                                <span>Edit / Unlock Attendance</span>
                               </button>
-                            </div>
-                          </div>
-                        );
-                      })}
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                {isDailyEditing && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRelockDate(selectedAttendanceDate)}
+                                    className="px-3 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer"
+                                  >
+                                    Cancel Edit
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={handleSaveDailyAttendance}
+                                  disabled={isSavingDaily}
+                                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs disabled:opacity-50 cursor-pointer"
+                                >
+                                  <Save className="w-4 h-4" />
+                                  {isSavingDaily ? 'Saving...' : dailySaveSuccess ? 'Saved!' : isDailyEditing ? 'Save Corrections' : 'Save Attendance'}
+                                </button>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* PROMINENT HOLIDAY BANNER WHEN DESIGNATED */}
+                  {isDailyHoliday && (
+                    <div className="bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 rounded-2xl border-2 border-amber-300 p-6 text-center space-y-3 shadow-xs">
+                      <div className="w-12 h-12 rounded-full bg-amber-100 border border-amber-300 flex items-center justify-center text-2xl mx-auto shadow-2xs">
+                        🏖️
+                      </div>
+                      <div>
+                        <h4 className="text-base font-bold text-amber-950">
+                          Official Holiday / Non-Working Day
+                        </h4>
+                        <div className="inline-block mt-1 px-3 py-1 bg-amber-200/90 text-amber-950 text-xs font-bold rounded-lg border border-amber-300">
+                          {dailyHolidayInfo?.reason || 'Official Holiday / Non-Working Day'}
+                        </div>
+                      </div>
+                      <p className="text-xs text-amber-900/90 max-w-lg mx-auto leading-relaxed">
+                        Classes are officially closed on <strong>{dateFormattedEn}</strong>.
+                        Student attendance is completely exempt and will not be marked absent.
+                        Total working day counts automatically exclude this date, safeguarding student percentages against unexcused penalties.
+                      </p>
+                      <div className="pt-2 flex items-center justify-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveHoliday(selectedAttendanceDate)}
+                          className="px-4 py-2 text-xs font-bold text-amber-950 bg-white hover:bg-amber-100 border border-amber-300 rounded-xl transition cursor-pointer shadow-2xs"
+                        >
+                          Remove Holiday &amp; Set as Regular Working Day
+                        </button>
+                      </div>
                     </div>
                   )}
+
+                  {/* Student Daily Marking List */}
+                  <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <span className="text-xs font-bold text-slate-700">
+                        Enrolled Students ({classStudents.length})
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        {isDailyHoliday
+                          ? '🏖️ Official Holiday: Attendance marking is disabled and exempt.'
+                          : isDailyLocked
+                          ? 'Attendance is locked. Click "Edit / Unlock Attendance" above to modify records.'
+                          : 'Tap checkbox or anywhere on the row to toggle Present / Absent'}
+                      </span>
+                    </div>
+
+                    {classStudents.length === 0 ? (
+                      <div className="text-center py-10 text-slate-400 text-xs">
+                        No active students found in this class.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                        {classStudents.map(st => {
+                          const isPresent = dailyStatusMap[st.id] !== false;
+
+                          return (
+                            <div
+                              key={st.id}
+                              onClick={() => !isDailyLocked && !isDailyHoliday && toggleDailyStudent(st.id)}
+                              className={`flex items-center justify-between p-3 rounded-xl border transition-all select-none ${
+                                isDailyHoliday
+                                  ? 'bg-amber-50/30 border-amber-200/60 cursor-default opacity-85'
+                                  : isDailyLocked
+                                  ? 'cursor-default'
+                                  : 'cursor-pointer'
+                              } ${
+                                !isDailyHoliday && (isPresent
+                                  ? isDailyLocked
+                                    ? 'bg-emerald-50/40 border-emerald-200/70'
+                                    : 'bg-emerald-50/60 border-emerald-200 hover:bg-emerald-50'
+                                  : isDailyLocked
+                                    ? 'bg-rose-50/30 border-rose-200/70'
+                                    : 'bg-rose-50/50 border-rose-200 hover:bg-rose-50')
+                              }`}
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <span className="w-8 h-8 rounded-lg bg-white border border-slate-200 font-mono font-bold text-xs flex items-center justify-center shrink-0 text-slate-700 shadow-2xs">
+                                  {st.rollNo}
+                                </span>
+                                <div className="min-w-0">
+                                  <div className="font-bold text-slate-900 text-sm truncate flex items-center gap-1.5">
+                                    <span className="whitespace-nowrap">{st.nameEn}</span>
+                                    <span
+                                      className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
+                                        st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                                      }`}
+                                    >
+                                      {st.gender || 'M'}
+                                    </span>
+                                  </div>
+                                  <div className="text-[11px] text-slate-500 whitespace-nowrap">
+                                    Adm: <span className="font-mono font-bold text-slate-700">{st.admissionNo}</span>
+                                    {st.nameMl && (
+                                      <span className="ml-2 text-slate-400 font-normal">{st.nameMl}</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                {isDailyHoliday ? (
+                                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-amber-100 text-amber-900 border border-amber-200">
+                                    🏖️ Exempt (Holiday)
+                                  </span>
+                                ) : (
+                                  <>
+                                    <span
+                                      className={`text-[11px] font-bold px-2 py-0.5 rounded-md hidden sm:inline-block ${
+                                        isPresent
+                                          ? 'bg-emerald-100 text-emerald-800'
+                                          : 'bg-rose-100 text-rose-800'
+                                      }`}
+                                    >
+                                      {isPresent ? 'Present' : 'Absent'}
+                                    </span>
+
+                                    <button
+                                      type="button"
+                                      disabled={isDailyLocked || isDailyHoliday}
+                                      onClick={e => {
+                                        e.stopPropagation();
+                                        if (!isDailyLocked && !isDailyHoliday) {
+                                          toggleDailyStudent(st.id);
+                                        }
+                                      }}
+                                      className={`min-h-10 min-w-10 w-10 h-10 rounded-xl flex items-center justify-center transition-all border ${
+                                        isDailyLocked
+                                          ? isPresent
+                                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300 cursor-not-allowed opacity-90'
+                                            : 'bg-rose-100 text-rose-800 border-rose-300 cursor-not-allowed opacity-90'
+                                          : isPresent
+                                            ? 'bg-emerald-700 text-white border-emerald-800 shadow-2xs cursor-pointer'
+                                            : 'bg-white text-rose-600 border-rose-300 cursor-pointer'
+                                      }`}
+                                      aria-label={`Toggle attendance for ${st.nameEn}`}
+                                      title={isDailyLocked ? "Record is locked to prevent duplicate entry" : `Toggle ${st.nameEn}`}
+                                    >
+                                      {isPresent ? (
+                                        <Check className="w-5 h-5 stroke-[3]" />
+                                      ) : (
+                                        <X className="w-5 h-5 stroke-[3]" />
+                                      )}
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* VIEW 2: WEEKLY ATTENDANCE MARKING */}
             {attendanceMode === 'weekly' && (
@@ -2715,16 +3259,26 @@ export const TeacherDashboard: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => stepWeeklyDate(1)}
-                        className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer transition"
-                        title="Next Week"
+                        disabled={isCurrentWeekOrFuture}
+                        className={`p-2 rounded-xl border border-slate-200 transition ${
+                          isCurrentWeekOrFuture
+                            ? 'bg-slate-100 text-slate-300 opacity-40 cursor-not-allowed pointer-events-none'
+                            : 'bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer'
+                        }`}
+                        title={isCurrentWeekOrFuture ? "Future week navigation is locked" : "Next Week"}
                       >
                         <ChevronRight className="w-4 h-4" />
                       </button>
 
                       <button
                         type="button"
-                        onClick={() => setSelectedWeekDate(new Date().toISOString().split('T')[0])}
-                        className="px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 cursor-pointer transition"
+                        onClick={() => setSelectedWeekDate(todayStr)}
+                        disabled={isCurrentWeekOrFuture}
+                        className={`px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 transition ${
+                          isCurrentWeekOrFuture
+                            ? 'bg-slate-100 text-slate-400 cursor-default'
+                            : 'bg-white hover:bg-slate-50 text-slate-700 cursor-pointer'
+                        }`}
                       >
                         Current Week
                       </button>
@@ -2733,11 +3287,22 @@ export const TeacherDashboard: React.FC = () => {
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
+                        onClick={() => handleOpenMarkHoliday(selectedAttendanceDate || todayStr)}
+                        className="px-3 py-2 text-xs font-bold rounded-xl bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100 transition cursor-pointer flex items-center gap-1.5"
+                        title="Designate date as Official Holiday / Non-Working Day"
+                      >
+                        <span>🏖️</span>
+                        <span>Mark Holiday</span>
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={markAllWeeklyPresent}
                         className="px-3 py-2 text-xs font-bold rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer flex items-center gap-1"
+                        title="Mark open past/current days as present"
                       >
                         <Check className="w-3.5 h-3.5" />
-                        Mark All Present (Week)
+                        Mark All Present (Open Days)
                       </button>
 
                       <button
@@ -2760,7 +3325,7 @@ export const TeacherDashboard: React.FC = () => {
                         Weekly Attendance Grid ({selectedClass?.name})
                       </h3>
                       <p className="text-[11px] text-slate-500">
-                        Tap any day button to mark a student present or absent for that specific date.
+                        Official holidays and future dates are strictly locked and unpenalized. Click 'Edit' in column header to unlock marked days for corrections.
                       </p>
                     </div>
                   </div>
@@ -2771,20 +3336,126 @@ export const TeacherDashboard: React.FC = () => {
                         <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                           <th className="py-3 px-3 text-center w-12 font-mono">Roll</th>
                           <th className="py-3 px-4 min-w-[160px]">Student Name</th>
-                          {weekDays.map(d => (
-                            <th key={d.dateStr} className="py-3 px-2 text-center min-w-[72px]">
-                              <div className="text-[11px] font-bold text-slate-800">{d.dayName}</div>
-                              <div className="text-[10px] font-mono text-slate-500">{d.shortDate}</div>
-                            </th>
-                          ))}
+                          {weekDays.map(d => {
+                            const isFuture = d.dateStr > todayStr;
+                            const isDayHoliday = isDateHoliday(d.dateStr);
+                            const holInfo = getHolidayInfo(d.dateStr);
+                            const isDayRecorded = isDateRecorded(d.dateStr);
+                            const isDayLocked = isDateLocked(d.dateStr);
+                            const isDayEditing = isDayRecorded && unlockedDates[d.dateStr];
+
+                            return (
+                              <th
+                                key={d.dateStr}
+                                className={`py-3 px-2 text-center min-w-[80px] transition-colors ${
+                                  isDayHoliday
+                                    ? 'bg-amber-100/90 text-amber-950 border-b-2 border-amber-300'
+                                    : isFuture
+                                    ? 'bg-slate-100/70 text-slate-400'
+                                    : isDayLocked
+                                    ? 'bg-emerald-50/70 text-emerald-950'
+                                    : isDayEditing
+                                    ? 'bg-amber-50/70 text-amber-950'
+                                    : 'bg-slate-100 text-slate-700'
+                                }`}
+                              >
+                                <div className="flex items-center justify-center gap-1">
+                                  <span className="text-[11px] font-bold">{d.dayName}</span>
+                                  {isDayHoliday ? (
+                                    <span title="Official Holiday">🏖️</span>
+                                  ) : (
+                                    <>
+                                      {isFuture && <Lock className="w-3 h-3 text-slate-400" />}
+                                      {isDayLocked && <CheckCircle className="w-3 h-3 text-emerald-600" />}
+                                    </>
+                                  )}
+                                </div>
+                                <div className="text-[10px] font-mono text-slate-500">{d.shortDate}</div>
+
+                                <div className="mt-1">
+                                  {isDayHoliday ? (
+                                    <div className="space-y-0.5">
+                                      <span className="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 truncate max-w-[74px]" title={holInfo?.reason}>
+                                        {holInfo?.reason ? (holInfo.reason.length > 10 ? holInfo.reason.slice(0, 9) + '…' : holInfo.reason) : 'Holiday'}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveHoliday(d.dateStr)}
+                                        className="text-[9px] text-amber-950 hover:underline font-bold cursor-pointer block mx-auto"
+                                        title={`Restore ${d.dayName} as regular working day`}
+                                      >
+                                        Restore
+                                      </button>
+                                    </div>
+                                  ) : isFuture ? (
+                                    <span className="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200/80 text-slate-500 uppercase tracking-wider">
+                                      Future
+                                    </span>
+                                  ) : isDayLocked ? (
+                                    <div className="space-y-0.5">
+                                      <div className="flex items-center justify-center gap-1">
+                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                                          ✓ Locked
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleUnlockDate(d.dateStr)}
+                                          className="text-[9px] text-blue-700 hover:text-blue-900 underline font-bold cursor-pointer"
+                                          title={`Unlock ${d.dayName} to edit`}
+                                        >
+                                          Edit
+                                        </button>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenMarkHoliday(d.dateStr)}
+                                        className="text-[9px] text-amber-800 hover:text-amber-950 underline font-medium cursor-pointer block mx-auto"
+                                        title={`Mark ${d.dayName} as holiday`}
+                                      >
+                                        🏖️ Holiday
+                                      </button>
+                                    </div>
+                                  ) : isDayEditing ? (
+                                    <div className="flex items-center justify-center gap-1">
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
+                                        Editing
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRelockDate(d.dateStr)}
+                                        className="text-[9px] text-slate-500 hover:text-slate-700 underline cursor-pointer"
+                                      >
+                                        Re-lock
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="space-y-0.5">
+                                      <span className="inline-block text-[9px] font-medium px-1.5 py-0.5 rounded bg-slate-200/60 text-slate-600">
+                                        Open
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenMarkHoliday(d.dateStr)}
+                                        className="text-[9px] text-amber-800 hover:text-amber-950 underline font-medium cursor-pointer block mx-auto"
+                                        title={`Mark ${d.dayName} as holiday`}
+                                      >
+                                        🏖️ Holiday
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </th>
+                            );
+                          })}
                           <th className="py-3 px-3 text-center min-w-[80px]">Week Total</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {classStudents.map(st => {
                           const studentWeek = weeklyStatusMap[st.id] || {};
+                          const elapsedWorkingDays = weekDays.filter(d => d.dateStr <= todayStr && !isDateHoliday(d.dateStr));
                           let weekPresentCount = 0;
-                          weekDays.forEach(d => {
+                          elapsedWorkingDays.forEach(d => {
                             if (studentWeek[d.dateStr] !== false) weekPresentCount++;
                           });
 
@@ -2799,7 +3470,60 @@ export const TeacherDashboard: React.FC = () => {
                               </td>
 
                               {weekDays.map(d => {
+                                const isFuture = d.dateStr > todayStr;
+                                const isDayHoliday = isDateHoliday(d.dateStr);
+                                const holInfo = getHolidayInfo(d.dateStr);
+                                const isDayRecorded = isDateRecorded(d.dateStr);
+                                const isDayLocked = isDateLocked(d.dateStr);
                                 const isPres = studentWeek[d.dateStr] !== false;
+
+                                if (isDayHoliday) {
+                                  return (
+                                    <td key={d.dateStr} className="py-2 px-1.5 text-center bg-amber-50/40">
+                                      <div
+                                        className="min-h-10 min-w-10 w-10 h-10 rounded-xl mx-auto flex flex-col items-center justify-center border border-amber-200 bg-amber-100/70 text-amber-800 text-[10px] font-bold select-none cursor-not-allowed opacity-90"
+                                        title={`Official Holiday: ${holInfo?.reason || 'Non-working day'}. Attendance exempt.`}
+                                      >
+                                        <span className="text-xs">🏖️</span>
+                                        <span className="text-[8px] font-bold uppercase tracking-wider">OFF</span>
+                                      </div>
+                                    </td>
+                                  );
+                                }
+
+                                if (isFuture) {
+                                  return (
+                                    <td key={d.dateStr} className="py-2 px-1.5 text-center bg-slate-50/50">
+                                      <div
+                                        className="min-h-10 min-w-10 w-10 h-10 rounded-xl mx-auto flex items-center justify-center border border-slate-200 bg-slate-100 text-slate-400 opacity-40 cursor-not-allowed pointer-events-none select-none"
+                                        title="Future day locked - Advance marking prohibited"
+                                      >
+                                        <Lock className="w-4 h-4 text-slate-400" />
+                                      </div>
+                                    </td>
+                                  );
+                                }
+
+                                if (isDayLocked) {
+                                  return (
+                                    <td key={d.dateStr} className="py-2 px-1.5 text-center bg-emerald-50/20">
+                                      <div
+                                        className={`min-h-10 min-w-10 w-10 h-10 rounded-xl mx-auto flex items-center justify-center border select-none cursor-not-allowed opacity-90 ${
+                                          isPres
+                                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                            : 'bg-rose-100 text-rose-800 border-rose-300'
+                                        }`}
+                                        title={`${st.nameEn}: ${d.dayName} (${isPres ? 'Present' : 'Absent'}) - Locked to prevent double entry. Click 'Edit' in column header to unlock.`}
+                                      >
+                                        {isPres ? (
+                                          <Check className="w-4 h-4 stroke-[3]" />
+                                        ) : (
+                                          <X className="w-4 h-4 stroke-[3]" />
+                                        )}
+                                      </div>
+                                    </td>
+                                  );
+                                }
 
                                 return (
                                   <td key={d.dateStr} className="py-2 px-1.5 text-center">
@@ -2824,15 +3548,21 @@ export const TeacherDashboard: React.FC = () => {
                               })}
 
                               <td className="py-3 px-3 text-center">
-                                <span
-                                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold ${
-                                    weekPresentCount === 6
-                                      ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
-                                      : 'bg-amber-100 text-amber-900 border border-amber-200'
-                                  }`}
-                                >
-                                  {weekPresentCount} / 6
-                                </span>
+                                {elapsedWorkingDays.length > 0 ? (
+                                  <span
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold ${
+                                      weekPresentCount === elapsedWorkingDays.length
+                                        ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                                        : 'bg-amber-100 text-amber-900 border border-amber-200'
+                                    }`}
+                                  >
+                                    {weekPresentCount} / {elapsedWorkingDays.length}
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">
+                                    Holiday Week
+                                  </span>
+                                )}
                               </td>
                             </tr>
                           );
@@ -2961,6 +3691,113 @@ export const TeacherDashboard: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {/* Holiday Designation Modal */}
+            {holidayModalDate && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+                <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl">🏖️</span>
+                      <div>
+                        <h3 className="text-base font-bold text-slate-900">
+                          Mark as Holiday / Non-Working Day
+                        </h3>
+                        <p className="text-xs text-slate-500 font-mono">
+                          Date: {holidayModalDate}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setHolidayModalDate(null)}
+                      className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleConfirmMarkHoliday} className="mt-4 space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Holiday Title / Reason (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={holidayReasonInput}
+                        onChange={e => setHolidayReasonInput(e.target.value)}
+                        placeholder="e.g. Friday Holiday, Eid Festival, Milad-un-Nabi, Study Leave"
+                        className="w-full px-3.5 py-2.5 text-xs border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 bg-slate-50 focus:bg-white transition"
+                        autoFocus
+                      />
+                    </div>
+
+                    {/* Quick Suggestion Pills */}
+                    <div>
+                      <span className="block text-[11px] font-semibold text-slate-500 mb-1.5">
+                        Quick Suggestions:
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          'Friday Holiday',
+                          'Eid al-Fitr',
+                          'Eid al-Adha',
+                          'Milad-un-Nabi',
+                          'Study Leave',
+                          'Madrasa Sports Day',
+                          'Public Holiday',
+                          'Special Madrasa Holiday',
+                        ].map(pill => (
+                          <button
+                            type="button"
+                            key={pill}
+                            onClick={() => setHolidayReasonInput(pill)}
+                            className={`text-[10px] font-bold px-2 py-1 rounded-lg border transition cursor-pointer ${
+                              holidayReasonInput === pill
+                                ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                            }`}
+                          >
+                            {pill}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Safeguard Notice */}
+                    <div className="p-3.5 bg-emerald-50 rounded-xl border border-emerald-200 text-[11px] text-emerald-950 space-y-1">
+                      <div className="font-bold flex items-center gap-1.5 text-emerald-900">
+                        <CheckCircle className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Safeguard Protection Active</span>
+                      </div>
+                      <p className="text-emerald-800 leading-relaxed">
+                        Students are completely exempt on holidays and will NOT be penalized with unexcused absences.
+                        Working days count will automatically adjust to preserve authentic attendance percentages.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                      <button
+                        type="button"
+                        onClick={() => setHolidayModalDate(null)}
+                        disabled={isSavingHoliday}
+                        className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSavingHoliday}
+                        className="px-5 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition cursor-pointer shadow-xs disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        <span>🏖️</span>
+                        <span>{isSavingHoliday ? 'Designating...' : 'Confirm Holiday'}</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}

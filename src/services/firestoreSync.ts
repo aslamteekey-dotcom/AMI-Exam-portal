@@ -9,7 +9,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
-import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination, FeePayment, ClassAttendanceConfig } from '../types';
+import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination, FeePayment, ClassAttendanceConfig, InstitutionHoliday } from '../types';
 
 /**
  * Removes undefined fields from objects before saving to Firestore,
@@ -65,6 +65,7 @@ export class FirestoreSyncService {
     onFees?: (fees: FeePayment[]) => void;
     onAdmins?: (admins: User[]) => void;
     onAttendance?: (configs: ClassAttendanceConfig[]) => void;
+    onHolidays?: (holidays: InstitutionHoliday[]) => void;
     getInitialStudents?: () => Student[];
     getInitialTeachers?: () => User[];
     getInitialParents?: () => User[];
@@ -481,6 +482,29 @@ export class FirestoreSyncService {
       }
     }
 
+    // 11. Institution Holidays
+    if (callbacks.onHolidays) {
+      try {
+        const unsub = onSnapshot(
+          collection(db, 'institutionHolidays'),
+          snapshot => {
+            const holidays = snapshot.docs.map(doc => ({
+              ...doc.data(),
+              id: doc.id,
+              date: doc.data().date || doc.id,
+            } as InstitutionHoliday));
+            callbacks.onHolidays?.(holidays);
+          },
+          err => {
+            handleFirestoreError(err, OperationType.GET, 'institutionHolidays');
+          }
+        );
+        this.unsubscribers.push(unsub);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.GET, 'institutionHolidays');
+      }
+    }
+
     return () => this.stopSubscriptions();
   }
 
@@ -754,6 +778,27 @@ export class FirestoreSyncService {
       }
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `attendance/${config.classId}`);
+      throw e;
+    }
+  }
+
+  // Sync institution holiday to Firestore
+  public async syncHoliday(holiday: InstitutionHoliday): Promise<void> {
+    try {
+      const docId = holiday.date || holiday.id;
+      await setDoc(doc(db, 'institutionHolidays', docId), cleanForFirestore(holiday), { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `institutionHolidays/${holiday.date || holiday.id}`);
+      throw e;
+    }
+  }
+
+  // Delete institution holiday from Firestore
+  public async deleteHoliday(dateOrId: string): Promise<void> {
+    try {
+      await deleteDoc(doc(db, 'institutionHolidays', dateOrId));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `institutionHolidays/${dateOrId}`);
       throw e;
     }
   }

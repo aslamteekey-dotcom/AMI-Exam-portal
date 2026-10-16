@@ -18,6 +18,7 @@ import {
   isBoyStudent,
   FeePayment,
   ClassAttendanceConfig,
+  InstitutionHoliday,
   DEFAULT_ADMIN_PERMISSIONS,
 } from '../types';
 import { firestoreSync } from './firestoreSync';
@@ -35,6 +36,7 @@ export interface MadrasaDatabase {
   settings: InstitutionSettings;
   feePayments: FeePayment[];
   attendanceConfigs: ClassAttendanceConfig[];
+  institutionHolidays?: InstitutionHoliday[];
 }
 
 const STORAGE_KEY = 'madrasa_db_storage_v2';
@@ -941,6 +943,17 @@ export class ClientStorageApi {
             try {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
             } catch {}
+          }
+        },
+        onHolidays: (remoteHolidays) => {
+          if (Array.isArray(remoteHolidays)) {
+            this.db.institutionHolidays = remoteHolidays;
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
+            } catch {}
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('madrasa_holidays_updated', { detail: remoteHolidays }));
+            }
           }
         },
       });
@@ -3539,6 +3552,46 @@ export class ClientStorageApi {
         this.saveDB();
         firestoreSync.syncAttendance(config).catch(e => console.warn('Firestore syncAttendance error:', e));
         return this.jsonResponse(config);
+      }
+
+      // Institution Holidays endpoints
+      if (path === '/api/institution-holidays' && method === 'GET') {
+        return this.jsonResponse(this.db.institutionHolidays || []);
+      }
+
+      if (path === '/api/institution-holidays' && method === 'POST') {
+        const { date, reason, markedBy, academicYear } = bodyData;
+        if (!date) return this.jsonResponse({ error: 'Date is required' }, 400);
+        if (!this.db.institutionHolidays) this.db.institutionHolidays = [];
+        const existingIdx = this.db.institutionHolidays.findIndex(h => h.date === date);
+        const item: InstitutionHoliday = {
+          id: date,
+          date,
+          reason: reason || 'Official Holiday / Non-Working Day',
+          markedBy: markedBy || 'Class Teacher',
+          markedAt: new Date().toISOString(),
+          academicYear: academicYear || '2026-2027',
+          createdAt: new Date().toISOString(),
+        };
+        if (existingIdx >= 0) {
+          this.db.institutionHolidays[existingIdx] = item;
+        } else {
+          this.db.institutionHolidays.push(item);
+        }
+        this.saveDB();
+        firestoreSync.syncHoliday(item).catch(e => console.warn('Firestore syncHoliday error:', e));
+        return this.jsonResponse(item);
+      }
+
+      const holidayDeleteMatch = path.match(/^\/api\/institution-holidays\/([^/]+)$/);
+      if (holidayDeleteMatch && method === 'DELETE') {
+        const hDate = holidayDeleteMatch[1];
+        if (this.db.institutionHolidays) {
+          this.db.institutionHolidays = this.db.institutionHolidays.filter(h => h.date !== hDate);
+          this.saveDB();
+        }
+        firestoreSync.deleteHoliday(hDate).catch(e => console.warn('Firestore deleteHoliday error:', e));
+        return this.jsonResponse({ success: true, date: hDate });
       }
 
       // Parent Removal (Class-wise & Bulk)
