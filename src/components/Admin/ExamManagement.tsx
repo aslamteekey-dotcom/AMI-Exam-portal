@@ -19,9 +19,10 @@ import {
   Hash,
 } from 'lucide-react';
 import { ExamRegisterModal } from './ExamRegisterModal';
+import { logAuditEvent } from '../../services/auditLogger';
 
 export const ExamManagement: React.FC = () => {
-  const { fetchWithAuth, lang, t } = useAuth();
+  const { fetchWithAuth, user, lang, t } = useAuth();
   const [loading, setLoading] = useState(true);
   const [examinations, setExaminations] = useState<Examination[]>([]);
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
@@ -247,6 +248,14 @@ export const ExamManagement: React.FC = () => {
       });
 
       if (res.ok) {
+        logAuditEvent({
+          action: 'RESULTS_PUBLISHED',
+          details: `Principal ${user?.name || 'ASLAM TK'} published examination results for ${selectedExam?.nameEn || selectedExamId}.`,
+          currentUser: user,
+          recordType: 'examination',
+          recordId: selectedExamId,
+        }).catch(e => console.warn('Audit log error:', e));
+
         alert('Results successfully published!');
         await loadData();
       }
@@ -591,11 +600,11 @@ export const ExamManagement: React.FC = () => {
                   </div>
                 </div>
 
-                <h3 className="font-bold text-slate-900 text-base">
+                <h3 className={`font-bold text-slate-900 text-base ${isMl ? 'font-ml' : ''}`}>
                   {isMl ? exam.nameMl : exam.nameEn}
                 </h3>
                 {exam.nameMl && exam.nameMl !== exam.nameEn && (
-                  <p className="text-xs text-slate-500">{exam.nameMl}</p>
+                  <p className="text-xs text-slate-500 font-ml">{exam.nameMl}</p>
                 )}
                 <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-slate-400" />

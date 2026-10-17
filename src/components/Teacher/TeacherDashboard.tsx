@@ -29,6 +29,7 @@ import {
   deleteDoc,
 } from 'firebase/firestore';
 import { cleanForFirestore } from '../../services/firestoreSync';
+import { logAuditEvent } from '../../services/auditLogger';
 import {
   BookOpen,
   Users,
@@ -802,6 +803,15 @@ export const TeacherDashboard: React.FC = () => {
       });
 
       setHolidayModalDate(null);
+
+      logAuditEvent({
+        action: 'HOLIDAY_MARKED',
+        details: `User ${user?.name || 'Teacher'} declared ${holidayModalDate} as Official Holiday / Non-Working Day ("${reason}").`,
+        currentUser: user,
+        recordType: 'institution_holiday',
+        recordId: holidayModalDate,
+      }).catch(e => console.warn('Audit log error:', e));
+
       alert(`Date ${holidayModalDate} officially designated as Holiday ("${reason}"). Working days and student percentages are safeguarded without penalties.`);
     } catch (err: any) {
       console.error('Error marking holiday:', err);
@@ -1147,6 +1157,14 @@ export const TeacherDashboard: React.FC = () => {
       // Re-lock the date immediately upon save
       setUnlockedDates(prev => ({ ...prev, [selectedAttendanceDate]: false }));
 
+      logAuditEvent({
+        action: 'ATTENDANCE_MARKED',
+        details: `Teacher ${user?.name || 'Teacher'} marked and locked daily attendance for Class ${classes.find(c => c.id === attendanceClassId)?.name || attendanceClassId} on ${selectedAttendanceDate}.`,
+        currentUser: user,
+        recordType: 'attendance',
+        recordId: `${attendanceClassId}_${selectedAttendanceDate}`,
+      }).catch(e => console.warn('Audit log error:', e));
+
       setDailySaveSuccess(true);
       setTimeout(() => setDailySaveSuccess(false), 3500);
     } catch (err: any) {
@@ -1282,6 +1300,15 @@ export const TeacherDashboard: React.FC = () => {
       });
 
       setWeeklySaveSuccess(true);
+
+      logAuditEvent({
+        action: 'ATTENDANCE_MARKED',
+        details: `Teacher ${user?.name || 'Teacher'} saved and synced weekly attendance for Class ${classes.find(c => c.id === attendanceClassId)?.name || attendanceClassId} (Week of ${selectedWeekDate}).`,
+        currentUser: user,
+        recordType: 'attendance',
+        recordId: `${attendanceClassId}_week_${selectedWeekDate}`,
+      }).catch(e => console.warn('Audit log error:', e));
+
       setTimeout(() => setWeeklySaveSuccess(false), 3500);
     } catch (err: any) {
       console.error('Error saving weekly attendance:', err);
@@ -1337,6 +1364,14 @@ export const TeacherDashboard: React.FC = () => {
         )
       );
 
+      logAuditEvent({
+        action: 'STUDENT_UPDATED',
+        details: `Teacher ${user?.name || 'Class Teacher'} updated student profile for ${editingStudent.nameEn} (Adm: ${editingStudent.admissionNo}).`,
+        currentUser: user,
+        recordType: 'student',
+        recordId: editingStudent.id,
+      }).catch(e => console.warn('Audit log error:', e));
+
       setEditingStudent(null);
     } catch (err: any) {
       alert('Failed to update student: ' + (err.message || 'Unknown error'));
@@ -1357,6 +1392,14 @@ export const TeacherDashboard: React.FC = () => {
 
       // 2. Delete from API / local state
       await fetchWithAuth(`/api/students/${st.id}`, { method: 'DELETE' });
+
+      logAuditEvent({
+        action: 'STUDENT_DELETED',
+        details: `Teacher ${user?.name || 'Class Teacher'} deleted student ${st.nameEn} (Adm: ${st.admissionNo}) from class roster.`,
+        currentUser: user,
+        recordType: 'student',
+        recordId: st.id,
+      }).catch(e => console.warn('Audit log error:', e));
 
       setAllStudents(prev => prev.filter(s => s.id !== st.id));
     } catch (err: any) {
@@ -2085,7 +2128,7 @@ export const TeacherDashboard: React.FC = () => {
                               {st.nameEn}
                             </div>
                             {st.nameMl && (
-                              <div className="text-[11px] text-slate-500 truncate" title={st.nameMl}>
+                              <div className="text-[11px] text-slate-500 truncate font-ml" title={st.nameMl}>
                                 {st.nameMl}
                               </div>
                             )}
@@ -2197,7 +2240,7 @@ export const TeacherDashboard: React.FC = () => {
                             )}
                           </div>
 
-                          <h4 className="font-bold text-slate-900 text-base">
+                          <h4 className="font-bold text-slate-900 text-base font-ml">
                             {subDisplayName}
                           </h4>
                           <span className="text-xs text-slate-500">
@@ -3174,7 +3217,7 @@ export const TeacherDashboard: React.FC = () => {
                                   <div className="text-[11px] text-slate-500 whitespace-nowrap">
                                     Adm: <span className="font-mono font-bold text-slate-700">{st.admissionNo}</span>
                                     {st.nameMl && (
-                                      <span className="ml-2 text-slate-400 font-normal">{st.nameMl}</span>
+                                      <span className="ml-2 text-slate-500 font-ml">{st.nameMl}</span>
                                     )}
                                   </div>
                                 </div>
@@ -3631,7 +3674,7 @@ export const TeacherDashboard: React.FC = () => {
                           <td className="py-3 px-4 whitespace-nowrap">
                             <div className="font-bold text-slate-900">{st.nameEn}</div>
                             {st.nameMl && (
-                              <div className="text-[10px] text-slate-400 font-normal">{st.nameMl}</div>
+                              <div className="text-[10px] text-slate-500 font-ml">{st.nameMl}</div>
                             )}
                           </td>
 

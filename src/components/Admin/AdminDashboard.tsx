@@ -12,6 +12,7 @@ import { BackupSettings } from './BackupSettings';
 import { FeeManagement } from './FeeManagement';
 import { MarkVerificationModal } from './MarkVerificationModal';
 import { StudyMaterialsManagement } from './StudyMaterialsManagement';
+import { AdminAttendanceView } from './AdminAttendanceView';
 import {
   Users,
   GraduationCap,
@@ -41,6 +42,7 @@ export const AdminDashboard: React.FC = () => {
     | 'teachers'
     | 'parents'
     | 'fees'
+    | 'attendance'
     | 'study_materials'
     | 'monitoring'
     | 'reports'
@@ -176,154 +178,178 @@ export const AdminDashboard: React.FC = () => {
       </div>
 
       {/* Navigation Tabs Bar */}
-      <div className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-1 overflow-x-auto text-xs font-bold scrollbar-none print:hidden">
+      <div className="bg-white p-1.5 md:p-2 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-1 sm:gap-1.5 md:gap-1.5 lg:gap-2 overflow-x-auto md:overflow-visible md:flex-wrap no-scrollbar scroll-smooth text-xs font-bold print:hidden">
         <button
           onClick={() => setActiveTab('overview')}
-          className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+          className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
             activeTab === 'overview'
               ? 'bg-emerald-800 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
-          {t.navDashboard}
+          <Layers className="w-3.5 h-3.5 shrink-0" />
+          <span>{t.navDashboard}</span>
         </button>
 
         {(!user?.permissions || user.permissions.marksReports?.view !== false) && (
           <button
             onClick={() => setActiveTab('monitoring')}
-            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'monitoring'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            {t.navMarkMonitoring}
+            <Eye className="w-3.5 h-3.5 shrink-0" />
+            <span>{t.navMarkMonitoring}</span>
           </button>
         )}
 
         {(!user?.permissions || user.permissions.marksReports?.view !== false) && (
           <button
             onClick={() => setActiveTab('reports')}
-            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'reports'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            {t.navProgressReport}
+            <FileText className="w-3.5 h-3.5 shrink-0" />
+            <span>{t.navProgressReport}</span>
           </button>
         )}
 
         {(!user?.permissions || user.permissions.academicExams?.view !== false) && (
           <button
             onClick={() => setActiveTab('exams')}
-            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'exams'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            {t.navExams}
+            <Calendar className="w-3.5 h-3.5 shrink-0" />
+            <span>{t.navExams}</span>
           </button>
         )}
 
         {(!user?.permissions || user.permissions.academicExams?.view !== false) && (
           <button
             onClick={() => setActiveTab('classes_subjects')}
-            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'classes_subjects'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            {t.navClassesSubjects}
+            <BookOpen className="w-3.5 h-3.5 shrink-0" />
+            <span>{t.navClassesSubjects}</span>
           </button>
         )}
 
         {(!user?.permissions || user.permissions.students?.view !== false) && (
           <button
             onClick={() => setActiveTab('students')}
-            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'students'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            {t.navStudents}
+            <GraduationCap className="w-3.5 h-3.5 shrink-0" />
+            <span>{t.navStudents}</span>
           </button>
         )}
 
         {(!user?.permissions || user.permissions.teachers?.view !== false) && (
           <button
             onClick={() => setActiveTab('teachers')}
-            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'teachers'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            {t.navTeachers}
+            <Users className="w-3.5 h-3.5 shrink-0" />
+            <span>{t.navTeachers}</span>
           </button>
         )}
 
         {(!user?.permissions || user.permissions.students?.view !== false) && (
           <button
             onClick={() => setActiveTab('parents')}
-            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'parents'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            {t.navParents}
+            <Users className="w-3.5 h-3.5 shrink-0" />
+            <span>{t.navParents}</span>
           </button>
         )}
 
         {(!user?.permissions || user.permissions.feesCollections?.view !== false) && (
           <button
             onClick={() => setActiveTab('fees')}
-            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'fees'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            {t.navFees}
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+            <span>{t.navFees}</span>
           </button>
         )}
 
         <button
+          onClick={() => setActiveTab('attendance')}
+          className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            activeTab === 'attendance'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Clock className="w-3.5 h-3.5 shrink-0" />
+          <span>{t.navAttendance || 'Attendance & Holidays'}</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('study_materials')}
-          className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+          className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
             activeTab === 'study_materials'
               ? 'bg-emerald-800 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
-          {t.navStudyMaterials || 'Study Materials'}
+          <BookOpen className="w-3.5 h-3.5 shrink-0" />
+          <span>{t.navStudyMaterials || 'Study Materials'}</span>
         </button>
 
         <button
           onClick={() => setActiveTab('audit_logs')}
-          className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+          className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
             activeTab === 'audit_logs'
               ? 'bg-emerald-800 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
-          {t.navAuditLogs}
+          <Shield className="w-3.5 h-3.5 shrink-0" />
+          <span>{t.navAuditLogs}</span>
         </button>
 
         {(!user?.permissions || user.permissions.settings?.view !== false) && (
           <button
             onClick={() => setActiveTab('settings')}
-            className={`px-3.5 py-2 rounded-xl whitespace-nowrap transition ${
+            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'settings'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            {t.navSettings}
+            <Settings className="w-3.5 h-3.5 shrink-0" />
+            <span>{t.navSettings}</span>
           </button>
         )}
       </div>
@@ -499,6 +525,7 @@ export const AdminDashboard: React.FC = () => {
       {activeTab === 'teachers' && <TeacherManagement />}
       {activeTab === 'parents' && <ParentManagement />}
       {activeTab === 'fees' && <FeeManagement />}
+      {activeTab === 'attendance' && <AdminAttendanceView />}
       {activeTab === 'study_materials' && <StudyMaterialsManagement />}
       {activeTab === 'audit_logs' && <AuditLogsView />}
       {activeTab === 'settings' && <BackupSettings />}

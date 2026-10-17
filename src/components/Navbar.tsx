@@ -29,7 +29,7 @@ export const Navbar: React.FC = () => {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold text-slate-900 text-sm sm:text-base leading-tight font-serif tracking-tight">
+                <span className={`font-bold text-slate-900 text-sm sm:text-base leading-tight tracking-tight ${lang === 'ml' ? 'font-ml' : 'font-title'}`}>
                   {lang === 'ml' ? 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്' : 'Al-Madrasathul Islamiya Pallikkuth'}
                 </span>
                 <span className="hidden sm:inline-block text-[10px] bg-emerald-100 text-emerald-900 font-semibold px-1.5 py-0.5 rounded">

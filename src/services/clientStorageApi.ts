@@ -389,20 +389,6 @@ export function getInitialClientSeedData(): MadrasaDatabase {
     },
     // Class 5
     {
-      id: 'st_501',
-      admissionNo: '5001',
-      rollNo: 1,
-      nameEn: 'Ahmed Nihal',
-      nameMl: 'അഹമ്മദ് നിഹാൽ',
-      classId: 'cls_5',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Abdul Latheef',
-      parentNameMl: 'അബ്ദുൽ ലത്തീഫ്',
-      parentPhone: '+91 9846123462',
-      status: 'active',
-      gender: 'M',
-    },
-    {
       id: 'st_502',
       admissionNo: '5002',
       rollNo: 2,
@@ -442,21 +428,6 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       parentNameEn: 'Ali Master',
       parentNameMl: 'അലി മാസ്റ്റർ',
       parentPhone: '+91 9846123464',
-      status: 'active',
-      gender: 'M',
-    },
-    // Class 3
-    {
-      id: 'st_301',
-      admissionNo: '3001',
-      rollNo: 1,
-      nameEn: 'Adil Mansoor',
-      nameMl: 'ആദിൽ മൻസൂർ',
-      classId: 'cls_3',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Mansoor Ali',
-      parentNameMl: 'മൻസൂർ അലി',
-      parentPhone: '+91 9846123470',
       status: 'active',
       gender: 'M',
     },
@@ -571,20 +542,6 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       status: 'active',
       gender: 'F',
     },
-    {
-      id: 'st_903',
-      admissionNo: '9003',
-      rollNo: 3,
-      nameEn: 'Adil Ibrahim',
-      nameMl: 'ആദിൽ ഇബ്രാഹിം',
-      classId: 'cls_9',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Ibrahim M',
-      parentNameMl: 'ഇബ്രാഹിം എം',
-      parentPhone: '+91 9846123457',
-      status: 'active',
-      gender: 'M',
-    },
   ];
 
   const teacherAssignments: TeacherAssignment[] = [
@@ -650,7 +607,6 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       assignedTeacherId: 'usr_t2',
       status: 'draft',
       studentMarks: {
-        st_501: { studentId: 'st_501', isAbsent: false, componentMarks: { omr: 18, descriptive: 17, ce: 9 }, subjectTotal: 44 },
         st_502: { studentId: 'st_502', isAbsent: false, componentMarks: { omr: 19, descriptive: 18, ce: 10 }, subjectTotal: 47 },
       },
       lastUpdated: '2026-10-18T12:00:00Z',
@@ -700,7 +656,6 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       studentMarks: {
         st_901: { studentId: 'st_901', isAbsent: false, componentMarks: { omr: 19, descriptive: 19, ce: 10 }, subjectTotal: 48 },
         st_902: { studentId: 'st_902', isAbsent: false, componentMarks: { omr: 18, descriptive: 18, ce: 9 }, subjectTotal: 45 },
-        st_903: { studentId: 'st_903', isAbsent: false, componentMarks: { omr: 17, descriptive: 16, ce: 8 }, subjectTotal: 41 },
       },
       verifiedAt: '2026-10-18T13:00:00Z',
       verifiedBy: 'usr_admin',
@@ -785,6 +740,20 @@ export class ClientStorageApi {
 
   private constructor() {
     this.db = this.loadDB();
+    this.db.students = (this.db.students || []).filter(
+      (s: any) =>
+        s &&
+        s.id !== 'st_501' &&
+        s.id !== 'st_301' &&
+        s.id !== 'st_903' &&
+        s.admissionNo !== '5001' &&
+        s.admissionNo !== '3001' &&
+        s.admissionNo !== '9003' &&
+        s.nameEn !== 'Ahmed Nihal' &&
+        s.nameEn !== 'Adil Mansoor' &&
+        s.nameEn !== 'Adil Ibrahim'
+    );
+    this.saveDB();
     this.initFirestoreSync();
   }
 
@@ -814,11 +783,32 @@ export class ClientStorageApi {
       firestoreSync.subscribeToCollections({
         onStudents: (remoteStudents) => {
           if (Array.isArray(remoteStudents)) {
-            const mapped = remoteStudents.map(st => {
+            const authentic = remoteStudents.filter(
+              (st: any) =>
+                st &&
+                st.id !== 'st_501' &&
+                st.id !== 'st_301' &&
+                st.id !== 'st_903' &&
+                st.admissionNo !== '5001' &&
+                st.admissionNo !== '3001' &&
+                st.admissionNo !== '9003' &&
+                st.nameEn !== 'Ahmed Nihal' &&
+                st.nameEn !== 'Adil Mansoor' &&
+                st.nameEn !== 'Adil Ibrahim'
+            );
+            const mapped = authentic.map(st => {
               const regNos = {
                 ...((st as any).examRegisterNumbers || {}),
                 ...((st as any).examRegisterNos || {}),
               };
+              Object.keys(st).forEach(key => {
+                if (key.startsWith('examRegisterNumbers.') || key.startsWith('examRegisterNos.')) {
+                  const examId = key.substring(key.indexOf('.') + 1);
+                  if (examId && (st as any)[key]) {
+                    regNos[examId] = String((st as any)[key]).trim();
+                  }
+                }
+              });
               if ((st as any).examRegNo && Object.keys(regNos).length === 0) {
                 regNos[this.db.settings?.activeExamId || 'default'] = (st as any).examRegNo;
               }
@@ -956,6 +946,26 @@ export class ClientStorageApi {
             }
           }
         },
+        onAuditLogs: (remoteLogs) => {
+          if (Array.isArray(remoteLogs) && remoteLogs.length > 0) {
+            const logMap = new Map<string, AuditLog>();
+            (this.db.auditLogs || []).forEach(l => logMap.set(l.id, l));
+            remoteLogs.forEach(l => {
+              const prev = logMap.get(l.id);
+              logMap.set(l.id, { ...prev, ...l });
+            });
+            const merged = Array.from(logMap.values()).sort(
+              (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+            );
+            this.db.auditLogs = merged;
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
+            } catch {}
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('madrasa_audit_logs_updated', { detail: merged }));
+            }
+          }
+        },
       });
     } catch (e) {
       console.warn('Firestore sync init error:', e);
@@ -1017,7 +1027,21 @@ export class ClientStorageApi {
           parsed.academicYears = Array.isArray(parsed.academicYears) ? parsed.academicYears : [];
           parsed.examinations = Array.isArray(parsed.examinations) ? parsed.examinations : [];
           parsed.students = Array.isArray(parsed.students)
-            ? assignClassSequentialRollNumbers(parsed.students)
+            ? assignClassSequentialRollNumbers(
+                parsed.students.filter(
+                  (s: any) =>
+                    s &&
+                    s.id !== 'st_501' &&
+                    s.id !== 'st_301' &&
+                    s.id !== 'st_903' &&
+                    s.admissionNo !== '5001' &&
+                    s.admissionNo !== '3001' &&
+                    s.admissionNo !== '9003' &&
+                    s.nameEn !== 'Ahmed Nihal' &&
+                    s.nameEn !== 'Adil Mansoor' &&
+                    s.nameEn !== 'Adil Ibrahim'
+                )
+              )
             : [];
           parsed.teacherAssignments = Array.isArray(parsed.teacherAssignments) ? parsed.teacherAssignments : [];
           parsed.markSheets = Array.isArray(parsed.markSheets) ? parsed.markSheets : [];
@@ -1082,6 +1106,19 @@ export class ClientStorageApi {
     } catch (e) {
       console.error('Failed to save DB to localStorage:', e);
     }
+  }
+
+  public recordAuditLog(log: AuditLog): void {
+    if (!this.db.auditLogs) {
+      this.db.auditLogs = [];
+    }
+    const idx = this.db.auditLogs.findIndex(l => l.id === log.id);
+    if (idx >= 0) {
+      this.db.auditLogs[idx] = { ...this.db.auditLogs[idx], ...log };
+    } else {
+      this.db.auditLogs.unshift(log);
+    }
+    this.saveDB();
   }
 
   public calculateExamStats(examId?: string): {
@@ -2167,7 +2204,19 @@ export class ClientStorageApi {
         } else {
           this.resequenceClassRollNumbers();
         }
-        let students = this.db.students;
+        let students = (this.db.students || []).filter(
+          s =>
+            s &&
+            s.id !== 'st_501' &&
+            s.id !== 'st_301' &&
+            s.id !== 'st_903' &&
+            s.admissionNo !== '5001' &&
+            s.admissionNo !== '3001' &&
+            s.admissionNo !== '9003' &&
+            s.nameEn !== 'Ahmed Nihal' &&
+            s.nameEn !== 'Adil Mansoor' &&
+            s.nameEn !== 'Adil Ibrahim'
+        );
         if (classId) {
           students = students.filter(s => s.classId === classId);
         }
@@ -2652,17 +2701,41 @@ export class ClientStorageApi {
         const parent = this.db.users.find(u => u.id === pId && u.role === 'parent');
         if (!parent) return this.jsonResponse({ error: 'Parent not found' }, 404);
 
+        const originalPhone = String(parent.phone || '').trim();
+        const originalName = String(parent.name || '').trim().toLowerCase();
+
         if (bodyData.name !== undefined) parent.name = bodyData.name.trim();
+        if (bodyData.nameEn !== undefined) (parent as any).nameEn = bodyData.nameEn.trim();
+        else if (bodyData.name !== undefined) (parent as any).nameEn = bodyData.name.trim();
         if (bodyData.nameMl !== undefined) parent.nameMl = bodyData.nameMl.trim();
         if (bodyData.username !== undefined) parent.username = bodyData.username.trim();
         if (bodyData.phone !== undefined) parent.phone = bodyData.phone.trim();
         if (bodyData.active !== undefined) parent.active = Boolean(bodyData.active);
+
+        // Update all associated students in this.db.students so displayed parent details stay in sync
+        const matchingStudents = this.db.students.filter(
+          s =>
+            s.parentUserId === pId ||
+            (originalPhone && String(s.parentPhone || '').trim() === originalPhone) ||
+            (originalName && String(s.parentNameEn || '').trim().toLowerCase() === originalName)
+        );
+        matchingStudents.forEach(st => {
+          if (parent.name) st.parentNameEn = parent.name;
+          if (parent.nameMl) st.parentNameMl = parent.nameMl;
+          if (parent.phone) st.parentPhone = parent.phone;
+          st.parentUserId = pId;
+          firestoreSync.syncStudent(st).catch(e => console.warn('Sync student on parent update:', e));
+        });
 
         this.saveDB();
 
         firestoreSync.syncParent(parent).catch(e => {
           console.warn('Firestore syncParent PUT error:', e);
         });
+
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: this.db.students }));
+        }
 
         return this.jsonResponse(parent);
       }
@@ -3317,6 +3390,9 @@ export class ClientStorageApi {
           }
         }
         this.saveDB();
+        firestoreSync.syncSettings(this.db.settings).catch(e => {
+          console.warn('Firestore syncSettings error:', e);
+        });
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('madrasa_settings_updated', { detail: this.db.settings }));
         }
@@ -3344,7 +3420,32 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/audit-logs' && method === 'GET') {
-        return this.jsonResponse(this.db.auditLogs);
+        const sorted = [...(this.db.auditLogs || [])].sort(
+          (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        );
+        return this.jsonResponse(sorted);
+      }
+
+      if (path === '/api/audit-logs' && method === 'POST') {
+        const currentUser = this.getCurrentUser();
+        const auditItem: AuditLog = {
+          id: bodyData.id || `log_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+          timestamp: bodyData.timestamp || new Date().toISOString(),
+          user: bodyData.user || currentUser?.name || 'System User',
+          userName: bodyData.userName || bodyData.user || currentUser?.name || 'System User',
+          role: bodyData.role || currentUser?.role || 'system',
+          userRole: bodyData.userRole || bodyData.role || currentUser?.role || 'system',
+          userId: bodyData.userId || currentUser?.id || 'usr_sys',
+          action: bodyData.action,
+          details: bodyData.details,
+          recordType: bodyData.recordType || 'audit',
+          recordId: bodyData.recordId || '',
+          previousValue: bodyData.previousValue,
+          newValue: bodyData.newValue,
+        };
+        this.recordAuditLog(auditItem);
+        firestoreSync.syncAuditLog(auditItem).catch(e => console.warn('Firestore audit log sync warning:', e));
+        return this.jsonResponse(auditItem);
       }
 
       // CSV exports

@@ -4,6 +4,8 @@ import { useAuth } from '../../context/AuthContext';
 import { Printer, Download, Award, GraduationCap, ShieldAlert, AlertTriangle } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { extractComponentColumns, calculateStudentReportMetrics } from '../../utils/reportCalculations';
+import { collection, onSnapshot, doc } from 'firebase/firestore';
+import { db } from '../../services/firebase';
 
 interface Props {
   report: StudentProgressReport;
@@ -39,7 +41,7 @@ export const ProgressReportCard: React.FC<Props> = ({
     }, 4500);
   };
 
-  // Globally fetch settings & listen to updates so Admin Principal / Madrasa Head name is dynamically connected
+  // Globally fetch settings & listen to updates so Admin settings, address, reg no, Principal name dynamically reflect
   useEffect(() => {
     let isMounted = true;
     const fetchFreshSettings = async () => {
@@ -58,6 +60,24 @@ export const ProgressReportCard: React.FC<Props> = ({
 
     fetchFreshSettings();
 
+    // Real-time Firestore settings collection listener
+    let unsubFirestore: (() => void) | undefined;
+    try {
+      unsubFirestore = onSnapshot(collection(db, 'settings'), (snapshot) => {
+        if (!snapshot.empty && isMounted) {
+          let merged: any = {};
+          snapshot.docs.forEach(d => {
+            merged = { ...merged, ...d.data() };
+          });
+          if (Object.keys(merged).length > 0) {
+            setCurrentSettings(prev => ({ ...prev, ...merged }));
+          }
+        }
+      });
+    } catch (e) {
+      console.warn('Settings onSnapshot error in ProgressReportCard:', e);
+    }
+
     const handleSettingsUpdated = (e: any) => {
       if (!isMounted) return;
       if (e?.detail) {
@@ -70,6 +90,7 @@ export const ProgressReportCard: React.FC<Props> = ({
     window.addEventListener('madrasa_settings_updated', handleSettingsUpdated);
     return () => {
       isMounted = false;
+      if (unsubFirestore) unsubFirestore();
       window.removeEventListener('madrasa_settings_updated', handleSettingsUpdated);
     };
   }, []);
@@ -344,34 +365,39 @@ export const ProgressReportCard: React.FC<Props> = ({
 
           <div>
             {/* 1. INSTITUTION HEADER */}
-            <div className="text-center border-b-2 border-emerald-800 pb-3 mb-3 print:pb-1.5 print:mb-1.5">
+            <div className="text-center border-b-2 border-emerald-800 pb-3 mb-3 print:pb-1.5 print:mb-1.5 flex flex-col items-center">
               <div
                 className="font-serif text-emerald-900 text-base sm:text-lg md:text-xl print:text-base font-bold tracking-wide mb-1.5 print:mb-0.5 text-center leading-relaxed"
                 dir="rtl"
               >
                 {currentSettings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
               </div>
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-3.5 my-1.5">
-                <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full border-2 border-emerald-800 bg-emerald-50 flex items-center justify-center text-emerald-800 shadow-inner shrink-0">
+              <div className="flex flex-col items-center justify-center gap-1.5 my-1.5 text-center w-full">
+                <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full border-2 border-emerald-800 bg-emerald-50 flex items-center justify-center text-emerald-800 shadow-inner shrink-0 mb-0.5">
                   <GraduationCap className="w-6 h-6 sm:w-7 sm:h-7" />
                 </div>
-                <div className="text-center sm:text-left">
-                  <h1 className="text-sm sm:text-lg md:text-xl font-black uppercase tracking-tight text-emerald-950 font-serif leading-tight">
+                <div className="text-center flex flex-col items-center w-full">
+                  <h1 className="text-base sm:text-lg md:text-xl print:text-lg font-black uppercase tracking-tight text-emerald-950 font-title leading-tight text-center">
                     {currentSettings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
                   </h1>
-                  <h2 className="text-xs sm:text-sm md:text-base font-bold text-emerald-900 leading-snug mt-0.5">
+                  <h2 className="text-base sm:text-lg print:text-base font-bold text-emerald-900 leading-snug mt-1 font-ml text-center">
                     {currentSettings?.madrasaNameMl || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്'}
                   </h2>
-                  <div className="text-[10px] sm:text-xs font-semibold text-emerald-800 tracking-wide mt-0.5">
-                    Islamic Education &amp; Digital Learning
-                  </div>
                 </div>
               </div>
-              <p className="text-[11px] sm:text-xs text-slate-600 mt-1 flex flex-wrap items-center justify-center gap-1 sm:gap-2">
-                <span>{isMl ? currentSettings?.locationMl : currentSettings?.locationEn}</span>
-                <span className="hidden sm:inline">•</span>
-                <span>Reg. No: {currentSettings?.registrationNo || 'KEC-8492'}</span>
-              </p>
+              {((isMl ? (currentSettings?.locationMl || currentSettings?.locationEn) : (currentSettings?.locationEn || currentSettings?.locationMl)) || currentSettings?.registrationNo) && (
+                <p className="text-[11px] sm:text-xs text-slate-600 mt-1 flex flex-wrap items-center justify-center gap-1 sm:gap-2 text-center">
+                  {(isMl ? (currentSettings?.locationMl || currentSettings?.locationEn) : (currentSettings?.locationEn || currentSettings?.locationMl)) && (
+                    <span>{isMl ? (currentSettings?.locationMl || currentSettings?.locationEn) : (currentSettings?.locationEn || currentSettings?.locationMl)}</span>
+                  )}
+                  {((isMl ? (currentSettings?.locationMl || currentSettings?.locationEn) : (currentSettings?.locationEn || currentSettings?.locationMl)) && currentSettings?.registrationNo) && (
+                    <span className="hidden sm:inline">•</span>
+                  )}
+                  {currentSettings?.registrationNo && (
+                    <span>Reg. / Affiliation No: {currentSettings.registrationNo}</span>
+                  )}
+                </p>
+              )}
 
               <div className="mt-2 inline-block bg-emerald-900 text-white px-3 sm:px-5 py-1 rounded-md font-bold text-[10px] sm:text-xs tracking-wider uppercase shadow-xs">
                 STUDENT PROGRESS REPORT • {report?.academicYear || '2026–2027'}
@@ -383,9 +409,9 @@ export const ProgressReportCard: React.FC<Props> = ({
 
             {/* 2. DEDICATED STUDENT DETAILS BOX - Clean Grid Layout with Soft Styling & Visual Hierarchy */}
             <div className="bg-emerald-50/50 border border-emerald-900/25 rounded-2xl p-3.5 sm:p-4 mb-4 print:p-2.5 print:mb-2 text-xs shadow-2xs">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-y-3 gap-x-4 text-left items-start">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-y-3 gap-x-4 items-start">
                 {/* Student Name */}
-                <div className="col-span-2 sm:col-span-1 md:col-span-1 space-y-0.5">
+                <div className="col-span-2 sm:col-span-1 md:col-span-1 space-y-0.5 text-left">
                   <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-emerald-800/80 block">
                     Student Name
                   </span>
@@ -393,14 +419,14 @@ export const ProgressReportCard: React.FC<Props> = ({
                     {(report?.student?.nameEn || (report?.student as any)?.name || '—').toUpperCase()}
                   </span>
                   {report?.student?.nameMl && (
-                    <span className="text-xs font-semibold text-emerald-900 block leading-tight">
+                    <span className="text-xs font-semibold text-emerald-900 block leading-tight font-ml">
                       {report.student.nameMl}
                     </span>
                   )}
                 </div>
 
                 {/* Parent */}
-                <div className="space-y-0.5">
+                <div className="space-y-0.5 text-left">
                   <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-emerald-800/80 block">
                     Parent / Guardian
                   </span>
@@ -408,38 +434,38 @@ export const ProgressReportCard: React.FC<Props> = ({
                     {(report?.student?.parentNameEn || '—').toUpperCase()}
                   </span>
                   {report?.student?.parentNameMl && (
-                    <span className="text-[11px] text-slate-600 block leading-tight">
+                    <span className="text-[11px] text-slate-600 block leading-tight font-ml">
                       {report.student.parentNameMl}
                     </span>
                   )}
                 </div>
 
                 {/* Class */}
-                <div className="space-y-0.5">
-                  <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-emerald-800/80 block">
+                <div className="space-y-1 text-center flex flex-col items-center">
+                  <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-emerald-800/80 block text-center">
                     Class
                   </span>
-                  <span className="font-bold text-slate-950 text-sm sm:text-base print:text-[10pt] block font-mono">
+                  <span className="bg-emerald-800 text-white font-bold text-lg px-3 py-0.5 rounded shadow-sm inline-block font-mono print:text-base">
                     {classNumeral}
                   </span>
                 </div>
 
                 {/* Admission No */}
-                <div className="space-y-0.5">
-                  <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-emerald-800/80 block">
+                <div className="space-y-1 text-center flex flex-col items-center">
+                  <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-emerald-800/80 block text-center">
                     Admission No
                   </span>
-                  <span className="font-mono font-bold text-slate-950 text-sm sm:text-base print:text-[10pt] block uppercase">
+                  <span className="font-mono font-bold text-slate-950 text-sm sm:text-base print:text-[10pt] block uppercase text-center">
                     {String(report?.student?.admissionNo || '—').toUpperCase()}
                   </span>
                 </div>
 
                 {/* Exam Reg No */}
-                <div className="space-y-0.5">
-                  <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-emerald-800/80 block">
+                <div className="space-y-1 text-center flex flex-col items-center">
+                  <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-emerald-800/80 block text-center">
                     Exam Reg No
                   </span>
-                  <span className="font-mono font-bold text-emerald-950 text-sm sm:text-base print:text-[10pt] block uppercase">
+                  <span className="font-mono font-bold text-emerald-950 text-sm sm:text-base print:text-[10pt] block uppercase text-center">
                     {String(examRegisterNo || '—').toUpperCase()}
                   </span>
                 </div>
@@ -500,7 +526,7 @@ export const ProgressReportCard: React.FC<Props> = ({
                     return (
                       <tr key={sub.subjectId || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/70'}>
                         <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-slate-500 font-mono text-center">{idx + 1}</td>
-                        <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 font-bold text-emerald-950">
+                        <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 font-bold text-emerald-950 font-ml">
                           {sub.subjectNameMl || sub.subjectNameEn}
                         </td>
                         <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-center font-mono font-medium text-slate-700 whitespace-nowrap">
@@ -636,7 +662,7 @@ export const ProgressReportCard: React.FC<Props> = ({
               {/* Principal */}
               <div>
                 <div className="h-10 sm:h-12 print:h-9 border-b border-slate-400 flex items-end justify-center pb-0.5 font-bold not-italic text-emerald-950 text-xs sm:text-sm print:text-[10pt]">
-                  {currentSettings?.principalNameEn || 'ASLAM TK'}
+                  {currentSettings?.principalNameEn || currentSettings?.principalNameMl || (currentSettings as any)?.principalName || 'Principal'}
                 </div>
                 <span className="font-bold mt-1.5 block">Signature of Principal</span>
               </div>
@@ -651,7 +677,7 @@ export const ProgressReportCard: React.FC<Props> = ({
             </div>
 
             <div className="text-center text-[9px] sm:text-[10px] print:text-[7pt] text-slate-400 mt-3 sm:mt-4 print:mt-1.5">
-              Al-Madrasathul Islamiya Pallikkuth • Islamic Education &amp; Digital Learning • Official Progress Verification Record
+              {currentSettings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'} • Official Progress Verification Record
             </div>
           </div>
         </div>

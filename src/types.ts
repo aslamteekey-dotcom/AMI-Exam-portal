@@ -157,12 +157,14 @@ export interface MarkSheet {
 export interface AuditLog {
   id: string;
   timestamp: string;
-  userId: string;
-  userName: string;
-  userRole: string;
+  user?: string;
+  userName?: string;
+  role?: string;
+  userRole?: string;
+  userId?: string;
   action: string;
-  recordType: string;
-  recordId: string;
+  recordType?: string;
+  recordId?: string;
   details: string;
   previousValue?: any;
   newValue?: any;

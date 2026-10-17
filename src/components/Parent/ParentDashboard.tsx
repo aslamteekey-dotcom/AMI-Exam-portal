@@ -888,6 +888,11 @@ export const ParentDashboard: React.FC = () => {
                       <div className="text-sm font-bold text-emerald-950 mt-0.5">
                         {selectedChild.nameEn}
                       </div>
+                      {selectedChild.nameMl && (
+                        <div className="text-xs text-emerald-800 font-medium font-ml">
+                          {selectedChild.nameMl}
+                        </div>
+                      )}
                       <div className="text-xs text-emerald-800 font-medium">
                         Class: {(classesMap[selectedChild.classId] || selectedChild.classId || '').replace(/^Class\s*/i, '')} • Roll: {selectedChild.rollNo}
                       </div>

@@ -1,4 +1,69 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&family=Noto+Serif+Malayalam:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
+
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-ml: 'Noto Serif Malayalam', serif;
+  --font-title: 'Cinzel', serif;
+}
+
+:root {
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-ml: 'Noto Serif Malayalam', serif;
+  --font-title: 'Cinzel', serif;
+}
+
+/* Apply clean Inter for English/Latin and Noto Serif Malayalam for Malayalam characters */
+html,
+body,
+button,
+input,
+select,
+textarea,
+table,
+th,
+td {
+  font-family: 'Inter', 'Noto Serif Malayalam', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-sans {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Dedicated Malayalam Utility & Fallback */
+.font-ml,
+[lang="ml"],
+:lang(ml),
+.font-malayalam,
+.malayalam-text {
+  font-family: 'Noto Serif Malayalam', serif !important;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+  font-feature-settings: "kern" 1, "liga" 1;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.font-title {
+  font-family: 'Cinzel', serif !important;
+  letter-spacing: 0.025em;
+}
+
+/* When the application interface is switched to Malayalam */
+html[lang="ml"] body,
+html[lang="ml"] input,
+html[lang="ml"] select,
+html[lang="ml"] textarea,
+html[lang="ml"] button,
+html[lang="ml"] table,
+html[lang="ml"] th,
+html[lang="ml"] td {
+  font-family: 'Noto Serif Malayalam', 'Inter', serif;
+}
 
 @page {
   size: A4 portrait;
@@ -6,14 +71,29 @@
 }
 
 @media print {
-  html, body {
+  html, body, table, th, td {
     width: 210mm;
     height: 297mm;
     margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
+    font-family: 'Inter', 'Noto Serif Malayalam', serif !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+  }
+  .font-title {
+    font-family: 'Cinzel', serif !important;
+  }
+  .font-ml,
+  [lang="ml"],
+  :lang(ml),
+  .font-malayalam,
+  .printable-progress-card [lang="ml"],
+  .printable-progress-card .font-ml,
+  .printable-progress-card .font-malayalam {
+    font-family: 'Noto Serif Malayalam', serif !important;
+    text-rendering: optimizeLegibility !important;
+    -webkit-font-smoothing: antialiased !important;
   }
   /* Hide all UI elements except the printable card */
   nav, header, footer, .no-print, button, .parent-nav, .print\:hidden, aside, .navbar-container {
@@ -55,4 +135,3 @@
     break-after: avoid !important;
   }
 }
-

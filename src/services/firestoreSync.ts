@@ -9,7 +9,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
-import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination, FeePayment, ClassAttendanceConfig, InstitutionHoliday } from '../types';
+import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination, FeePayment, ClassAttendanceConfig, InstitutionHoliday, AuditLog, InstitutionSettings } from '../types';
 
 /**
  * Removes undefined fields from objects before saving to Firestore,
@@ -66,6 +66,7 @@ export class FirestoreSyncService {
     onAdmins?: (admins: User[]) => void;
     onAttendance?: (configs: ClassAttendanceConfig[]) => void;
     onHolidays?: (holidays: InstitutionHoliday[]) => void;
+    onAuditLogs?: (logs: AuditLog[]) => void;
     getInitialStudents?: () => Student[];
     getInitialTeachers?: () => User[];
     getInitialParents?: () => User[];
@@ -93,10 +94,54 @@ export class FirestoreSyncService {
           async snapshot => {
             if (!snapshot.empty) {
               markGloballySeeded();
-              const students = snapshot.docs.map(doc => ({
-                ...doc.data(),
-                id: doc.id,
-              } as Student));
+              // Purge mock students from Firestore if present
+              snapshot.docs.forEach(d => {
+                const data = d.data() as any;
+                if (
+                  ['st_501', 'st_301', 'st_903'].includes(d.id) ||
+                  ['5001', '3001', '9003'].includes(String(data?.admissionNo)) ||
+                  ['Ahmed Nihal', 'Adil Mansoor', 'Adil Ibrahim'].includes(data?.nameEn)
+                ) {
+                  deleteDoc(doc(db, 'students', d.id)).catch(() => {});
+                }
+              });
+
+              const students = snapshot.docs
+                .map(doc => {
+                  const data = doc.data() as any;
+                  const regNos: Record<string, string> = {
+                    ...(data.examRegisterNumbers || {}),
+                    ...(data.examRegisterNos || {}),
+                  };
+                  Object.keys(data).forEach(key => {
+                    if (key.startsWith('examRegisterNumbers.') || key.startsWith('examRegisterNos.')) {
+                      const examId = key.substring(key.indexOf('.') + 1);
+                      if (examId && data[key]) {
+                        regNos[examId] = String(data[key]).trim();
+                      }
+                    }
+                  });
+                  return {
+                    ...data,
+                    id: doc.id,
+                    examRegisterNumbers: regNos,
+                    examRegisterNos: regNos,
+                    examRegNo: data.examRegNo || Object.values(regNos)[0] || '',
+                  } as Student;
+                })
+                .filter(
+                  st =>
+                    st &&
+                    st.id !== 'st_501' &&
+                    st.id !== 'st_301' &&
+                    st.id !== 'st_903' &&
+                    st.admissionNo !== '5001' &&
+                    st.admissionNo !== '3001' &&
+                    st.admissionNo !== '9003' &&
+                    st.nameEn !== 'Ahmed Nihal' &&
+                    st.nameEn !== 'Adil Mansoor' &&
+                    st.nameEn !== 'Adil Ibrahim'
+                );
               callbacks.onStudents?.(students);
             } else {
               // Collection is empty in Firestore
@@ -505,6 +550,28 @@ export class FirestoreSyncService {
       }
     }
 
+    // 12. Audit Logs
+    if (callbacks.onAuditLogs) {
+      try {
+        const unsub = onSnapshot(
+          collection(db, 'auditLogs'),
+          snapshot => {
+            const logs = snapshot.docs.map(doc => ({
+              ...doc.data(),
+              id: doc.id,
+            } as AuditLog));
+            callbacks.onAuditLogs?.(logs);
+          },
+          err => {
+            handleFirestoreError(err, OperationType.GET, 'auditLogs');
+          }
+        );
+        this.unsubscribers.push(unsub);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.GET, 'auditLogs');
+      }
+    }
+
     return () => this.stopSubscriptions();
   }
 
@@ -546,6 +613,12 @@ export class FirestoreSyncService {
         const regVal = String(regNo || '').trim();
         const updatePayload: Record<string, any> = {
           examRegNo: regVal,
+          examRegisterNumbers: {
+            [examId]: regVal,
+          },
+          examRegisterNos: {
+            [examId]: regVal,
+          },
           [`examRegisterNos.${examId}`]: regVal,
           [`examRegisterNumbers.${examId}`]: regVal,
         };
@@ -756,6 +829,20 @@ export class FirestoreSyncService {
     }
   }
 
+  // Sync institution settings
+  public async syncSettings(settings: InstitutionSettings): Promise<void> {
+    try {
+      const cleanData = cleanForFirestore(settings);
+      await Promise.allSettled([
+        setDoc(doc(db, 'settings', 'institution'), cleanData, { merge: true }),
+        setDoc(doc(db, 'settings', 'profile'), cleanData, { merge: true }),
+      ]);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'settings/institution');
+      throw e;
+    }
+  }
+
   // Sync class attendance config
   public async syncAttendance(config: ClassAttendanceConfig): Promise<void> {
     try {
@@ -799,6 +886,16 @@ export class FirestoreSyncService {
       await deleteDoc(doc(db, 'institutionHolidays', dateOrId));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `institutionHolidays/${dateOrId}`);
+      throw e;
+    }
+  }
+
+  // Sync audit log to Firestore
+  public async syncAuditLog(log: AuditLog): Promise<void> {
+    try {
+      await setDoc(doc(db, 'auditLogs', log.id), cleanForFirestore(log), { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `auditLogs/${log.id}`);
       throw e;
     }
   }

@@ -4,6 +4,7 @@ import { Language, translations } from '../i18n';
 import { clientStorageApi } from '../services/clientStorageApi';
 import { db } from '../services/firebase';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import { logAuditEvent } from '../services/auditLogger';
 
 // Pure client-side authentication and mock API routes running 100% in-browser on Vercel
 
@@ -31,7 +32,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const setLang = (l: Language) => {
     setLangState(l);
     localStorage.setItem('madrasa_lang', l);
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = l;
+    }
   };
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = lang;
+    }
+  }, [lang]);
 
   const t = translations[lang];
 
@@ -118,6 +128,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setToken(res.token);
       setUser(res.user);
+
+      // Trigger immutable audit logging for system access
+      if (res.user.role === 'admin') {
+        logAuditEvent({
+          action: 'ADMIN_LOGIN',
+          details: `Admin ${res.user.name} logged in successfully.`,
+          user: res.user.name,
+          role: res.user.role,
+          userId: res.user.id,
+          currentUser: res.user,
+        }).catch(e => console.warn('Audit log error:', e));
+      } else if (res.user.role === 'teacher') {
+        logAuditEvent({
+          action: 'TEACHER_LOGIN',
+          details: `Teacher ${res.user.name} logged in successfully.`,
+          user: res.user.name,
+          role: res.user.role,
+          userId: res.user.id,
+          currentUser: res.user,
+        }).catch(e => console.warn('Audit log error:', e));
+      }
+
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message || 'Login error' };

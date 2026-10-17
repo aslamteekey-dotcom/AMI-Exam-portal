@@ -13,7 +13,6 @@ import {
   FileText,
   Hash,
   Loader2,
-  FileSpreadsheet,
   CheckCircle2,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
@@ -419,14 +418,6 @@ export const BulkReportsPrint: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={handleExportCsv}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              Export CSV
-            </button>
-            <button
-              type="button"
               onClick={handleBatchPdfDownload}
               disabled={isBatchPrinting}
               className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-800 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-xs disabled:opacity-50 cursor-pointer"
@@ -442,6 +433,18 @@ export const BulkReportsPrint: React.FC = () => {
                   Download Batch PDF
                 </>
               )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('bulk_cards')}
+              className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-xl transition shadow-xs cursor-pointer border ${
+                viewMode === 'bulk_cards'
+                  ? 'bg-emerald-100 text-emerald-950 border-emerald-400'
+                  : 'text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border-emerald-300'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5 text-emerald-700" />
+              View All Cards
             </button>
             <button
               type="button"
@@ -649,22 +652,6 @@ export const BulkReportsPrint: React.FC = () => {
                 <span className="text-xs font-semibold px-2.5 py-1 bg-emerald-100 text-emerald-900 rounded-lg">
                   {currentExam?.nameEn}
                 </span>
-                <button
-                  type="button"
-                  onClick={handleBatchPdfDownload}
-                  disabled={isBatchPrinting}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-800 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition cursor-pointer disabled:opacity-50 shadow-2xs"
-                >
-                  <Download className="w-3.5 h-3.5 text-emerald-800" />
-                  Download Batch PDF
-                </button>
-                <button
-                  onClick={() => setViewMode('bulk_cards')}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition cursor-pointer"
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  View All Cards
-                </button>
               </div>
             </div>
 
@@ -698,6 +685,11 @@ export const BulkReportsPrint: React.FC = () => {
                         <td className="py-2.5 px-3 font-mono font-medium text-slate-600">{s?.admissionNo}</td>
                         <td className="py-2.5 px-3">
                           <span className="font-bold text-slate-900 block">{s?.nameEn}</span>
+                          {s?.nameMl && (
+                            <span className="text-[11px] text-slate-500 font-ml block leading-tight">
+                              {s.nameMl}
+                            </span>
+                          )}
                         </td>
                         <td className="py-2.5 px-3 text-center font-mono font-bold text-emerald-950">
                           {metrics.displayGrandObtained} / {classTotalExpectedMax}

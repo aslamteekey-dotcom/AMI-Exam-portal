@@ -529,7 +529,7 @@ export const ClassSubjectConfig: React.FC = () => {
                         <div>
                           <div className="flex items-center justify-between">
                             <div>
-                              <h4 className="font-bold text-slate-900 text-base">
+                              <h4 className="font-bold text-slate-900 text-base font-ml">
                                 {displayName}
                               </h4>
                               <span className="text-[10px] font-mono font-bold text-slate-400">{sub.code}</span>

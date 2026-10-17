@@ -39,7 +39,7 @@ export const LoginForm: React.FC = () => {
           <div className="w-13 h-13 bg-white/10 rounded-2xl mx-auto flex items-center justify-center mb-3 shadow-inner">
             <GraduationCap className="w-7 h-7 text-emerald-200" />
           </div>
-          <h1 className="text-xl sm:text-2xl font-bold font-serif uppercase tracking-tight">
+          <h1 className={`text-xl sm:text-2xl font-bold uppercase tracking-tight ${isMl ? 'font-ml' : 'font-title'}`}>
             {isMl ? 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്' : 'Al-Madrasathul Islamiya Pallikkuth'}
           </h1>
           <p className="text-xs font-semibold text-emerald-300 mt-1 tracking-wide">

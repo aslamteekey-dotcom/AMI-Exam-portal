@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { InstitutionSettings, User, AdminPermissions } from '../../types';
+import { firestoreSync } from '../../services/firestoreSync';
 import { SubAdminModal } from './SubAdminModal';
 import {
   Download,
@@ -137,6 +138,9 @@ export const BackupSettings: React.FC = () => {
         body: JSON.stringify(settings),
       });
       if (res.ok) {
+        firestoreSync.syncSettings(settings).catch(e => {
+          console.warn('Firestore syncSettings error:', e);
+        });
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 3000);
       }

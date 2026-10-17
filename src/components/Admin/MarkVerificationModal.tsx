@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { db } from '../../services/firebase';
 import { doc, setDoc } from 'firebase/firestore';
 import { MarkSheet, SubjectAssessmentRule, Student, StudentMarkEntry, sortStudentsBoysFirst } from '../../types';
+import { logAuditEvent } from '../../services/auditLogger';
 import {
   CheckCircle,
   Lock,
@@ -31,7 +32,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
   onClose,
   onRefresh,
 }) => {
-  const { fetchWithAuth, lang, t } = useAuth();
+  const { fetchWithAuth, user, lang, t } = useAuth();
   const [loading, setLoading] = useState(true);
   const [sheetData, setSheetData] = useState<any>(null);
   const [returnReason, setReturnReason] = useState('');
@@ -94,6 +95,14 @@ export const MarkVerificationModal: React.FC<Props> = ({
         method: 'POST',
       });
       if (res.ok) {
+        logAuditEvent({
+          action: 'MARKS_APPROVED',
+          details: `Principal ${user?.name || 'ASLAM TK'} approved mark sheet for Class ${sheetData.classItem?.name || classId} - ${sheetData.subjectItem?.nameEn || subjectId}.`,
+          currentUser: user,
+          recordType: 'marks',
+          recordId: sheetData.markSheet.id,
+        }).catch(e => console.warn('Audit log error:', e));
+
         alert('Mark sheet successfully approved!');
         onRefresh();
         loadData();
@@ -124,6 +133,14 @@ export const MarkVerificationModal: React.FC<Props> = ({
         method: 'POST',
       });
       if (res.ok) {
+        logAuditEvent({
+          action: 'MARKS_LOCKED',
+          details: `Principal ${user?.name || 'ASLAM TK'} locked mark sheet for Class ${sheetData.classItem?.name || classId} - ${sheetData.subjectItem?.nameEn || subjectId}.`,
+          currentUser: user,
+          recordType: 'marks',
+          recordId: sheetData.markSheet.id,
+        }).catch(e => console.warn('Audit log error:', e));
+
         alert('Mark sheet locked. No further modifications allowed without Principal unlocking.');
         onRefresh();
         loadData();
@@ -325,7 +342,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
               <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900">
                 {isMl ? (cls?.nameMl || cls?.name || 'ക്ലാസ്') : (cls?.name || cls?.nameMl || 'Class')}
               </span>
-              <h2 className="text-lg font-bold text-slate-900">
+              <h2 className="text-lg font-bold text-slate-900 font-ml">
                 {subjectHeader}
               </h2>
             </div>
@@ -465,7 +482,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
                     <td className="p-2.5 font-medium">
                       <div className="font-bold text-slate-900">{studentName}</div>
                       {bilingualName && bilingualName !== studentName && (
-                        <div className="text-[11px] text-slate-500">{bilingualName}</div>
+                        <div className="text-[11px] text-slate-500 font-ml">{bilingualName}</div>
                       )}
                       <div className="text-[11px] text-slate-400 font-mono">{admissionNo}</div>
                     </td>

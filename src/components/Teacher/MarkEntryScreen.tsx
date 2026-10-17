@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
 import { cleanForFirestore } from '../../services/firestoreSync';
 import { collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { logAuditEvent } from '../../services/auditLogger';
 import {
   ClassItem,
   SubjectItem,
@@ -309,6 +310,15 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
       }
 
       setSaveSuccess(true);
+      if (data.markSheet?.id) {
+        logAuditEvent({
+          action: 'MARKS_SUBMITTED',
+          details: `Teacher ${user?.name || 'Teacher'} drafted marks for Class ${cls?.name || classId} - ${subject?.nameEn || subjectId} (${exam?.nameEn || examinationId}).`,
+          currentUser: user,
+          recordType: 'marks',
+          recordId: data.markSheet.id,
+        }).catch(e => console.warn('Audit log error:', e));
+      }
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err: any) {
       setErrorMsg(err.message);
@@ -347,6 +357,15 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
       const data = await res.json();
       setMarkSheet(data.markSheet);
       setShowSubmitModal(false);
+
+      logAuditEvent({
+        action: 'MARKS_SUBMITTED',
+        details: `Teacher ${user?.name || 'Teacher'} submitted mark sheet for Class ${cls?.name || classId} - ${subject?.nameEn || subjectId} (${exam?.nameEn || examinationId}).`,
+        currentUser: user,
+        recordType: 'marks',
+        recordId: markSheet.id,
+      }).catch(e => console.warn('Audit log error:', e));
+
       alert('Mark sheet successfully submitted to the Principal for verification!');
     } catch (err: any) {
       alert(err.message);
@@ -385,7 +404,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
           </button>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-xl font-bold text-slate-900">
+              <h2 className="text-xl font-bold text-slate-900 font-ml">
                 {cls?.numericGrade === 9 && (subject?.id === 'sub_history_buhuth' || subject?.code === 'HST')
                   ? 'ബുഹൂസ്'
                   : subject?.displayNameMl || subject?.nameMl || subject?.nameEn}
@@ -532,6 +551,11 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                           (Adm: {student.admissionNo})
                         </span>
                       </div>
+                      {student.nameMl && (
+                        <div className="text-[11px] text-slate-500 font-ml leading-tight mt-0.5">
+                          {student.nameMl}
+                        </div>
+                      )}
                     </td>
 
                     {/* Present / Absent Toggle Button */}

@@ -4,6 +4,7 @@ import { Student, ClassItem, sortStudentsBoysFirst } from '../../types';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { logAuditEvent } from '../../services/auditLogger';
 import {
   Users,
   Search,
@@ -21,7 +22,7 @@ import {
 } from 'lucide-react';
 
 export const StudentManagement: React.FC = () => {
-  const { fetchWithAuth, lang, t } = useAuth();
+  const { fetchWithAuth, user, lang, t } = useAuth();
   const [loading, setLoading] = useState(true);
   const [students, setStudents] = useState<Student[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
@@ -62,9 +63,23 @@ export const StudentManagement: React.FC = () => {
         fetchWithAuth('/api/students'),
       ]);
       const clsData = await resCls.json();
-      const stdData = await resStd.json();
+      const stdData: Student[] = await resStd.json();
       setClasses(clsData);
-      setStudents(stdData);
+      setStudents(
+        (stdData || []).filter(
+          st =>
+            st &&
+            st.id !== 'st_501' &&
+            st.id !== 'st_301' &&
+            st.id !== 'st_903' &&
+            st.admissionNo !== '5001' &&
+            st.admissionNo !== '3001' &&
+            st.admissionNo !== '9003' &&
+            st.nameEn !== 'Ahmed Nihal' &&
+            st.nameEn !== 'Adil Mansoor' &&
+            st.nameEn !== 'Adil Ibrahim'
+        )
+      );
       if (clsData.length > 0 && !importClassId) {
         setImportClassId(clsData[0].id);
       }
@@ -85,11 +100,37 @@ export const StudentManagement: React.FC = () => {
         collection(db, 'students'),
         (snapshot) => {
           if (!snapshot.empty) {
-            const remoteStudents = snapshot.docs.map((d) => ({
-              ...d.data(),
-              id: d.id,
-            } as Student));
-            // Update React state strictly with Firestore documents
+            // Delete any rogue mock students from Firestore
+            snapshot.docs.forEach((d) => {
+              const data = d.data() as any;
+              if (
+                ['st_501', 'st_301', 'st_903'].includes(d.id) ||
+                ['5001', '3001', '9003'].includes(String(data?.admissionNo)) ||
+                ['Ahmed Nihal', 'Adil Mansoor', 'Adil Ibrahim'].includes(data?.nameEn)
+              ) {
+                deleteDoc(doc(db, 'students', d.id)).catch(() => {});
+              }
+            });
+
+            const remoteStudents = snapshot.docs
+              .map((d) => ({
+                ...d.data(),
+                id: d.id,
+              } as Student))
+              .filter(
+                (st) =>
+                  st &&
+                  st.id !== 'st_501' &&
+                  st.id !== 'st_301' &&
+                  st.id !== 'st_903' &&
+                  st.admissionNo !== '5001' &&
+                  st.admissionNo !== '3001' &&
+                  st.admissionNo !== '9003' &&
+                  st.nameEn !== 'Ahmed Nihal' &&
+                  st.nameEn !== 'Adil Mansoor' &&
+                  st.nameEn !== 'Adil Ibrahim'
+              );
+            // Update React state strictly with authentic Firestore documents
             setStudents(remoteStudents);
           } else {
             setStudents([]);
@@ -173,6 +214,14 @@ export const StudentManagement: React.FC = () => {
           const err = await res.json();
           throw new Error(err.error || 'Failed to update student');
         }
+
+        logAuditEvent({
+          action: 'STUDENT_UPDATED',
+          details: `User ${user?.name || 'Administrator'} updated student ${editingStudent.nameEn} (Adm: ${editingStudent.admissionNo}).`,
+          currentUser: user,
+          recordType: 'student',
+          recordId: editingStudent.id,
+        }).catch(e => console.warn('Audit log error:', e));
       } else {
         const studentId = formData.admissionNo.trim();
         const newStudentData: Student = {
@@ -209,6 +258,14 @@ export const StudentManagement: React.FC = () => {
           const err = await res.json();
           throw new Error(err.error || 'Failed to add student');
         }
+
+        logAuditEvent({
+          action: 'STUDENT_CREATED',
+          details: `User ${user?.name || 'Administrator'} registered new student ${newStudentData.nameEn} (Adm: ${newStudentData.admissionNo}, Class: ${formData.classId}).`,
+          currentUser: user,
+          recordType: 'student',
+          recordId: studentId,
+        }).catch(e => console.warn('Audit log error:', e));
       }
 
       setShowAddModal(false);
@@ -240,6 +297,15 @@ export const StudentManagement: React.FC = () => {
         const err = await res.json();
         throw new Error(err.error || 'Failed to delete student');
       }
+
+      logAuditEvent({
+        action: 'STUDENT_DELETED',
+        details: `User ${user?.name || 'Administrator'} deleted student ${student.nameEn} (Adm: ${student.admissionNo}).`,
+        currentUser: user,
+        recordType: 'student',
+        recordId: student.id,
+      }).catch(e => console.warn('Audit log error:', e));
+
       await loadData();
     } catch (err: any) {
       alert(err.message);
@@ -261,6 +327,12 @@ export const StudentManagement: React.FC = () => {
         throw new Error(err.error || 'Failed to delete students');
       }
       await loadData();
+      logAuditEvent({
+        action: 'STUDENT_DELETED',
+        details: `User ${user?.name || 'Administrator'} permanently deleted all student records.`,
+        currentUser: user,
+        recordType: 'student',
+      }).catch(e => console.warn('Audit log error:', e));
       alert('All students deleted successfully.');
     } catch (err: any) {
       alert(err.message || 'Error deleting all students');
@@ -293,6 +365,13 @@ export const StudentManagement: React.FC = () => {
         throw new Error(err.error || 'Failed to delete class students');
       }
       await loadData();
+      logAuditEvent({
+        action: 'STUDENT_DELETED',
+        details: `User ${user?.name || 'Administrator'} deleted all students of Class ${className} (${toDelete.length} students).`,
+        currentUser: user,
+        recordType: 'student',
+        recordId: deleteClassId,
+      }).catch(e => console.warn('Audit log error:', e));
       alert(`All students in ${className} deleted successfully.`);
     } catch (err: any) {
       alert(err.message || 'Error deleting students by class');
@@ -316,6 +395,12 @@ export const StudentManagement: React.FC = () => {
         throw new Error(err.error || 'Failed to clear demo students');
       }
       await loadData();
+      logAuditEvent({
+        action: 'STUDENT_DELETED',
+        details: `User ${user?.name || 'Administrator'} cleared demo students.`,
+        currentUser: user,
+        recordType: 'student',
+      }).catch(e => console.warn('Audit log error:', e));
       alert('Demo students cleared successfully.');
     } catch (err: any) {
       alert(err.message || 'Error clearing demo students');
@@ -329,7 +414,7 @@ export const StudentManagement: React.FC = () => {
 ADM-2026-001, Muhammed Bilal, Class 1, M, Shamsudheen, 9447123456
 ADM-2026-002, Fathima Zahra, Class 2, F, Abdul Kareem, 9447654321
 ADM-2026-003, Rayan Ahmed, Class 5, M, Moideen Kutty, 9846112233
-ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
+ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
     const blob = new Blob([sample], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -451,6 +536,13 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
       } catch (fErr) {
         console.warn('Firestore bulk import write warning:', fErr);
       }
+
+      logAuditEvent({
+        action: 'STUDENT_CREATED',
+        details: `User ${user?.name || 'Administrator'} imported ${data.importedCount} student records across classes via CSV.`,
+        currentUser: user,
+        recordType: 'student',
+      }).catch(e => console.warn('Audit log error:', e));
 
       alert(`Successfully imported ${data.importedCount} student records across classes!`);
       setShowImportModal(false);
@@ -684,10 +776,15 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
                         {student.admissionNo}
                       </td>
                       <td className="p-3 min-w-[140px] whitespace-nowrap">
-                        <span className="font-bold text-slate-900">{student.nameEn}</span>
+                        <span className="font-bold text-slate-900 block">{student.nameEn}</span>
+                        {student.nameMl && (
+                          <span className="text-[11px] text-slate-500 font-ml block leading-tight">
+                            {student.nameMl}
+                          </span>
+                        )}
                       </td>
                       <td className="p-3 whitespace-nowrap">
-                        <span className="bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md font-semibold">
+                        <span className={`bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md font-semibold ${isMl ? 'font-ml' : ''}`}>
                           {isMl ? cls?.nameMl : cls?.name}
                         </span>
                       </td>
@@ -703,7 +800,12 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745001122`;
                         </span>
                       </td>
                       <td className="p-3 min-w-[140px] whitespace-nowrap">
-                        <span className="font-medium text-slate-800">{student.parentNameEn || '—'}</span>
+                        <span className="font-medium text-slate-800 block">{student.parentNameEn || '—'}</span>
+                        {student.parentNameMl && (
+                          <span className="text-[11px] text-slate-500 font-ml block leading-tight">
+                            {student.parentNameMl}
+                          </span>
+                        )}
                       </td>
                       <td className="p-3 font-mono text-slate-600 whitespace-nowrap">
                         {student.parentPhone || '—'}

@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { Hash, Sparkles, Check, X, Loader2, GripHorizontal, Users, CheckCircle, AlertCircle } from 'lucide-react';
 import { sortStudentsBoysFirst, isBoyStudent } from '../../types';
 import { firestoreSync } from '../../services/firestoreSync';
+import { logAuditEvent } from '../../services/auditLogger';
 
 interface Props {
   classId: string;
@@ -31,7 +32,7 @@ export const ExamRegisterModal: React.FC<Props> = ({
   onClose,
   onSaved,
 }) => {
-  const { fetchWithAuth } = useAuth();
+  const { fetchWithAuth, user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -39,10 +40,16 @@ export const ExamRegisterModal: React.FC<Props> = ({
   const [students, setStudents] = useState<StudentRegItem[]>([]);
   const [regMap, setRegMap] = useState<Record<string, string>>({});
 
-  // Auto-generation prefixes: extract class numeral (e.g., "Class 7" -> 7)
+  // Auto-generation sequence numbers: extract class numeral (e.g., "Class 7" -> 7)
   const classNumeral = (className || '').replace(/[^0-9]/g, '') || '7';
-  const [boyPrefix, setBoyPrefix] = useState(`${classNumeral}1`);
-  const [girlPrefix, setGirlPrefix] = useState(`${classNumeral}2`);
+  const [boyStartNo, setBoyStartNo] = useState(`${classNumeral}101`);
+  const [girlStartNo, setGirlStartNo] = useState(`${classNumeral}201`);
+
+  useEffect(() => {
+    const num = (className || '').replace(/[^0-9]/g, '') || '7';
+    setBoyStartNo(`${num}101`);
+    setGirlStartNo(`${num}201`);
+  }, [className]);
 
   // Draggable window state
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -118,23 +125,31 @@ export const ExamRegisterModal: React.FC<Props> = ({
     }
   };
 
-  // Auto-generate sequential: separate prefix for boys and girls
-  // Boys: boyPrefix + 01, 02... | Girls: girlPrefix + 01, 02...
+  // Auto-generate sequential register numbers:
+  // Parse starting integer counters and increment strictly for each subsequent student
+  // Boys (A-Z) get boyCounter++, Girls (A-Z) get girlCounter++
   const handleAutoGenerateGenderSequential = () => {
-    const newMap: Record<string, string> = { ...regMap };
-    let boyIndex = 1;
-    let girlIndex = 1;
+    let boyCounter = parseInt(boyStartNo, 10);
+    if (isNaN(boyCounter)) {
+      boyCounter = parseInt(`${classNumeral}101`, 10) || 1101;
+    }
+    let girlCounter = parseInt(girlStartNo, 10);
+    if (isNaN(girlCounter)) {
+      girlCounter = parseInt(`${classNumeral}201`, 10) || 1201;
+    }
 
-    students.forEach((s) => {
-      const isGirl = !isBoyStudent(s.gender);
-      if (isGirl) {
-        const numStr = String(girlIndex).padStart(2, '0');
-        newMap[s.studentId] = `${girlPrefix}${numStr}`;
-        girlIndex++;
+    const newMap: Record<string, string> = { ...regMap };
+
+    // Strictly sort students: Boys A-Z first, then Girls A-Z
+    const sorted = sortStudentsBoysFirst(students);
+
+    sorted.forEach((student) => {
+      if (isBoyStudent(student.gender)) {
+        newMap[student.studentId] = boyCounter.toString();
+        boyCounter++;
       } else {
-        const numStr = String(boyIndex).padStart(2, '0');
-        newMap[s.studentId] = `${boyPrefix}${numStr}`;
-        boyIndex++;
+        newMap[student.studentId] = girlCounter.toString();
+        girlCounter++;
       }
     });
 
@@ -149,7 +164,7 @@ export const ExamRegisterModal: React.FC<Props> = ({
       await firestoreSync.updateExamRegisterNumbers(
         examinationId,
         regMap,
-        students.map(s => ({ id: s.studentId, admissionNo: s.admissionNo } as any))
+        students.map(s => ({ id: s.studentId, admissionNo: s.admissionNo, classId } as any))
       );
 
       // 2. Also execute through API to update local state and broadcast
@@ -163,6 +178,14 @@ export const ExamRegisterModal: React.FC<Props> = ({
       );
 
       if (res.ok) {
+        logAuditEvent({
+          action: 'EXAM_REG_UPDATED',
+          details: `User ${user?.name || 'Administrator'} updated exam register numbers for ${className} (${examinationName}).`,
+          currentUser: user,
+          recordType: 'exam_register_numbers',
+          recordId: `${examinationId}_${classId}`,
+        }).catch(e => console.warn('Audit log error:', e));
+
         setSavedSuccess(true);
         setTimeout(() => {
           onSaved();
@@ -221,54 +244,67 @@ export const ExamRegisterModal: React.FC<Props> = ({
 
         {/* Advanced Auto-Generation Tool for Boys & Girls */}
         <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 space-y-3 text-xs">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
             <span className="font-bold text-emerald-950 flex items-center gap-1.5">
               <Users className="w-4 h-4 text-emerald-700" />
-              Sequential Prefix Rules (Boys &amp; Girls)
+              Sequential Starting Numbers (Boys &amp; Girls)
             </span>
-            <span className="text-[11px] text-slate-500">
-              Auto formats sequential 2-digit numbers (01, 02...)
+            <span className="text-[11px] text-emerald-900 font-semibold bg-emerald-100/70 px-2.5 py-0.5 rounded-md border border-emerald-300/60">
+              Boys start from {boyStartNo || '—'}, Girls start from {girlStartNo || '—'}
             </span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="bg-white p-2.5 rounded-lg border border-emerald-200 flex items-center justify-between">
-              <div>
-                <span className="font-bold text-blue-900 block text-[11px]">Boy Prefix (e.g. {classNumeral}1):</span>
-                <span className="text-[10px] text-slate-400">Sample: {boyPrefix}01, {boyPrefix}02...</span>
+            <div className="bg-white p-3 rounded-lg border border-emerald-200 flex items-center justify-between shadow-xs">
+              <div className="pr-2">
+                <label htmlFor="boyStartNoInput" className="font-bold text-blue-900 block text-[11px]">
+                  Boy Starting Number (e.g. 1101 or 7101)
+                </label>
+                <span className="text-[10px] text-slate-500">
+                  Boys start from {boyStartNo || '—'}
+                </span>
               </div>
               <input
+                id="boyStartNoInput"
                 type="text"
-                value={boyPrefix}
-                onChange={e => setBoyPrefix(e.target.value)}
-                className="w-20 px-2.5 py-1 text-center bg-blue-50/50 border border-blue-300 rounded font-mono text-xs font-bold text-blue-950 focus:outline-emerald-700"
-                placeholder={`${classNumeral}1`}
+                value={boyStartNo}
+                onChange={e => setBoyStartNo(e.target.value.replace(/[^0-9]/g, ''))}
+                className="w-24 px-2.5 py-1 text-center bg-blue-50/50 border border-blue-300 rounded font-mono text-xs font-bold text-blue-950 focus:outline-emerald-700 focus:ring-1 focus:ring-emerald-700"
+                placeholder={`${classNumeral}101`}
               />
             </div>
 
-            <div className="bg-white p-2.5 rounded-lg border border-emerald-200 flex items-center justify-between">
-              <div>
-                <span className="font-bold text-purple-900 block text-[11px]">Girl Prefix (e.g. {classNumeral}2):</span>
-                <span className="text-[10px] text-slate-400">Sample: {girlPrefix}01, {girlPrefix}02...</span>
+            <div className="bg-white p-3 rounded-lg border border-emerald-200 flex items-center justify-between shadow-xs">
+              <div className="pr-2">
+                <label htmlFor="girlStartNoInput" className="font-bold text-purple-900 block text-[11px]">
+                  Girl Starting Number (e.g. 1201 or 7201)
+                </label>
+                <span className="text-[10px] text-slate-500">
+                  Girls start from {girlStartNo || '—'}
+                </span>
               </div>
               <input
+                id="girlStartNoInput"
                 type="text"
-                value={girlPrefix}
-                onChange={e => setGirlPrefix(e.target.value)}
-                className="w-20 px-2.5 py-1 text-center bg-purple-50/50 border border-purple-300 rounded font-mono text-xs font-bold text-purple-950 focus:outline-emerald-700"
-                placeholder={`${classNumeral}2`}
+                value={girlStartNo}
+                onChange={e => setGirlStartNo(e.target.value.replace(/[^0-9]/g, ''))}
+                className="w-24 px-2.5 py-1 text-center bg-purple-50/50 border border-purple-300 rounded font-mono text-xs font-bold text-purple-950 focus:outline-emerald-700 focus:ring-1 focus:ring-emerald-700"
+                placeholder={`${classNumeral}201`}
               />
             </div>
           </div>
 
-          <div className="flex items-center justify-end pt-1">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
+            <span className="text-[11px] text-slate-500">
+              Sorted strictly: Boys A-Z first, then Girls A-Z
+            </span>
             <button
               type="button"
               onClick={handleAutoGenerateGenderSequential}
-              className="flex items-center gap-1.5 px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-lg shadow-xs transition cursor-pointer"
+              className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-lg shadow-xs transition cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              Auto-Generate Sequential (Boys: {boyPrefix}01... | Girls: {girlPrefix}01...)
+              Auto-Generate Sequential Register Numbers
             </button>
           </div>
         </div>
@@ -324,7 +360,7 @@ export const ExamRegisterModal: React.FC<Props> = ({
                               [student.studentId]: e.target.value,
                             })
                           }
-                          placeholder={isGirl ? `${girlPrefix}01` : `${boyPrefix}01`}
+                          placeholder={isGirl ? (girlStartNo || '7201') : (boyStartNo || '7101')}
                           className="w-full px-2.5 py-1 text-center font-mono font-bold border border-slate-300 rounded-lg text-emerald-950 focus:ring-1 focus:ring-emerald-700 focus:outline-none bg-white"
                         />
                       </td>

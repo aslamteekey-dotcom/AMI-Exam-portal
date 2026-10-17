@@ -4,6 +4,7 @@ import { User, ClassItem, SubjectItem, TeacherAssignment } from '../../types';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { logAuditEvent } from '../../services/auditLogger';
 import {
   Users,
   Plus,
@@ -21,7 +22,7 @@ import {
 } from 'lucide-react';
 
 export const TeacherManagement: React.FC = () => {
-  const { fetchWithAuth, lang, t } = useAuth();
+  const { fetchWithAuth, user, lang, t } = useAuth();
   const [loading, setLoading] = useState(true);
   const [teachers, setTeachers] = useState<any[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
@@ -209,6 +210,14 @@ export const TeacherManagement: React.FC = () => {
         throw new Error(err.error || 'Failed to create teacher account');
       }
 
+      logAuditEvent({
+        action: 'TEACHER_CREATED',
+        details: `User ${user?.name || 'Administrator'} created teacher account for ${tName.trim()} (@${tUsername.trim()}).`,
+        currentUser: user,
+        recordType: 'teacher',
+        recordId: teacherId,
+      }).catch(e => console.warn('Audit log error:', e));
+
       setShowAddModal(false);
       setTName('');
       setTNameMl('');
@@ -325,6 +334,15 @@ export const TeacherManagement: React.FC = () => {
         const err = await res.json();
         throw new Error(err.error || 'Failed to update teacher account');
       }
+
+      logAuditEvent({
+        action: 'TEACHER_UPDATED',
+        details: `User ${user?.name || 'Administrator'} updated teacher account for ${editingTeacher.name}.`,
+        currentUser: user,
+        recordType: 'teacher',
+        recordId: editingTeacher.id,
+      }).catch(e => console.warn('Audit log error:', e));
+
       setEditingTeacher(null);
       await loadData();
     } catch (err: any) {
@@ -355,6 +373,15 @@ export const TeacherManagement: React.FC = () => {
         const err = await res.json();
         throw new Error(err.error || 'Failed to delete teacher account');
       }
+
+      logAuditEvent({
+        action: 'TEACHER_DELETED',
+        details: `User ${user?.name || 'Administrator'} deleted teacher account for ${teacher.name}.`,
+        currentUser: user,
+        recordType: 'teacher',
+        recordId: teacher.id,
+      }).catch(e => console.warn('Audit log error:', e));
+
       await loadData();
     } catch (err: any) {
       alert(err.message);
@@ -651,6 +678,9 @@ export const TeacherManagement: React.FC = () => {
                   <h3 className="font-bold text-slate-900 text-base mt-2 whitespace-nowrap overflow-hidden text-ellipsis">
                     {teacher.name}
                   </h3>
+                  {teacher.nameMl && (
+                    <p className="text-xs text-slate-500 font-ml">{teacher.nameMl}</p>
+                  )}
                   <p className="text-xs text-slate-500 font-mono">@{teacher.username}</p>
                   {teacher.phone && (
                     <p className="text-xs text-slate-500 mt-0.5">📞 {teacher.phone}</p>
@@ -747,7 +777,7 @@ export const TeacherManagement: React.FC = () => {
                                 className="flex items-center justify-between text-xs bg-slate-50 p-2 rounded-lg border border-slate-200"
                               >
                                 <span className="font-semibold text-slate-800">
-                                  {cls?.name} • <span className="text-emerald-950 font-bold">{subMlName}</span>
+                                  {cls?.name} • <span className="text-emerald-950 font-bold font-ml">{subMlName}</span>
                                 </span>
                                 <button
                                   onClick={() => handleRemoveAssignment(a.id, teacher.id)}
