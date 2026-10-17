@@ -294,14 +294,54 @@ export interface FeePayment {
 }
 
 export interface InstitutionHoliday {
-  id: string; // date "YYYY-MM-DD"
+  id: string; // date "YYYY-MM-DD" or unique id
   date: string; // "YYYY-MM-DD"
-  reason: string; // e.g. "Friday Holiday", "Eid", "Milad-un-Nabi", "Study Leave"
+  targetClasses?: string[]; // e.g. ['all'] or ['cls_1', 'cls_5', 'cls_7', 'cls_9']
+  reason: string; // e.g. "Public Holiday", "Special Madrasa Holiday", "Rain Holiday", "Study Leave", "Eid / Milad"
   markedBy?: string;
   markedAt?: string;
+  createdBy?: string;
+  academicYear?: string;
+  createdAt?: string;
+  rangeStart?: string;
+  rangeEnd?: string;
+  rangeGroupId?: string;
+  totalRangeDays?: number;
+}
+
+export interface SpecialWorkingDay {
+  id: string; // date "YYYY-MM-DD" or unique id
+  date: string; // "YYYY-MM-DD" (must be Sunday)
+  targetClasses: string[]; // e.g. ['all'] or ['cls_7', 'cls_9']
+  reason: string; // e.g. "KMEB Examination Session", "Special Working Day"
+  unlockedBy?: string;
+  unlockedAt?: string;
   academicYear?: string;
   createdAt?: string;
 }
+
+/**
+ * Checks whether a given classId matches a list of target classes (e.g. ['all'] or ['cls_1', 'cls_5']).
+ * Normalizes different ID formats (e.g., 'cls_5', 'class_5', '5', 'Class 5').
+ */
+export function isClassMatch(targetClasses?: string[], classId?: string): boolean {
+  if (!classId) return true;
+  if (!targetClasses || targetClasses.length === 0) return true;
+  if (targetClasses.includes('all') || targetClasses.includes('ALL')) return true;
+
+  const extractGrade = (val: string): string => {
+    const num = val.replace(/\D/g, '');
+    return num || val.toLowerCase().trim();
+  };
+
+  const targetGrade = extractGrade(classId);
+  return targetClasses.some(tc => {
+    if (tc === 'all' || tc === 'ALL') return true;
+    if (tc === classId) return true;
+    return extractGrade(tc) === targetGrade;
+  });
+}
+
 
 export interface DailyAttendanceRecord {
   date: string; // "YYYY-MM-DD"

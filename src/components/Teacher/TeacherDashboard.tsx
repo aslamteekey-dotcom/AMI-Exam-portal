@@ -14,6 +14,8 @@ import {
   ClassAttendanceConfig,
   DailyAttendanceRecord,
   InstitutionHoliday,
+  SpecialWorkingDay,
+  isClassMatch,
   AttendanceEditRequest,
   NewsItem,
   NotificationItem,
@@ -158,6 +160,7 @@ export const TeacherDashboard: React.FC = () => {
   });
   const [unlockedDates, setUnlockedDates] = useState<Record<string, boolean>>({});
   const [institutionHolidays, setInstitutionHolidays] = useState<Record<string, InstitutionHoliday>>({});
+  const [specialWorkingDays, setSpecialWorkingDays] = useState<Record<string, SpecialWorkingDay>>({});
   const [attendanceEditRequests, setAttendanceEditRequests] = useState<Record<string, AttendanceEditRequest>>({});
   const [isRequestModalOpen, setIsRequestModalOpen] = useState<boolean>(false);
   const [requestReasonInput, setRequestReasonInput] = useState<string>('');
@@ -577,7 +580,21 @@ export const TeacherDashboard: React.FC = () => {
           console.warn('Firestore institutionHolidays onSnapshot error:', error);
         }
       );
-      unsubs.push(unsubHolidays);
+      // Real-time Firestore Special Working Days (Principal Sunday Unlock) listener
+      const unsubSpecialWorking = onSnapshot(
+        collection(db, 'specialWorkingDays'),
+        snapshot => {
+          const swMap: Record<string, SpecialWorkingDay> = {};
+          snapshot.docs.forEach(docSnap => {
+            swMap[docSnap.id] = { ...docSnap.data(), id: docSnap.id } as SpecialWorkingDay;
+          });
+          setSpecialWorkingDays(swMap);
+        },
+        error => {
+          console.warn('Firestore specialWorkingDays onSnapshot error:', error);
+        }
+      );
+      unsubs.push(unsubSpecialWorking);
 
       // Real-time Firestore Attendance Edit Requests listener
       const unsubRequests = onSnapshot(
@@ -697,7 +714,20 @@ export const TeacherDashboard: React.FC = () => {
     }
   }, [attendanceClassId, allAttendanceConfigs]);
 
-  // Helper to compute 6 days of the week (Monday through Saturday)
+  // Check if a date is a Sunday (weekly closure by default)
+  const isDateSunday = (dateStr: string): boolean => {
+    const d = parseLocalDate(dateStr);
+    return d.getDay() === 0;
+  };
+
+  // Check if a Sunday is unlocked by Principal for this class
+  const isSundayUnlockedForClass = (dateStr: string, classId?: string): boolean => {
+    const sw = specialWorkingDays[dateStr];
+    if (!sw) return false;
+    return isClassMatch(sw.targetClasses, classId || attendanceClassId);
+  };
+
+  // Helper to compute days of the week (Monday through Saturday, plus Sunday if unlocked for this class)
   const getWeekDays = (baseDateStr: string) => {
     const mondayStr = getWeekMondayStr(baseDateStr);
     const monday = parseLocalDate(mondayStr);
@@ -718,6 +748,21 @@ export const TeacherDashboard: React.FC = () => {
         shortDate,
       });
     }
+
+    // Include Sunday if explicitly unlocked by Principal for this class (e.g. KMEB Examination)
+    const sundayCur = new Date(monday);
+    sundayCur.setDate(monday.getDate() + 6);
+    const sundayDateStr = formatLocalDate(sundayCur);
+    if (isSundayUnlockedForClass(sundayDateStr, attendanceClassId)) {
+      const sundayShortDate = `${sundayCur.getDate()} ${sundayCur.toLocaleString('default', { month: 'short' })}`;
+      days.push({
+        dateStr: sundayDateStr,
+        dayName: 'Sunday ⭐',
+        dayNameMl: 'ഞായർ (KMEB Exam)',
+        shortDate: sundayShortDate,
+      });
+    }
+
     return days;
   };
 
@@ -739,18 +784,56 @@ export const TeacherDashboard: React.FC = () => {
     return true;
   };
 
-  // Check if date is designated as an Institution Holiday / Non-Working Day
-  const isDateHoliday = (dateStr: string): boolean => {
-    if (institutionHolidays[dateStr]) return true;
-    if (classAttendanceConfig?.dailyRecords?.[dateStr]?.isHoliday) return true;
+  // Check if date is designated as an Institution Holiday / Non-Working Day for this class
+  const isDateHoliday = (dateStr: string, classId?: string): boolean => {
+    const targetClass = classId || attendanceClassId;
+
+    // Sunday Default Closure Check
+    if (isDateSunday(dateStr)) {
+      if (isSundayUnlockedForClass(dateStr, targetClass)) {
+        return false; // Principal unlocked as working day
+      }
+      return true; // Default weekly Sunday closure
+    }
+
+    // Institution Holiday Check (class-specific)
+    const hol = institutionHolidays[dateStr];
+    if (hol && isClassMatch(hol.targetClasses, targetClass)) {
+      return true;
+    }
+
+    // Daily records holiday check
+    if (classAttendanceConfig?.dailyRecords?.[dateStr]?.isHoliday) {
+      return true;
+    }
+
     return false;
   };
 
   // Get metadata for a holiday (strictly read-only in Teacher Portal)
-  const getHolidayInfo = (dateStr: string): { date: string; reason: string; markedBy?: string } | null => {
-    if (institutionHolidays[dateStr]) {
-      return institutionHolidays[dateStr];
+  const getHolidayInfo = (dateStr: string, classId?: string): { date: string; reason: string; markedBy?: string } | null => {
+    const targetClass = classId || attendanceClassId;
+
+    if (isDateSunday(dateStr)) {
+      if (isSundayUnlockedForClass(dateStr, targetClass)) {
+        return null;
+      }
+      return {
+        date: dateStr,
+        reason: 'Sunday Weekly Closure (Non-Working Day)',
+        markedBy: 'System Default',
+      };
     }
+
+    const hol = institutionHolidays[dateStr];
+    if (hol && isClassMatch(hol.targetClasses, targetClass)) {
+      return {
+        date: dateStr,
+        reason: hol.reason || 'Official Holiday / Non-Working Day',
+        markedBy: hol.markedBy || hol.createdBy || 'Principal',
+      };
+    }
+
     const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
     if (rec?.isHoliday) {
       return {
@@ -759,6 +842,7 @@ export const TeacherDashboard: React.FC = () => {
         markedBy: rec.markedBy || 'Principal',
       };
     }
+
     return null;
   };
 
@@ -1042,14 +1126,17 @@ export const TeacherDashboard: React.FC = () => {
 
       const distinctDates = Object.keys(updatedDailyRecords);
       const holidayDates = distinctDates.filter(
-        dKey => updatedDailyRecords[dKey]?.isHoliday || institutionHolidays[dKey]
+        dKey => updatedDailyRecords[dKey]?.isHoliday || (institutionHolidays[dKey] && isClassMatch(institutionHolidays[dKey].targetClasses, attendanceClassId))
       );
-      const totalWorking = Math.max(1, (attendanceTotalWorkingDays || 88) - holidayDates.length);
+      const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
+        sw => isClassMatch(sw.targetClasses, attendanceClassId)
+      ).length;
+      const totalWorking = Math.max(1, 88 - holidayDates.length + totalSundaysUnlocked);
 
       currentStudents.forEach(st => {
         let count = 0;
         distinctDates.forEach(dKey => {
-          const isHol = updatedDailyRecords[dKey]?.isHoliday || institutionHolidays[dKey];
+          const isHol = isDateHoliday(dKey, attendanceClassId);
           if (!isHol && updatedDailyRecords[dKey]?.statusMap?.[st.id] !== false) {
             count++;
           }
@@ -1196,14 +1283,17 @@ export const TeacherDashboard: React.FC = () => {
       };
       const distinctDates = Object.keys(updatedDailyRecords);
       const holidayDates = distinctDates.filter(
-        dKey => updatedDailyRecords[dKey]?.isHoliday || institutionHolidays[dKey]
+        dKey => updatedDailyRecords[dKey]?.isHoliday || (institutionHolidays[dKey] && isClassMatch(institutionHolidays[dKey].targetClasses, attendanceClassId))
       );
-      const totalWorking = Math.max(1, (attendanceTotalWorkingDays || 88) - holidayDates.length);
+      const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
+        sw => isClassMatch(sw.targetClasses, attendanceClassId)
+      ).length;
+      const totalWorking = Math.max(1, 88 - holidayDates.length + totalSundaysUnlocked);
 
       currentStudents.forEach(st => {
         let count = 0;
         distinctDates.forEach(dKey => {
-          const isHol = updatedDailyRecords[dKey]?.isHoliday || institutionHolidays[dKey];
+          const isHol = isDateHoliday(dKey, attendanceClassId);
           if (!isHol && updatedDailyRecords[dKey]?.statusMap?.[st.id] !== false) {
             count++;
           }

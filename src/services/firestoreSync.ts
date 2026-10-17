@@ -5,13 +5,12 @@ import {
   setDoc,
   deleteDoc,
   onSnapshot,
-  writeBatch,
   query,
   where,
   Unsubscribe,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
-import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination, FeePayment, ClassAttendanceConfig, InstitutionHoliday, AuditLog, InstitutionSettings, assignClassSequentialRollNumbers } from '../types';
+import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination, FeePayment, ClassAttendanceConfig, InstitutionHoliday, SpecialWorkingDay, AuditLog, InstitutionSettings, assignClassSequentialRollNumbers } from '../types';
 
 /**
  * Removes undefined fields from objects before saving to Firestore,
@@ -68,6 +67,7 @@ export class FirestoreSyncService {
     onAdmins?: (admins: User[]) => void;
     onAttendance?: (configs: ClassAttendanceConfig[]) => void;
     onHolidays?: (holidays: InstitutionHoliday[]) => void;
+    onSpecialWorkingDays?: (days: SpecialWorkingDay[]) => void;
     onAuditLogs?: (logs: AuditLog[]) => void;
     getInitialStudents?: () => Student[];
     getInitialTeachers?: () => User[];
@@ -590,7 +590,30 @@ export class FirestoreSyncService {
       }
     }
 
-    // 12. Audit Logs
+    // 12. Special Working Days (Principal Sunday Unlock)
+    if (callbacks.onSpecialWorkingDays) {
+      try {
+        const unsub = onSnapshot(
+          collection(db, 'specialWorkingDays'),
+          snapshot => {
+            const days = snapshot.docs.map(doc => ({
+              ...doc.data(),
+              id: doc.id,
+              date: doc.data().date || doc.id,
+            } as SpecialWorkingDay));
+            callbacks.onSpecialWorkingDays?.(days);
+          },
+          err => {
+            handleFirestoreError(err, OperationType.GET, 'specialWorkingDays');
+          }
+        );
+        this.unsubscribers.push(unsub);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.GET, 'specialWorkingDays');
+      }
+    }
+
+    // 13. Audit Logs
     if (callbacks.onAuditLogs) {
       try {
         const unsub = onSnapshot(
@@ -611,6 +634,11 @@ export class FirestoreSyncService {
         handleFirestoreError(e, OperationType.GET, 'auditLogs');
       }
     }
+
+    // Automated Data Cleanup: Purge erroneous June 24 holiday from Class 5
+    this.cleanupJune24Class5Holiday().catch(err => {
+      console.warn('cleanupJune24Class5Holiday automated check error:', err);
+    });
 
     return () => this.stopSubscriptions();
   }
@@ -939,15 +967,113 @@ export class FirestoreSyncService {
     }
   }
 
-  // Delete institution holiday from Firestore
+  // Delete institution holiday from Firestore (handles both ID and date lookups)
   public async deleteHoliday(dateOrId: string): Promise<void> {
     try {
       await deleteDoc(doc(db, 'institutionHolidays', dateOrId));
+      // In case the document was saved with a different ID than date, search and delete
+      try {
+        const snap = await getDocs(query(collection(db, 'institutionHolidays'), where('date', '==', dateOrId)));
+        snap.forEach(d => {
+          deleteDoc(doc(db, 'institutionHolidays', d.id)).catch(() => {});
+        });
+      } catch {}
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `institutionHolidays/${dateOrId}`);
       throw e;
     }
   }
+
+  // Sync special working Sunday to Firestore
+  public async syncSpecialWorkingDay(workingDay: SpecialWorkingDay): Promise<void> {
+    try {
+      const docId = workingDay.date || workingDay.id;
+      await setDoc(doc(db, 'specialWorkingDays', docId), cleanForFirestore(workingDay), { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `specialWorkingDays/${workingDay.date || workingDay.id}`);
+      throw e;
+    }
+  }
+
+  // Delete special working Sunday from Firestore
+  public async deleteSpecialWorkingDay(dateOrId: string): Promise<void> {
+    try {
+      await deleteDoc(doc(db, 'specialWorkingDays', dateOrId));
+      try {
+        const snap = await getDocs(query(collection(db, 'specialWorkingDays'), where('date', '==', dateOrId)));
+        snap.forEach(d => {
+          deleteDoc(doc(db, 'specialWorkingDays', d.id)).catch(() => {});
+        });
+      } catch {}
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `specialWorkingDays/${dateOrId}`);
+      throw e;
+    }
+  }
+
+  // Automated Cleanup: Completely remove erroneous June 24 holiday from Class 5
+  public async cleanupJune24Class5Holiday(): Promise<void> {
+    try {
+      const targetDates = ['2026-06-24', '24/06/2026', '24-06-2026'];
+      // 1. Scan institutionHolidays collection
+      const holSnap = await getDocs(collection(db, 'institutionHolidays'));
+      for (const d of holSnap.docs) {
+        const data = d.data();
+        const docDate = data.date || d.id;
+        if (targetDates.includes(docDate) || d.id.includes('2026-06-24')) {
+          const targetClasses: string[] = Array.isArray(data.targetClasses) ? data.targetClasses : ['all'];
+          const isTargeting5 = targetClasses.some(c => c === 'all' || c === 'cls_5' || c === 'class_5' || c === '5');
+          if (isTargeting5) {
+            const remaining = targetClasses.filter(c => c !== 'cls_5' && c !== 'class_5' && c !== '5');
+            // If it only targeted Class 5 (or was marked specifically for Class 5)
+            if (remaining.length === 0 || remaining.length === targetClasses.length - 1) {
+              if (targetClasses.includes('cls_5') || targetClasses.includes('class_5') || targetClasses.length === 1) {
+                await deleteDoc(doc(db, 'institutionHolidays', d.id));
+              } else if (remaining.length > 0 && !targetClasses.includes('all')) {
+                await setDoc(doc(db, 'institutionHolidays', d.id), { ...data, targetClasses: remaining }, { merge: true });
+              } else {
+                await deleteDoc(doc(db, 'institutionHolidays', d.id));
+              }
+            }
+          }
+        }
+      }
+
+      // 2. Check attendance collection for Class 5 documents
+      const cls5Keys = ['cls_5', 'class_5', '5'];
+      for (const key of cls5Keys) {
+        try {
+          const attRef = doc(db, 'attendance', key);
+          const attSnap = await getDocs(query(collection(db, 'attendance')));
+          const matched = attSnap.docs.find(docSnap => docSnap.id === key);
+          if (matched) {
+            const attData = matched.data() as ClassAttendanceConfig;
+            if (attData.dailyRecords && attData.dailyRecords['2026-06-24']) {
+              if (attData.dailyRecords['2026-06-24'].isHoliday) {
+                const updatedDaily = { ...attData.dailyRecords };
+                delete updatedDaily['2026-06-24'];
+                const holidayCount = Object.values(updatedDaily).filter(r => r.isHoliday).length;
+                const totalWorking = Math.max(1, 88 - holidayCount);
+                await setDoc(
+                  attRef,
+                  cleanForFirestore({
+                    ...attData,
+                    totalWorkingDays: totalWorking,
+                    dailyRecords: updatedDaily,
+                    updatedAt: new Date().toISOString(),
+                  }),
+                  { merge: true }
+                );
+              }
+            }
+          }
+        } catch {}
+      }
+    } catch (e) {
+      console.warn('cleanupJune24Class5Holiday error:', e);
+    }
+  }
+
 
   // Sync audit log to Firestore
   public async syncAuditLog(log: AuditLog): Promise<void> {

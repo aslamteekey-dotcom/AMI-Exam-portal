@@ -14,6 +14,8 @@ import {
   NotificationItem,
   DEFAULT_NEWS_ITEMS,
   InstitutionHoliday,
+  SpecialWorkingDay,
+  isClassMatch,
 } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
 import { StudyMaterialsView } from './StudyMaterialsView';
@@ -89,6 +91,7 @@ export const ParentDashboard: React.FC = () => {
   const [settings, setSettings] = useState<InstitutionSettings | null>(null);
   const [attendanceConfigs, setAttendanceConfigs] = useState<Record<string, ClassAttendanceConfig>>({});
   const [institutionHolidays, setInstitutionHolidays] = useState<Record<string, InstitutionHoliday>>({});
+  const [specialWorkingDays, setSpecialWorkingDays] = useState<Record<string, SpecialWorkingDay>>({});
   const [teachers, setTeachers] = useState<AppUser[]>([]);
 
   // Notifications State
@@ -350,6 +353,20 @@ export const ParentDashboard: React.FC = () => {
       unsubs.push(unsubHolidays);
     } catch (e) {
       console.warn('Real-time institutionHolidays listener error in ParentDashboard:', e);
+    }
+
+    // 4c. Real-time Firestore listener for special working days (unlocked Sundays)
+    try {
+      const unsubSpecial = onSnapshot(collection(db, 'specialWorkingDays'), snapshot => {
+        const swMap: Record<string, SpecialWorkingDay> = {};
+        snapshot.docs.forEach(docSnap => {
+          swMap[docSnap.id] = { ...docSnap.data(), id: docSnap.id, date: docSnap.data().date || docSnap.id } as SpecialWorkingDay;
+        });
+        setSpecialWorkingDays(swMap);
+      });
+      unsubs.push(unsubSpecial);
+    } catch (e) {
+      console.warn('Real-time specialWorkingDays listener error in ParentDashboard:', e);
     }
 
     // 5. Real-time Firestore listener for news & announcements
@@ -1380,14 +1397,14 @@ export const ParentDashboard: React.FC = () => {
                 const classAttConfig = attendanceConfigs[childClassId];
                 const records = classAttConfig?.dailyRecords || {};
 
-                // Aggregate holidays from Firestore institutionHolidays collection and class daily records
+                // Aggregate holidays from Firestore institutionHolidays collection (specifically matching this child's class) and class daily records
                 const allHolidaysMap: Record<string, { date: string; reason: string; markedBy?: string }> = {};
                 Object.values(institutionHolidays).forEach(h => {
-                  if (h.date) {
+                  if (h.date && isClassMatch(h.targetClasses, childClassId)) {
                     allHolidaysMap[h.date] = {
                       date: h.date,
                       reason: h.reason || 'Official Holiday / Non-Working Day',
-                      markedBy: h.markedBy || 'Madrasa Administration',
+                      markedBy: h.markedBy || h.createdBy || 'Madrasa Administration',
                     };
                   }
                 });
@@ -1401,10 +1418,13 @@ export const ParentDashboard: React.FC = () => {
                   }
                 });
                 const totalHolidaysCount = Object.keys(allHolidaysMap).length;
+                const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
+                  sw => isClassMatch(sw.targetClasses, childClassId)
+                ).length;
 
                 const seed = selectedChild ? ((Number(selectedChild.rollNo || 1) * 3) % 4) : 1;
-                // Exclude holidays from working days
-                const baseWorkingDays = classAttConfig?.totalWorkingDays ?? Math.max(1, (selectedChild?.attendance?.totalWorkingDays ?? 92) - totalHolidaysCount);
+                // Exclude holidays and include unlocked Sundays
+                const baseWorkingDays = classAttConfig?.totalWorkingDays ?? Math.max(1, 88 - totalHolidaysCount + totalSundaysUnlocked);
                 const totalWorkingDays = Math.max(1, baseWorkingDays);
                 const attendedDays = (selectedChild && classAttConfig?.studentDaysAttended?.[selectedChild.id] !== undefined)
                   ? classAttConfig.studentDaysAttended[selectedChild.id]

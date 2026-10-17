@@ -3,16 +3,19 @@ import { useAuth } from '../../context/AuthContext';
 import { db } from '../../services/firebase';
 import { cleanForFirestore } from '../../services/firestoreSync';
 import { handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
-import { collection, doc, onSnapshot, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, deleteDoc, updateDoc, getDocs, query, where, writeBatch } from 'firebase/firestore';
 import {
   ClassItem,
   Student,
   ClassAttendanceConfig,
   DailyAttendanceRecord,
   InstitutionHoliday,
+  SpecialWorkingDay,
+  isClassMatch,
   AttendanceEditRequest,
   sortStudentsBoysFirst,
 } from '../../types';
+import { firestoreSync } from '../../services/firestoreSync';
 import { logAuditEvent } from '../../services/auditLogger';
 import {
   Calendar,
@@ -66,6 +69,15 @@ const getWeekMondayStr = (baseDateStr: string): string => {
   return formatLocalDate(d);
 };
 
+const formatDateRangeBadge = (startDate: string, endDate: string, totalDays?: number): string => {
+  const s = parseLocalDate(startDate);
+  const e = parseLocalDate(endDate);
+  const sStr = s.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const eStr = e.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const count = totalDays ?? Math.max(1, Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+  return `${sStr} – ${eStr} (${count} Day${count === 1 ? '' : 's'})`;
+};
+
 export const AdminAttendanceView: React.FC = () => {
   const { user, fetchWithAuth } = useAuth();
   const [classes, setClasses] = useState<ClassItem[]>([]);
@@ -80,13 +92,28 @@ export const AdminAttendanceView: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<string>(() => formatLocalDate(new Date()));
   const [selectedWeekDate, setSelectedWeekDate] = useState<string>(() => formatLocalDate(new Date()));
   const [institutionHolidays, setInstitutionHolidays] = useState<Record<string, InstitutionHoliday>>({});
+  const [specialWorkingDays, setSpecialWorkingDays] = useState<Record<string, SpecialWorkingDay>>({});
   
-  // Holiday Form State
+  // Holiday Form State (Single Day vs Date Range / Long Leave)
+  const [holidayMode, setHolidayMode] = useState<'single' | 'range'>('single');
   const [newHolidayDate, setNewHolidayDate] = useState<string>(() => formatLocalDate(new Date()));
+  const [rangeStartDate, setRangeStartDate] = useState<string>(() => formatLocalDate(new Date()));
+  const [rangeEndDate, setRangeEndDate] = useState<string>(() => formatLocalDate(new Date()));
   const [newHolidayReason, setNewHolidayReason] = useState<string>('');
+  const [newHolidayTargetClasses, setNewHolidayTargetClasses] = useState<string[]>(['all']);
   const [holidayModalDate, setHolidayModalDate] = useState<string | null>(null);
+  const [holidayModalMode, setHolidayModalMode] = useState<'single' | 'range'>('single');
+  const [modalRangeEndDate, setModalRangeEndDate] = useState<string>(() => formatLocalDate(new Date()));
   const [holidayReasonInput, setHolidayReasonInput] = useState<string>('');
+  const [modalTargetClasses, setModalTargetClasses] = useState<string[]>(['all']);
   const [isSavingHoliday, setIsSavingHoliday] = useState(false);
+
+  // Principal Sunday Unlock Modal & State (For KMEB Examinations)
+  const [showSundayUnlockModal, setShowSundayUnlockModal] = useState(false);
+  const [sundayUnlockDate, setSundayUnlockDate] = useState<string>('');
+  const [sundayUnlockTargetClasses, setSundayUnlockTargetClasses] = useState<string[]>(['all']);
+  const [sundayUnlockReason, setSundayUnlockReason] = useState<string>('KMEB Board Examination Session');
+  const [isSavingSunday, setIsSavingSunday] = useState(false);
 
   // Edit Requests
   const [editRequests, setEditRequests] = useState<AttendanceEditRequest[]>([]);
@@ -125,6 +152,13 @@ export const AdminAttendanceView: React.FC = () => {
     loadInitialData();
   }, []);
 
+  // Automated Data Cleanup: Purge erroneous June 24 holiday from Class 5 on mount
+  useEffect(() => {
+    firestoreSync.cleanupJune24Class5Holiday().catch(err => {
+      console.warn('cleanupJune24Class5Holiday error:', err);
+    });
+  }, []);
+
   // Listen to institutionHolidays from Firestore in real-time
   useEffect(() => {
     let unsub: (() => void) | undefined;
@@ -136,11 +170,24 @@ export const AdminAttendanceView: React.FC = () => {
           snapshot.docs.forEach(d => {
             const data = d.data();
             const date = data.date || d.id;
+            const targetClasses: string[] = Array.isArray(data.targetClasses) && data.targetClasses.length > 0 ? data.targetClasses : ['all'];
+
+            // Automated filter: if June 24 was specifically marked for Class 5, purge it immediately
+            if (date === '2026-06-24' || date === '24/06/2026') {
+              const hasClass5 = targetClasses.some(c => c === 'all' || c === 'cls_5' || c === 'class_5' || c === '5');
+              if (hasClass5 && (targetClasses.includes('cls_5') || targetClasses.includes('class_5') || targetClasses.length === 1)) {
+                deleteDoc(doc(db, 'institutionHolidays', d.id)).catch(() => {});
+                return;
+              }
+            }
+
             map[date] = {
               id: d.id,
               date,
+              targetClasses,
               reason: data.reason || 'Official Holiday / Non-Working Day',
-              markedBy: data.markedBy || 'Principal',
+              markedBy: data.markedBy || data.createdBy || 'Principal',
+              createdBy: data.createdBy || data.markedBy || 'Principal',
               academicYear: data.academicYear || '2026-2027',
               createdAt: data.createdAt,
             };
@@ -151,6 +198,40 @@ export const AdminAttendanceView: React.FC = () => {
       );
     } catch (e) {
       console.warn('Could not subscribe to institutionHolidays in AdminAttendanceView:', e);
+    }
+    return () => {
+      if (unsub) unsub();
+    };
+  }, []);
+
+  // Listen to specialWorkingDays from Firestore in real-time (Principal Sunday Unlock)
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    try {
+      unsub = onSnapshot(
+        collection(db, 'specialWorkingDays'),
+        snapshot => {
+          const map: Record<string, SpecialWorkingDay> = {};
+          snapshot.docs.forEach(d => {
+            const data = d.data();
+            const date = data.date || d.id;
+            map[date] = {
+              id: d.id,
+              date,
+              targetClasses: Array.isArray(data.targetClasses) && data.targetClasses.length > 0 ? data.targetClasses : ['all'],
+              reason: data.reason || 'KMEB Examination Session',
+              unlockedBy: data.unlockedBy || 'Principal ASLAM TK',
+              unlockedAt: data.unlockedAt || new Date().toISOString(),
+              academicYear: data.academicYear || '2026-2027',
+              createdAt: data.createdAt,
+            };
+          });
+          setSpecialWorkingDays(map);
+        },
+        err => console.warn('specialWorkingDays listener error in AdminAttendanceView:', err)
+      );
+    } catch (e) {
+      console.warn('Could not subscribe to specialWorkingDays in AdminAttendanceView:', e);
     }
     return () => {
       if (unsub) unsub();
@@ -300,19 +381,69 @@ export const AdminAttendanceView: React.FC = () => {
     setWeeklyStatusMap(map);
   }, [selectedClassId, selectedWeekDate, classAttendanceConfig, classStudents]);
 
-  const isDateHoliday = (dateStr: string): boolean => {
-    if (institutionHolidays[dateStr]) return true;
-    if (classAttendanceConfig?.dailyRecords?.[dateStr]?.isHoliday) return true;
+  const isSunday = (dateStr: string): boolean => {
+    const d = parseLocalDate(dateStr);
+    return d.getDay() === 0;
+  };
+
+  const getSpecialWorkingDay = (dateStr: string, classId: string = selectedClassId): SpecialWorkingDay | null => {
+    const swd = specialWorkingDays[dateStr];
+    if (swd && isClassMatch(swd.targetClasses, classId)) {
+      return swd;
+    }
+    return null;
+  };
+
+  const isDateHoliday = (dateStr: string, classId: string = selectedClassId): boolean => {
+    // 1. Sunday default closure: all Sundays are non-working days unless unlocked by Principal as a Working Sunday
+    if (isSunday(dateStr)) {
+      const swd = getSpecialWorkingDay(dateStr, classId);
+      if (!swd) return true; // Sunday default weekly closure
+    }
+
+    // 2. Declared institution holidays: check target classes matching
+    const hol = institutionHolidays[dateStr];
+    if (hol && isClassMatch(hol.targetClasses, classId)) {
+      return true;
+    }
+
+    // 3. Class-specific daily records
+    if (classAttendanceConfig?.dailyRecords?.[dateStr]?.isHoliday) {
+      return true;
+    }
     return false;
   };
 
-  const getHolidayInfo = (dateStr: string): InstitutionHoliday | null => {
-    if (institutionHolidays[dateStr]) return institutionHolidays[dateStr];
+  const getHolidayInfo = (
+    dateStr: string,
+    classId: string = selectedClassId
+  ): (InstitutionHoliday & { isSundayClosure?: boolean; isWorkingSunday?: boolean }) | null => {
+    if (isSunday(dateStr)) {
+      const swd = getSpecialWorkingDay(dateStr, classId);
+      if (!swd) {
+        return {
+          id: dateStr,
+          date: dateStr,
+          targetClasses: ['all'],
+          reason: 'Sunday Weekly Closure (Non-Working Day)',
+          markedBy: 'Samastha & KMEB Academic Board',
+          academicYear: '2026-2027',
+          isSundayClosure: true,
+        };
+      }
+    }
+
+    const hol = institutionHolidays[dateStr];
+    if (hol && isClassMatch(hol.targetClasses, classId)) {
+      return hol;
+    }
+
     const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
     if (rec?.isHoliday) {
       return {
         id: dateStr,
         date: dateStr,
+        targetClasses: [classId],
         reason: rec.holidayReason || 'Official Holiday / Non-Working Day',
         markedBy: rec.markedBy || 'Principal',
         academicYear: '2026-2027',
@@ -321,8 +452,13 @@ export const AdminAttendanceView: React.FC = () => {
     return null;
   };
 
-  const isDateLocked = (dateStr: string): boolean => {
-    if (isDateHoliday(dateStr)) return true;
+  const isDateLocked = (dateStr: string, classId: string = selectedClassId): boolean => {
+    // Sundays are locked unless unlocked by Principal
+    if (isSunday(dateStr)) {
+      const swd = getSpecialWorkingDay(dateStr, classId);
+      if (!swd) return true;
+    }
+    if (isDateHoliday(dateStr, classId)) return true;
     if (dateStr > todayStr) return true;
     if (unlockedDates[dateStr]) return false;
     const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
@@ -335,7 +471,11 @@ export const AdminAttendanceView: React.FC = () => {
   // -------------------------------------------------------------
   // Holiday Management (Exclusively for Admin / Principal)
   // -------------------------------------------------------------
-  const handleDeclareHoliday = async (dateStr: string, reasonInput: string) => {
+  const handleDeclareHoliday = async (
+    dateStr: string,
+    reasonInput: string,
+    targets: string[] = newHolidayTargetClasses
+  ) => {
     if (!dateStr) return;
     if (dateStr < ACADEMIC_YEAR_START_DATE) {
       alert(`Dates prior to June 1 of the academic year (${ACADEMIC_YEAR_START_DATE}) cannot be modified.`);
@@ -344,11 +484,14 @@ export const AdminAttendanceView: React.FC = () => {
     setIsSavingHoliday(true);
     try {
       const reason = reasonInput.trim() || 'Official Holiday / Non-Working Day';
+      const targetClasses = targets.length > 0 ? targets : ['all'];
       const holidayData: InstitutionHoliday = {
         id: dateStr,
         date: dateStr,
+        targetClasses,
         reason,
         markedBy: user?.name || 'Principal ASLAM TK',
+        createdBy: 'Principal',
         markedAt: new Date().toISOString(),
         academicYear: '2026-2027',
         createdAt: new Date().toISOString(),
@@ -357,43 +500,60 @@ export const AdminAttendanceView: React.FC = () => {
       // 1. Direct write to Firestore 'institutionHolidays'
       await setDoc(doc(db, 'institutionHolidays', dateStr), cleanForFirestore(holidayData), { merge: true });
 
-      // 2. Update local state
+      // 2. Immediately update local React state
       setInstitutionHolidays(prev => ({
         ...prev,
         [dateStr]: holidayData,
       }));
 
-      // 3. Update classAttendanceConfig.dailyRecords with isHoliday if selected
-      if (selectedClassId) {
-        const updatedDailyRecords = {
-          ...(classAttendanceConfig?.dailyRecords || {}),
-          [dateStr]: {
-            date: dateStr,
-            presentStudentIds: [],
-            absentStudentIds: [],
-            statusMap: {},
-            isHoliday: true,
-            holidayReason: reason,
-            markedAt: new Date().toISOString(),
-            markedBy: user?.name || 'Principal ASLAM TK',
-          },
-        };
+      // 3. Update attendance configs in Firestore across matching classes
+      const affectedClasses = classes.filter(c => isClassMatch(targetClasses, c.id));
+      for (const cls of affectedClasses) {
+        try {
+          const docRef = doc(db, 'attendance', cls.id);
+          const snap = await getDocs(query(collection(db, 'attendance')));
+          const matched = snap.docs.find(d => d.id === cls.id);
+          const currentConfig: ClassAttendanceConfig = matched
+            ? (matched.data() as ClassAttendanceConfig)
+            : { classId: cls.id, totalWorkingDays: 88, studentDaysAttended: {}, dailyRecords: {} };
 
-        const totalHolidays = Object.keys(updatedDailyRecords).filter(
-          k => updatedDailyRecords[k]?.isHoliday || institutionHolidays[k] || k === dateStr
-        ).length;
-        const totalWorking = Math.max(1, (classAttendanceConfig?.totalWorkingDays || 88) - totalHolidays);
+          const updatedDailyRecords = {
+            ...(currentConfig.dailyRecords || {}),
+            [dateStr]: {
+              date: dateStr,
+              presentStudentIds: [],
+              absentStudentIds: [],
+              statusMap: {},
+              isHoliday: true,
+              holidayReason: reason,
+              markedAt: new Date().toISOString(),
+              markedBy: user?.name || 'Principal ASLAM TK',
+            },
+          };
 
-        const updatedConfig: ClassAttendanceConfig = {
-          classId: selectedClassId,
-          totalWorkingDays: totalWorking,
-          studentDaysAttended: classAttendanceConfig?.studentDaysAttended || {},
-          dailyRecords: updatedDailyRecords,
-          updatedAt: new Date().toISOString(),
-        };
+          const totalHolidays = Object.keys(updatedDailyRecords).filter(
+            k => updatedDailyRecords[k]?.isHoliday || (institutionHolidays[k] && isClassMatch(institutionHolidays[k].targetClasses, cls.id)) || k === dateStr
+          ).length;
+          const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
+            sw => isClassMatch(sw.targetClasses, cls.id)
+          ).length;
+          const totalWorking = Math.max(1, 88 - totalHolidays + totalSundaysUnlocked);
 
-        await setDoc(doc(db, 'attendance', selectedClassId), cleanForFirestore(updatedConfig), { merge: true });
-        setClassAttendanceConfig(updatedConfig);
+          const updatedConfig: ClassAttendanceConfig = {
+            ...currentConfig,
+            classId: cls.id,
+            totalWorkingDays: totalWorking,
+            dailyRecords: updatedDailyRecords,
+            updatedAt: new Date().toISOString(),
+          };
+
+          await setDoc(docRef, cleanForFirestore(updatedConfig), { merge: true });
+          if (cls.id === selectedClassId) {
+            setClassAttendanceConfig(updatedConfig);
+          }
+        } catch (e) {
+          console.warn('Error updating class attendance for holiday:', cls.id, e);
+        }
       }
 
       // 4. Update local API
@@ -406,7 +566,7 @@ export const AdminAttendanceView: React.FC = () => {
       // 5. Immutable Audit Log
       logAuditEvent({
         action: 'HOLIDAY_MARKED',
-        details: `Principal ${user?.name || 'ASLAM TK'} designated ${dateStr} as Official Holiday ("${reason}"). Excluded from working days across the institution.`,
+        details: `Principal ${user?.name || 'ASLAM TK'} designated ${dateStr} as Official Holiday ("${reason}") for ${targetClasses.includes('all') ? 'All Classes' : targetClasses.join(', ')}.`,
         currentUser: user,
         recordType: 'institution_holiday',
         recordId: dateStr,
@@ -414,7 +574,8 @@ export const AdminAttendanceView: React.FC = () => {
 
       setHolidayModalDate(null);
       setNewHolidayReason('');
-      alert(`Date ${dateStr} successfully designated as Holiday ("${reason}"). Working days and attendance percentages are automatically safeguarded across the institution.`);
+      setNewHolidayTargetClasses(['all']);
+      alert(`Date ${dateStr} designated as Holiday ("${reason}") for ${targetClasses.includes('all') ? 'All Classes' : 'selected classes'}. Attendance percentages and working days adjusted.`);
     } catch (err: any) {
       alert('Failed to mark holiday: ' + (err.message || 'Unknown error'));
     } finally {
@@ -422,42 +583,75 @@ export const AdminAttendanceView: React.FC = () => {
     }
   };
 
-  const handleRemoveHoliday = async (dateStr: string) => {
+  const handleRemoveHoliday = async (holidayIdOrDate: string, explicitDate?: string) => {
+    const dateStr = explicitDate || holidayIdOrDate;
     const confirm = window.confirm(
-      `Restore date ${dateStr} as a regular working day? This will remove the holiday exemption across the entire institution.`
+      `Restore date ${dateStr} as a regular working day? This will remove the holiday exemption and restore active attendance marking.`
     );
     if (!confirm) return;
 
     try {
-      await deleteDoc(doc(db, 'institutionHolidays', dateStr));
+      // 1. Direct delete from Firestore institutionHolidays collection
+      await deleteDoc(doc(db, 'institutionHolidays', holidayIdOrDate)).catch(() => {});
+      if (holidayIdOrDate !== dateStr) {
+        await deleteDoc(doc(db, 'institutionHolidays', dateStr)).catch(() => {});
+      }
+      try {
+        const qSnap = await getDocs(query(collection(db, 'institutionHolidays'), where('date', '==', dateStr)));
+        for (const d of qSnap.docs) {
+          await deleteDoc(doc(db, 'institutionHolidays', d.id));
+        }
+      } catch {}
+
+      // 2. Update local React state immediately so holiday badge is removed without reload
       setInstitutionHolidays(prev => {
         const copy = { ...prev };
         delete copy[dateStr];
+        delete copy[holidayIdOrDate];
         return copy;
       });
 
-      if (selectedClassId && classAttendanceConfig?.dailyRecords?.[dateStr]?.isHoliday) {
-        const updatedDailyRecords = { ...(classAttendanceConfig.dailyRecords || {}) };
-        delete updatedDailyRecords[dateStr];
+      // 3. Update attendance daily records across all classes that recorded this holiday
+      for (const cls of classes) {
+        try {
+          const docRef = doc(db, 'attendance', cls.id);
+          const snap = await getDocs(query(collection(db, 'attendance')));
+          const matched = snap.docs.find(d => d.id === cls.id);
+          if (matched) {
+            const currentConfig = matched.data() as ClassAttendanceConfig;
+            if (currentConfig.dailyRecords && currentConfig.dailyRecords[dateStr]?.isHoliday) {
+              const updatedDaily = { ...currentConfig.dailyRecords };
+              delete updatedDaily[dateStr];
+              const remainingHolidays = Object.keys(updatedDaily).filter(
+                k => (updatedDaily[k]?.isHoliday || institutionHolidays[k]) && k !== dateStr
+              ).length;
+              const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
+                sw => isClassMatch(sw.targetClasses, cls.id)
+              ).length;
+              const totalWorking = Math.max(1, 88 - remainingHolidays + totalSundaysUnlocked);
 
-        const totalHolidays = Object.keys(updatedDailyRecords).filter(
-          k => (updatedDailyRecords[k]?.isHoliday || institutionHolidays[k]) && k !== dateStr
-        ).length;
-        const totalWorking = Math.max(1, 88 - totalHolidays);
+              const updatedConfig: ClassAttendanceConfig = {
+                ...currentConfig,
+                totalWorkingDays: totalWorking,
+                dailyRecords: updatedDaily,
+                updatedAt: new Date().toISOString(),
+              };
 
-        const updatedConfig: ClassAttendanceConfig = {
-          ...classAttendanceConfig,
-          totalWorkingDays: totalWorking,
-          dailyRecords: updatedDailyRecords,
-          updatedAt: new Date().toISOString(),
-        };
-
-        await setDoc(doc(db, 'attendance', selectedClassId), cleanForFirestore(updatedConfig), { merge: true });
-        setClassAttendanceConfig(updatedConfig);
+              await setDoc(docRef, cleanForFirestore(updatedConfig), { merge: true });
+              if (cls.id === selectedClassId) {
+                setClassAttendanceConfig(updatedConfig);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Error updating class config on holiday removal:', cls.id, e);
+        }
       }
 
+      // 4. Sync deletion with local API
       await fetchWithAuth(`/api/institution-holidays?date=${dateStr}`, { method: 'DELETE' });
 
+      // 5. Immutable Audit Log
       logAuditEvent({
         action: 'HOLIDAY_REMOVED',
         details: `Principal ${user?.name || 'ASLAM TK'} restored date ${dateStr} as a regular working day.`,
@@ -466,9 +660,452 @@ export const AdminAttendanceView: React.FC = () => {
         recordId: dateStr,
       }).catch(e => console.warn('Audit log error:', e));
 
-      alert(`Holiday designation removed for ${dateStr}. Restored to normal working day.`);
+      alert(`Holiday designation removed for ${dateStr}. Restored to regular working day.`);
     } catch (err: any) {
       alert('Failed to remove holiday: ' + (err.message || 'Unknown error'));
+    }
+  };
+
+  const calcRangeSummary = useMemo(() => {
+    if (!rangeStartDate || !rangeEndDate || rangeStartDate > rangeEndDate) {
+      return { totalCalendarDays: 0, workingDaysToExclude: 0, sundaysSkipped: 0, label: '' };
+    }
+    const cur = parseLocalDate(rangeStartDate);
+    const end = parseLocalDate(rangeEndDate);
+    let totalCalendar = 0;
+    let working = 0;
+    let sundays = 0;
+
+    while (cur <= end) {
+      totalCalendar++;
+      if (cur.getDay() === 0) {
+        sundays++;
+      } else {
+        working++;
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    const startFmt = parseLocalDate(rangeStartDate).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+    const endFmt = parseLocalDate(rangeEndDate).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+    return {
+      totalCalendarDays: totalCalendar,
+      workingDaysToExclude: working,
+      sundaysSkipped: sundays,
+      label: `${startFmt} – ${endFmt}`,
+    };
+  }, [rangeStartDate, rangeEndDate]);
+
+  const handleDeclareHolidayRange = async (
+    startDate: string,
+    endDate: string,
+    reasonInput: string,
+    targets: string[] = newHolidayTargetClasses
+  ) => {
+    if (!startDate || !endDate) {
+      alert('Please select both Starting Date and Ending Date.');
+      return;
+    }
+    if (startDate > endDate) {
+      alert('Starting Date cannot be after Ending Date.');
+      return;
+    }
+
+    setIsSavingHoliday(true);
+    try {
+      const reason = reasonInput.trim() || 'Official Holiday / Long Leave';
+      const targetClasses = targets.length > 0 ? targets : ['all'];
+      const rangeGroupId = `range_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+      // Generate all dates between startDate and endDate
+      const allDates: string[] = [];
+      const nonSundayDates: string[] = [];
+      const cur = parseLocalDate(startDate);
+      const end = parseLocalDate(endDate);
+
+      while (cur <= end) {
+        const dStr = formatLocalDate(cur);
+        allDates.push(dStr);
+        // Exclude standard Sundays so they are not double-counted (since Sundays are already weekly closures)
+        if (cur.getDay() !== 0) {
+          nonSundayDates.push(dStr);
+        }
+        cur.setDate(cur.getDate() + 1);
+      }
+
+      if (nonSundayDates.length === 0) {
+        alert('All dates in the selected range fall on Sundays, which are already weekly closures by default.');
+        setIsSavingHoliday(false);
+        return;
+      }
+
+      const totalCalendarDays = allDates.length;
+      const totalHolidayWorkingDays = nonSundayDates.length;
+
+      // 1. Batch write to Firestore institutionHolidays
+      const batch = writeBatch(db);
+      const newEntries: Record<string, InstitutionHoliday> = {};
+
+      for (const dStr of nonSundayDates) {
+        const item: InstitutionHoliday = {
+          id: dStr,
+          date: dStr,
+          targetClasses,
+          reason,
+          markedBy: user?.name || 'Principal ASLAM TK',
+          createdBy: 'Principal',
+          markedAt: new Date().toISOString(),
+          academicYear: '2026-2027',
+          createdAt: new Date().toISOString(),
+          rangeStart: startDate,
+          rangeEnd: endDate,
+          rangeGroupId,
+          totalRangeDays: totalCalendarDays,
+        };
+        batch.set(doc(db, 'institutionHolidays', dStr), cleanForFirestore(item), { merge: true });
+        newEntries[dStr] = item;
+      }
+
+      await batch.commit();
+
+      // 2. Immediately update local React state
+      setInstitutionHolidays(prev => ({
+        ...prev,
+        ...newEntries,
+      }));
+
+      // 3. Update attendance configs in Firestore across matching classes
+      const affectedClasses = classes.filter(c => isClassMatch(targetClasses, c.id));
+      for (const cls of affectedClasses) {
+        try {
+          const docRef = doc(db, 'attendance', cls.id);
+          const snap = await getDocs(query(collection(db, 'attendance')));
+          const matched = snap.docs.find(d => d.id === cls.id);
+          const currentConfig: ClassAttendanceConfig = matched
+            ? (matched.data() as ClassAttendanceConfig)
+            : { classId: cls.id, totalWorkingDays: 88, studentDaysAttended: {}, dailyRecords: {} };
+
+          const updatedDailyRecords = { ...(currentConfig.dailyRecords || {}) };
+          nonSundayDates.forEach(dStr => {
+            updatedDailyRecords[dStr] = {
+              date: dStr,
+              presentStudentIds: [],
+              absentStudentIds: [],
+              statusMap: {},
+              isHoliday: true,
+              holidayReason: reason,
+              markedAt: new Date().toISOString(),
+              markedBy: user?.name || 'Principal ASLAM TK',
+            };
+          });
+
+          const totalHolidays = Object.keys(updatedDailyRecords).filter(
+            k => updatedDailyRecords[k]?.isHoliday || (institutionHolidays[k] && isClassMatch(institutionHolidays[k].targetClasses, cls.id)) || nonSundayDates.includes(k)
+          ).length;
+          const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
+            sw => isClassMatch(sw.targetClasses, cls.id)
+          ).length;
+          const totalWorking = Math.max(1, 88 - totalHolidays + totalSundaysUnlocked);
+
+          const updatedConfig: ClassAttendanceConfig = {
+            ...currentConfig,
+            classId: cls.id,
+            totalWorkingDays: totalWorking,
+            dailyRecords: updatedDailyRecords,
+            updatedAt: new Date().toISOString(),
+          };
+
+          await setDoc(docRef, cleanForFirestore(updatedConfig), { merge: true });
+          if (cls.id === selectedClassId) {
+            setClassAttendanceConfig(updatedConfig);
+          }
+        } catch (e) {
+          console.warn('Error updating class attendance for holiday range:', cls.id, e);
+        }
+      }
+
+      // 4. Sync each with local storage API
+      for (const dStr of nonSundayDates) {
+        await fetchWithAuth('/api/institution-holidays', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newEntries[dStr]),
+        }).catch(() => {});
+      }
+
+      // 5. Immutable Audit Log
+      logAuditEvent({
+        action: 'HOLIDAY_RANGE_DECLARED',
+        details: `Principal designated Date Range Leave "${reason}" from ${startDate} to ${endDate} (${totalCalendarDays} calendar days, ${totalHolidayWorkingDays} non-Sunday days excluded) for ${targetClasses.includes('all') ? 'All Classes' : targetClasses.join(', ')}.`,
+        currentUser: user,
+        recordType: 'institution_holiday_range',
+        recordId: rangeGroupId,
+      }).catch(e => console.warn('Audit log error:', e));
+
+      setRangeStartDate(formatLocalDate(new Date()));
+      setRangeEndDate(formatLocalDate(new Date()));
+      setNewHolidayReason('');
+      alert(`Long leave "${reason}" successfully declared from ${startDate} to ${endDate} (${totalHolidayWorkingDays} active working days excluded, Sundays preserved). Total working days and percentages updated.`);
+    } catch (err: any) {
+      alert('Failed to declare holiday range: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsSavingHoliday(false);
+    }
+  };
+
+  const handleRemoveHolidayRange = async (dates: string[], startDate: string, endDate: string) => {
+    const confirm = window.confirm(
+      `Restore regular working days from ${startDate} to ${endDate} (${dates.length} holiday dates)? This will remove holiday exemptions and restore active attendance marking.`
+    );
+    if (!confirm) return;
+
+    try {
+      // 1. Direct delete from Firestore institutionHolidays
+      for (const dStr of dates) {
+        await deleteDoc(doc(db, 'institutionHolidays', dStr)).catch(() => {});
+        try {
+          const qSnap = await getDocs(query(collection(db, 'institutionHolidays'), where('date', '==', dStr)));
+          qSnap.forEach(d => deleteDoc(doc(db, 'institutionHolidays', d.id)).catch(() => {}));
+        } catch {}
+      }
+
+      // 2. Update local state
+      setInstitutionHolidays(prev => {
+        const copy = { ...prev };
+        dates.forEach(dStr => delete copy[dStr]);
+        return copy;
+      });
+
+      // 3. Update attendance configs in Firestore across classes
+      for (const cls of classes) {
+        try {
+          const docRef = doc(db, 'attendance', cls.id);
+          const snap = await getDocs(query(collection(db, 'attendance')));
+          const matched = snap.docs.find(d => d.id === cls.id);
+          if (matched) {
+            const currentConfig = matched.data() as ClassAttendanceConfig;
+            const updatedDaily = { ...(currentConfig.dailyRecords || {}) };
+            dates.forEach(dStr => {
+              if (updatedDaily[dStr]?.isHoliday) {
+                delete updatedDaily[dStr];
+              }
+            });
+
+            const remainingHolidays = Object.keys(updatedDaily).filter(
+              k => (updatedDaily[k]?.isHoliday || institutionHolidays[k]) && !dates.includes(k)
+            ).length;
+            const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
+              sw => isClassMatch(sw.targetClasses, cls.id)
+            ).length;
+            const totalWorking = Math.max(1, 88 - remainingHolidays + totalSundaysUnlocked);
+
+            const updatedConfig = {
+              ...currentConfig,
+              totalWorkingDays: totalWorking,
+              dailyRecords: updatedDaily,
+              updatedAt: new Date().toISOString(),
+            };
+
+            await setDoc(docRef, cleanForFirestore(updatedConfig), { merge: true });
+            if (cls.id === selectedClassId) {
+              setClassAttendanceConfig(updatedConfig);
+            }
+          }
+        } catch (e) {
+          console.warn('Error updating class config on holiday range removal:', cls.id, e);
+        }
+      }
+
+      // 4. Local API sync
+      for (const dStr of dates) {
+        await fetchWithAuth(`/api/institution-holidays?date=${dStr}`, { method: 'DELETE' }).catch(() => {});
+      }
+
+      // 5. Immutable Audit Log
+      logAuditEvent({
+        action: 'HOLIDAY_RANGE_REMOVED',
+        details: `Principal ${user?.name || 'ASLAM TK'} restored regular working days from ${startDate} to ${endDate} (${dates.length} days).`,
+        currentUser: user,
+        recordType: 'institution_holiday_range',
+        recordId: `${startDate}_${endDate}`,
+      }).catch(e => console.warn('Audit log error:', e));
+
+      alert(`Holiday range ${startDate} – ${endDate} removed. Restored to regular working days.`);
+    } catch (err: any) {
+      alert('Failed to remove holiday range: ' + (err.message || 'Unknown error'));
+    }
+  };
+
+  // -------------------------------------------------------------
+  // Principal-Exclusive Sunday Working Day Unlock (e.g. KMEB Exams)
+  // -------------------------------------------------------------
+  const handleUnlockSunday = async (sundayDateStr: string, targets: string[], reasonInput: string) => {
+    if (!sundayDateStr) return;
+    if (!isSunday(sundayDateStr)) {
+      alert('The selected date is not a Sunday. Principal Unlock is exclusively for Sunday Working Days (e.g., KMEB Examinations).');
+      return;
+    }
+    setIsSavingSunday(true);
+    try {
+      const reason = reasonInput.trim() || 'KMEB Board Examination Session';
+      const targetClasses = targets.length > 0 ? targets : ['all'];
+      const swdData: SpecialWorkingDay = {
+        id: sundayDateStr,
+        date: sundayDateStr,
+        targetClasses,
+        reason,
+        unlockedBy: user?.name || 'Principal ASLAM TK',
+        unlockedAt: new Date().toISOString(),
+        academicYear: '2026-2027',
+        createdAt: new Date().toISOString(),
+      };
+
+      // 1. Direct write to Firestore 'specialWorkingDays'
+      await setDoc(doc(db, 'specialWorkingDays', sundayDateStr), cleanForFirestore(swdData), { merge: true });
+
+      // 2. Update local state
+      setSpecialWorkingDays(prev => ({
+        ...prev,
+        [sundayDateStr]: swdData,
+      }));
+
+      // 3. Update attendance configs in Firestore: add to working days count for affected classes
+      const affectedClasses = classes.filter(c => isClassMatch(targetClasses, c.id));
+      for (const cls of affectedClasses) {
+        try {
+          const docRef = doc(db, 'attendance', cls.id);
+          const snap = await getDocs(query(collection(db, 'attendance')));
+          const matched = snap.docs.find(d => d.id === cls.id);
+          const currentConfig: ClassAttendanceConfig = matched
+            ? (matched.data() as ClassAttendanceConfig)
+            : { classId: cls.id, totalWorkingDays: 88, studentDaysAttended: {}, dailyRecords: {} };
+
+          const updatedDaily = { ...(currentConfig.dailyRecords || {}) };
+          if (updatedDaily[sundayDateStr]) {
+            updatedDaily[sundayDateStr] = {
+              ...updatedDaily[sundayDateStr],
+              isHoliday: false,
+              unlocked: true,
+              editable: true,
+            };
+          }
+
+          const totalHolidays = Object.keys(updatedDaily).filter(
+            k => updatedDaily[k]?.isHoliday || (institutionHolidays[k] && isClassMatch(institutionHolidays[k].targetClasses, cls.id))
+          ).length;
+          const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
+            sw => isClassMatch(sw.targetClasses, cls.id)
+          ).length + 1;
+          const totalWorking = Math.max(1, 88 - totalHolidays + totalSundaysUnlocked);
+
+          const updatedConfig: ClassAttendanceConfig = {
+            ...currentConfig,
+            classId: cls.id,
+            totalWorkingDays: totalWorking,
+            dailyRecords: updatedDaily,
+            updatedAt: new Date().toISOString(),
+          };
+
+          await setDoc(docRef, cleanForFirestore(updatedConfig), { merge: true });
+          if (cls.id === selectedClassId) {
+            setClassAttendanceConfig(updatedConfig);
+          }
+        } catch (e) {
+          console.warn('Error updating class config on sunday unlock:', cls.id, e);
+        }
+      }
+
+      // 4. Local API
+      await fetchWithAuth('/api/special-working-days', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(swdData),
+      });
+
+      // 5. Immutable Audit Log
+      logAuditEvent({
+        action: 'SUNDAY_UNLOCKED_WORKING_DAY',
+        details: `Principal ${user?.name || 'ASLAM TK'} unlocked Sunday ${sundayDateStr} as official working day ("${reason}") for ${targetClasses.includes('all') ? 'All Classes' : targetClasses.join(', ')}.`,
+        currentUser: user,
+        recordType: 'special_working_day',
+        recordId: sundayDateStr,
+      }).catch(e => console.warn('Audit log error:', e));
+
+      setShowSundayUnlockModal(false);
+      setSundayUnlockDate('');
+      alert(`Sunday ${sundayDateStr} successfully unlocked as Working Day ("${reason}") for ${targetClasses.includes('all') ? 'All Classes' : 'selected classes'}. Teachers can now mark attendance and working days have been incremented.`);
+    } catch (err: any) {
+      alert('Failed to unlock Sunday: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsSavingSunday(false);
+    }
+  };
+
+  const handleRevokeSunday = async (sundayDateStr: string) => {
+    const confirm = window.confirm(
+      `Re-lock Sunday ${sundayDateStr} back to Default Weekly Closure? This will remove attendance marking permission for this Sunday.`
+    );
+    if (!confirm) return;
+
+    try {
+      await deleteDoc(doc(db, 'specialWorkingDays', sundayDateStr));
+      try {
+        const snap = await getDocs(query(collection(db, 'specialWorkingDays'), where('date', '==', sundayDateStr)));
+        snap.forEach(d => deleteDoc(doc(db, 'specialWorkingDays', d.id)).catch(() => {}));
+      } catch {}
+
+      setSpecialWorkingDays(prev => {
+        const copy = { ...prev };
+        delete copy[sundayDateStr];
+        return copy;
+      });
+
+      for (const cls of classes) {
+        try {
+          const docRef = doc(db, 'attendance', cls.id);
+          const snap = await getDocs(query(collection(db, 'attendance')));
+          const matched = snap.docs.find(d => d.id === cls.id);
+          if (matched) {
+            const currentConfig = matched.data() as ClassAttendanceConfig;
+            const updatedDaily = { ...(currentConfig.dailyRecords || {}) };
+            delete updatedDaily[sundayDateStr];
+            const totalHolidays = Object.keys(updatedDaily).filter(
+              k => updatedDaily[k]?.isHoliday || (institutionHolidays[k] && isClassMatch(institutionHolidays[k].targetClasses, cls.id))
+            ).length;
+            const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
+              sw => sw.date !== sundayDateStr && isClassMatch(sw.targetClasses, cls.id)
+            ).length;
+            const totalWorking = Math.max(1, 88 - totalHolidays + totalSundaysUnlocked);
+
+            const updatedConfig = {
+              ...currentConfig,
+              totalWorkingDays: totalWorking,
+              dailyRecords: updatedDaily,
+              updatedAt: new Date().toISOString(),
+            };
+            await setDoc(docRef, cleanForFirestore(updatedConfig), { merge: true });
+            if (cls.id === selectedClassId) {
+              setClassAttendanceConfig(updatedConfig);
+            }
+          }
+        } catch (e) {
+          console.warn('Error revoking sunday working day:', cls.id, e);
+        }
+      }
+
+      await fetchWithAuth(`/api/special-working-days?date=${sundayDateStr}`, { method: 'DELETE' });
+
+      logAuditEvent({
+        action: 'SUNDAY_RESTORED_CLOSURE',
+        details: `Principal ${user?.name || 'ASLAM TK'} revoked working day override for Sunday ${sundayDateStr}. Restored to weekly non-working day.`,
+        currentUser: user,
+        recordType: 'special_working_day',
+        recordId: sundayDateStr,
+      }).catch(e => console.warn('Audit log error:', e));
+
+      alert(`Sunday ${sundayDateStr} reverted to Default Weekly Closure.`);
+    } catch (err: any) {
+      alert('Failed to revoke Sunday: ' + (err.message || 'Unknown error'));
     }
   };
 
@@ -874,30 +1511,68 @@ export const AdminAttendanceView: React.FC = () => {
     ? Math.round(studentLedger.reduce((acc, s) => acc + s.percentage, 0) / studentLedger.length)
     : 100;
 
-  // Monthly Academic Calendar Breakdown
+  // Dynamic Monthly Academic Calendar Calculation
   const academicMonths = useMemo(() => {
-    return [
-      { key: '2026-06', monthEn: 'June 2026', monthMl: 'ജൂൺ 2026', nominalWorkingDays: 20 },
-      { key: '2026-07', monthEn: 'July 2026', monthMl: 'ജൂലൈ 2026', nominalWorkingDays: 22 },
-      { key: '2026-08', monthEn: 'August 2026', monthMl: 'ഓഗസ്റ്റ് 2026', nominalWorkingDays: 20 },
-      { key: '2026-09', monthEn: 'September 2026', monthMl: 'സെപ്റ്റംബർ 2026', nominalWorkingDays: 21 },
-      { key: '2026-10', monthEn: 'October 2026', monthMl: 'ഒക്ടോബർ 2026', nominalWorkingDays: 19 },
-    ].map(m => {
-      // Find holidays falling into this month
-      const monthHolidays = Object.keys(institutionHolidays).filter(hDate => hDate.startsWith(m.key)).length;
-      const actualWorking = Math.max(0, m.nominalWorkingDays - monthHolidays);
-      
-      // Marked days in this month
-      const monthMarked = markedDailyRecords.filter(r => r.date.startsWith(m.key)).length;
+    const rawMonths = [
+      { key: '2026-06', year: 2026, monthIdx: 5, monthEn: 'June 2026', monthMl: 'ജൂൺ 2026' },
+      { key: '2026-07', year: 2026, monthIdx: 6, monthEn: 'July 2026', monthMl: 'ജൂലൈ 2026' },
+      { key: '2026-08', year: 2026, monthIdx: 7, monthEn: 'August 2026', monthMl: 'ഓഗസ്റ്റ് 2026' },
+      { key: '2026-09', year: 2026, monthIdx: 8, monthEn: 'September 2026', monthMl: 'സെപ്റ്റംബർ 2026' },
+      { key: '2026-10', year: 2026, monthIdx: 9, monthEn: 'October 2026', monthMl: 'ഒക്ടോബർ 2026' },
+      { key: '2026-11', year: 2026, monthIdx: 10, monthEn: 'November 2026', monthMl: 'നവംബർ 2026' },
+      { key: '2026-12', year: 2026, monthIdx: 11, monthEn: 'December 2026', monthMl: 'ഡിസംബർ 2026' },
+      { key: '2027-01', year: 2027, monthIdx: 0, monthEn: 'January 2027', monthMl: 'ജനുവരി 2027' },
+      { key: '2027-02', year: 2027, monthIdx: 1, monthEn: 'February 2027', monthMl: 'ഫെബ്രുവരി 2027' },
+      { key: '2027-03', year: 2027, monthIdx: 2, monthEn: 'March 2027', monthMl: 'മാർച്ച് 2027' },
+    ];
+
+    return rawMonths.map(m => {
+      // 1. Calendar Days: dynamically get true days in calendar month
+      const calendarDays = new Date(m.year, m.monthIdx + 1, 0).getDate();
+
+      // 2. Sundays (Weekly Off): dynamically count exact Sundays in this specific month
+      let sundaysCount = 0;
+      for (let day = 1; day <= calendarDays; day++) {
+        const d = new Date(m.year, m.monthIdx, day);
+        if (d.getDay() === 0) {
+          sundaysCount++;
+        }
+      }
+
+      // 3. Declared Holidays: official special/institution holidays declared in that month for the selected class (excluding Sundays to avoid double deduction)
+      const declaredHolidaysInMonth = Object.values(institutionHolidays).filter(h => {
+        if (!h.date || !h.date.startsWith(m.key)) return false;
+        if (!isClassMatch(h.targetClasses, selectedClassId)) return false;
+        const d = parseLocalDate(h.date);
+        if (d.getDay() === 0) return false; // Exclude Sundays
+        return true;
+      });
+      const declaredHolidaysCount = declaredHolidaysInMonth.length;
+
+      // 4. Any Principal Unlocked Working Sundays in this month for selected class
+      const unlockedSundaysInMonth = Object.values(specialWorkingDays).filter(sw => {
+        if (!sw.date || !sw.date.startsWith(m.key)) return false;
+        return isClassMatch(sw.targetClasses, selectedClassId);
+      });
+      const unlockedSundaysCount = unlockedSundaysInMonth.length;
+
+      // 5. Net Working Days: Calendar Days - Sundays - Declared Holidays + (Any Principal Unlocked Working Sundays)
+      const netWorkingDays = Math.max(0, calendarDays - sundaysCount - declaredHolidaysCount + unlockedSundaysCount);
+
+      // 6. Class Sessions Marked in this month
+      const markedDays = markedDailyRecords.filter(r => r.date.startsWith(m.key) && !r.isHoliday).length;
 
       return {
         ...m,
-        holidaysExcluded: monthHolidays,
-        actualWorkingDays: actualWorking,
-        markedDays: monthMarked,
+        calendarDays,
+        sundaysCount,
+        declaredHolidaysCount,
+        unlockedSundaysCount,
+        netWorkingDays,
+        markedDays,
       };
     });
-  }, [institutionHolidays, markedDailyRecords]);
+  }, [institutionHolidays, specialWorkingDays, markedDailyRecords, selectedClassId]);
 
   // Daily status computation for selectedDate
   const isDailyHoliday = isDateHoliday(selectedDate);
@@ -1148,54 +1823,108 @@ export const AdminAttendanceView: React.FC = () => {
             </div>
 
             <div className="overflow-x-auto w-full scrollbar-thin" onWheel={handleHorizontalWheel}>
-              <table className="w-full text-left text-xs min-w-[620px] border-collapse">
+              <table className="w-full text-left text-xs min-w-[760px] border-collapse">
                 <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
                   <tr>
                     <th className="py-3 px-4">Academic Month</th>
                     <th className="py-3 px-3 text-center">Calendar Days</th>
+                    <th className="py-3 px-3 text-center text-slate-600">Sundays (Weekly Off)</th>
                     <th className="py-3 px-3 text-center text-amber-800">Declared Holidays</th>
-                    <th className="py-3 px-3 text-center text-emerald-900">Net Working Days</th>
+                    <th className="py-3 px-3 text-center text-emerald-900 font-bold">Net Working Days</th>
                     <th className="py-3 px-3 text-center">Class Sessions Marked</th>
                     <th className="py-3 px-4 text-center">Compliance Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {academicMonths.map(m => (
-                    <tr key={m.key} className="hover:bg-slate-50/70 transition">
-                      <td className="py-3 px-4 font-bold text-slate-900">
-                        <span>{m.monthEn}</span>
-                        <span className="text-[11px] text-slate-400 block font-normal">{m.monthMl}</span>
-                      </td>
-                      <td className="py-3 px-3 text-center font-mono text-slate-600">
-                        {m.nominalWorkingDays}
-                      </td>
-                      <td className="py-3 px-3 text-center font-mono font-bold text-amber-700">
-                        {m.holidaysExcluded > 0 ? (
-                          <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-950 border border-amber-300">
-                            - {m.holidaysExcluded} days
+                  {academicMonths.map(m => {
+                    const isPassed = m.markedDays >= m.netWorkingDays && m.netWorkingDays > 0;
+                    const isActive = m.markedDays > 0 && !isPassed;
+
+                    return (
+                      <tr key={m.key} className="hover:bg-slate-50/70 transition">
+                        <td className="py-3 px-4 font-bold text-slate-900">
+                          <span>{m.monthEn}</span>
+                          <span className="text-[11px] text-slate-400 block font-normal">{m.monthMl}</span>
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono font-bold text-slate-700">
+                          {m.calendarDays} days
+                        </td>
+                        <td className="py-3 px-3 text-center">
+                          <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 font-mono font-bold text-[11px]">
+                            {m.sundaysCount} Sundays
                           </span>
-                        ) : (
-                          <span className="text-slate-400">0</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 text-center font-mono font-bold text-emerald-800">
-                        {m.actualWorkingDays} days
-                      </td>
-                      <td className="py-3 px-3 text-center font-mono text-slate-700">
-                        {m.markedDays}
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        {m.markedDays > 0 ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                            <Check className="w-3 h-3 text-emerald-700" /> Recorded &amp; Synced
-                          </span>
-                        ) : (
-                          <span className="text-[11px] text-slate-400">Upcoming</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono font-bold text-amber-700">
+                          {m.declaredHolidaysCount > 0 ? (
+                            <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-950 border border-amber-300">
+                              - {m.declaredHolidaysCount} days
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 font-normal">0</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 text-center">
+                          <div className="inline-flex flex-col items-center">
+                            <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-950 border border-emerald-300 font-mono font-black text-xs shadow-2xs">
+                              {m.netWorkingDays} days
+                            </span>
+                            {m.unlockedSundaysCount > 0 && (
+                              <span className="text-[10px] text-indigo-700 font-bold mt-0.5">
+                                (+{m.unlockedSundaysCount} Sun Unlocked)
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono">
+                          <span className="font-bold text-slate-900">{m.markedDays}</span>
+                          <span className="text-[10px] text-slate-400 block">/ {m.netWorkingDays} days</span>
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          {isPassed ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200 shadow-2xs">
+                              <Check className="w-3.5 h-3.5 text-emerald-700 stroke-[3]" /> Reconciled
+                            </span>
+                          ) : isActive ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-800 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200 shadow-2xs">
+                              <Clock className="w-3.5 h-3.5 text-blue-600" /> Active ({Math.round((m.markedDays / m.netWorkingDays) * 100)}%)
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-slate-400 font-medium">Upcoming</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
+                <tfoot className="bg-slate-100/90 font-bold border-t-2 border-slate-200 text-slate-800">
+                  <tr>
+                    <td className="py-3 px-4 uppercase text-xs tracking-wider">
+                      Academic Year Totals
+                    </td>
+                    <td className="py-3 px-3 text-center font-mono font-black">
+                      {academicMonths.reduce((s, m) => s + m.calendarDays, 0)} days
+                    </td>
+                    <td className="py-3 px-3 text-center font-mono font-bold text-slate-700">
+                      {academicMonths.reduce((s, m) => s + m.sundaysCount, 0)} Sundays
+                    </td>
+                    <td className="py-3 px-3 text-center font-mono font-bold text-amber-800">
+                      - {academicMonths.reduce((s, m) => s + m.declaredHolidaysCount, 0)} days
+                    </td>
+                    <td className="py-3 px-3 text-center font-mono font-black text-emerald-950 text-xs">
+                      {academicMonths.reduce((s, m) => s + m.netWorkingDays, 0)} days
+                    </td>
+                    <td className="py-3 px-3 text-center font-mono font-black text-slate-900">
+                      {academicMonths.reduce((s, m) => s + m.markedDays, 0)} marked
+                    </td>
+                    <td className="py-3 px-4 text-center text-xs text-slate-600">
+                      {Math.round(
+                        (academicMonths.reduce((s, m) => s + m.markedDays, 0) /
+                          Math.max(1, academicMonths.reduce((s, m) => s + m.netWorkingDays, 0))) *
+                          100
+                      )}% Progress
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </div>
@@ -1518,33 +2247,81 @@ export const AdminAttendanceView: React.FC = () => {
             </div>
           </div>
 
-          {/* Prominent Banner on Holiday */}
+          {/* Prominent Banner on Special Working Sunday */}
+          {!isDailyHoliday && getSpecialWorkingDay(selectedDate, selectedClassId) && (
+            <div className="bg-gradient-to-r from-indigo-50 via-purple-50 to-indigo-50 rounded-2xl border-2 border-indigo-300 p-6 text-center space-y-3 shadow-xs">
+              <div className="w-12 h-12 rounded-full bg-indigo-100 border border-indigo-300 flex items-center justify-center text-2xl mx-auto shadow-2xs">
+                ⭐
+              </div>
+              <div>
+                <h4 className="text-base font-bold text-indigo-950 flex items-center justify-center gap-2">
+                  <span>⭐ Principal Unlocked Working Sunday</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-200 text-indigo-900 border border-indigo-300">
+                    KMEB Exam Session Active
+                  </span>
+                </h4>
+                <div className="inline-block mt-1 px-3 py-1 bg-indigo-200 text-indigo-950 text-xs font-bold rounded-lg border border-indigo-300">
+                  {getSpecialWorkingDay(selectedDate, selectedClassId)?.reason || 'KMEB Board Examination Session'}
+                </div>
+              </div>
+              <p className="text-xs text-indigo-900 max-w-lg mx-auto leading-relaxed">
+                This Sunday is officially unlocked as an active working day for <strong>{selectedClass?.name}</strong>. Attendance marking is enabled and counts toward official working days.
+              </p>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => handleRevokeSunday(selectedDate)}
+                  className="px-4 py-2 text-xs font-bold text-indigo-950 bg-white hover:bg-indigo-100 border border-indigo-300 rounded-xl transition cursor-pointer shadow-2xs"
+                >
+                  Re-lock to Default Sunday Closure
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Prominent Banner on Holiday or Sunday Default Closure */}
           {isDailyHoliday && (
             <div className="bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 rounded-2xl border-2 border-amber-300 p-6 text-center space-y-3 shadow-xs">
               <div className="w-12 h-12 rounded-full bg-amber-100 border border-amber-300 flex items-center justify-center text-2xl mx-auto shadow-2xs">
-                🏖️
+                {dailyHolidayInfo?.isSundayClosure ? '🗓️' : '🏖️'}
               </div>
               <div>
                 <h4 className="text-base font-bold text-amber-950">
-                  🏖️ Official Holiday / Non-Working Day
+                  {dailyHolidayInfo?.isSundayClosure ? '🗓️ Sunday Default Weekly Closure' : '🏖️ Official Holiday / Non-Working Day'}
                 </h4>
                 <div className="inline-block mt-1 px-3 py-1 bg-amber-200 text-amber-950 text-xs font-bold rounded-lg border border-amber-300">
                   {dailyHolidayInfo?.reason || 'Official Holiday / Non-Working Day'}
                 </div>
               </div>
               <p className="text-xs text-amber-900 max-w-lg mx-auto leading-relaxed">
-                Madrasa is officially closed on <strong>{selectedDate}</strong>.
-                Student attendance is strictly exempt and no student is marked absent.
-                Total working days automatically exclude this date so student percentages remain completely unpenalized.
+                {dailyHolidayInfo?.isSundayClosure
+                  ? `Sunday (${selectedDate}) is an official weekly holiday across the portal. Attendance marking is disabled by default.`
+                  : `Madrasa is officially closed for ${selectedClass?.name} on ${selectedDate}. Student attendance is strictly exempt, working days are deducted, and attendance percentages remain safeguarded.`}
               </p>
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => handleRemoveHoliday(selectedDate)}
-                  className="px-4 py-2 text-xs font-bold text-amber-950 bg-white hover:bg-amber-100 border border-amber-300 rounded-xl transition cursor-pointer shadow-2xs"
-                >
-                  Remove Holiday &amp; Restore Regular Working Day
-                </button>
+              <div className="pt-2 flex items-center justify-center gap-3">
+                {dailyHolidayInfo?.isSundayClosure ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSundayUnlockDate(selectedDate);
+                      setSundayUnlockTargetClasses(['all']);
+                      setSundayUnlockReason('KMEB Board Examination Session');
+                      setShowSundayUnlockModal(true);
+                    }}
+                    className="px-4 py-2 text-xs font-bold text-white bg-indigo-700 hover:bg-indigo-800 border border-indigo-800 rounded-xl transition cursor-pointer shadow-2xs flex items-center gap-1.5"
+                  >
+                    <Unlock className="w-3.5 h-3.5" />
+                    <span>Unlock This Sunday as Working Day (e.g., KMEB Examination)</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveHoliday(dailyHolidayInfo?.id || selectedDate, selectedDate)}
+                    className="px-4 py-2 text-xs font-bold text-amber-950 bg-white hover:bg-amber-100 border border-amber-300 rounded-xl transition cursor-pointer shadow-2xs"
+                  >
+                    Remove Holiday &amp; Restore Regular Working Day
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -1990,7 +2767,7 @@ export const AdminAttendanceView: React.FC = () => {
       {/* SUB-TAB 4: INSTITUTION HOLIDAYS & NON-WORKING DAYS (EXCLUSIVE PRINCIPAL INTERFACE) */}
       {activeSubTab === 'holidays' && (
         <div className="space-y-6">
-          {/* Add Holiday Card */}
+          {/* Add Holiday Card with Class-Specific Target Selector */}
           <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-xl">
@@ -2001,7 +2778,7 @@ export const AdminAttendanceView: React.FC = () => {
                   Designate Institution Holiday / Non-Working Day
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Select a specific calendar date and provide the official reason. This updates Firestore <code className="text-amber-800 font-mono font-bold">institutionHolidays</code> and automatically excludes this date from working day counts across the entire institution.
+                  Select date, target classes (All Classes or specific grades like Class 7 &amp; 9), and reason. Automatically adjusts working day counts and attendance percentages.
                 </p>
               </div>
             </div>
@@ -2025,12 +2802,12 @@ export const AdminAttendanceView: React.FC = () => {
                     type="text"
                     value={newHolidayReason}
                     onChange={e => setNewHolidayReason(e.target.value)}
-                    placeholder="e.g. Friday Holiday, Eid al-Fitr, Milad-un-Nabi, Monsoon Leave"
+                    placeholder="e.g. Public Holiday, Special Madrasa Holiday, Rain Holiday, Study Leave, Eid / Milad"
                     className="flex-1 p-2.5 border border-slate-300 rounded-xl text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                   <button
                     type="button"
-                    onClick={() => handleDeclareHoliday(newHolidayDate, newHolidayReason)}
+                    onClick={() => handleDeclareHoliday(newHolidayDate, newHolidayReason, newHolidayTargetClasses)}
                     disabled={isSavingHoliday || !newHolidayDate}
                     className="px-5 py-2.5 text-xs font-bold text-amber-950 bg-amber-300 hover:bg-amber-400 border border-amber-400 rounded-xl transition shadow-xs cursor-pointer whitespace-nowrap disabled:opacity-50"
                   >
@@ -2040,19 +2817,71 @@ export const AdminAttendanceView: React.FC = () => {
               </div>
             </div>
 
-            {/* Quick Suggestion Chips */}
-            <div className="space-y-1.5 pt-2">
+            {/* Target Classes Selector */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex flex-wrap items-center justify-between gap-1">
+                <label className="text-xs font-bold text-slate-700">Target Classes:</label>
+                <span className="text-[11px] text-slate-500">
+                  {newHolidayTargetClasses.includes('all')
+                    ? 'Applies Institution-wide to All Classes (1–9)'
+                    : `Applies specifically to ${newHolidayTargetClasses.length} selected class(es)`}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 items-center">
+                <button
+                  type="button"
+                  onClick={() => setNewHolidayTargetClasses(['all'])}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition cursor-pointer ${
+                    newHolidayTargetClasses.includes('all')
+                      ? 'bg-emerald-800 text-white border-emerald-900 shadow-xs'
+                      : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
+                  }`}
+                >
+                  All Classes (Institution-wide)
+                </button>
+                {classes.map(c => {
+                  const isSelected = !newHolidayTargetClasses.includes('all') && newHolidayTargetClasses.includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => {
+                        if (newHolidayTargetClasses.includes('all')) {
+                          setNewHolidayTargetClasses([c.id]);
+                        } else {
+                          if (isSelected) {
+                            const rem = newHolidayTargetClasses.filter(id => id !== c.id);
+                            setNewHolidayTargetClasses(rem.length === 0 ? ['all'] : rem);
+                          } else {
+                            setNewHolidayTargetClasses([...newHolidayTargetClasses, c.id]);
+                          }
+                        }
+                      }}
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-lg border transition cursor-pointer ${
+                        isSelected
+                          ? 'bg-amber-300 text-amber-950 border-amber-400 font-bold shadow-2xs'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      {c.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Quick Suggestion Chips (Strictly WITHOUT Friday Holiday) */}
+            <div className="space-y-1.5 pt-1">
               <span className="text-[11px] font-bold text-slate-500">Quick Suggestions:</span>
               <div className="flex flex-wrap gap-1.5">
                 {[
-                  'Friday Holiday',
-                  'Eid al-Fitr',
-                  'Eid al-Adha',
-                  'Milad-un-Nabi',
+                  'Public Holiday',
+                  'Special Madrasa Holiday',
+                  'Rain Holiday',
                   'Study Leave',
+                  'Eid / Milad',
                   'Ramadan Break',
-                  'Monsoon Leave',
-                  'National Public Holiday',
+                  'Board Exam Preparation',
                 ].map(preset => (
                   <button
                     key={preset}
@@ -2071,6 +2900,93 @@ export const AdminAttendanceView: React.FC = () => {
             </div>
           </div>
 
+          {/* PRINCIPAL EXCLUSIVE: WORKING SUNDAY OVERRIDE CARD */}
+          <div className="bg-gradient-to-br from-indigo-50/80 via-purple-50/40 to-indigo-50/80 rounded-2xl border-2 border-indigo-200 p-6 shadow-xs space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-100 border border-indigo-300 flex items-center justify-center text-xl">
+                  ⭐
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-slate-900">
+                      Principal Exclusive: Unlock Sunday as Working Day (e.g., KMEB Examination)
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-200 text-indigo-900 border border-indigo-300">
+                      Board Exam Override
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Sundays are default closed across the portal. Unlocking a specific Sunday enables teacher attendance and adds that date to official working days for the selected classes.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSundayUnlockDate('');
+                  setSundayUnlockTargetClasses(['all']);
+                  setSundayUnlockReason('KMEB Board Examination Session');
+                  setShowSundayUnlockModal(true);
+                }}
+                className="px-4 py-2 text-xs font-bold text-white bg-indigo-800 hover:bg-indigo-900 border border-indigo-900 rounded-xl transition shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <Unlock className="w-3.5 h-3.5" />
+                <span>Unlock Sunday as Working Day</span>
+              </button>
+            </div>
+
+            {/* List of currently unlocked Sundays */}
+            {Object.keys(specialWorkingDays).length > 0 && (
+              <div className="pt-2 border-t border-indigo-100 space-y-2">
+                <span className="text-xs font-bold text-indigo-950 block">
+                  Currently Active Working Sunday Overrides ({Object.keys(specialWorkingDays).length}):
+                </span>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {Object.values(specialWorkingDays).map(sw => {
+                    const isAll = !sw.targetClasses || sw.targetClasses.includes('all');
+                    const targetNames = isAll
+                      ? 'All Classes'
+                      : sw.targetClasses.map(id => classes.find(c => c.id === id)?.name || id.replace(/^(cls_|class_)/i, 'Class ')).join(', ');
+
+                    return (
+                      <div
+                        key={sw.id || sw.date}
+                        className="bg-white p-3.5 rounded-xl border border-indigo-200 flex items-center justify-between gap-3 shadow-2xs"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono text-xs font-bold text-indigo-950 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                              Sunday: {sw.date}
+                            </span>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-200">
+                              {targetNames}
+                            </span>
+                          </div>
+                          <div className="text-xs font-semibold text-slate-800 mt-1 truncate">
+                            {sw.reason}
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            Unlocked by {sw.unlockedBy || 'Principal ASLAM TK'}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRevokeSunday(sw.date)}
+                          className="px-3 py-1.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition shrink-0 cursor-pointer"
+                        >
+                          Restore Normal Sunday Closure
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* List of Declared Holidays */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
             <div className="p-4 border-b border-slate-100 flex items-center justify-between">
@@ -2080,7 +2996,7 @@ export const AdminAttendanceView: React.FC = () => {
                   <span>Currently Declared Institution Holidays ({allHolidaysList.length})</span>
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  These dates are exempt from attendance in Admin, Teacher, and Parent portals.
+                  These dates are exempt from attendance in Admin, Teacher, and Parent portals for their targeted classes.
                 </p>
               </div>
             </div>
@@ -2091,36 +3007,52 @@ export const AdminAttendanceView: React.FC = () => {
                   No institution holidays currently declared. Use the form above to add one.
                 </div>
               ) : (
-                allHolidaysList.map(h => (
-                  <div key={h.id || h.date} className="p-4 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50 transition">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-900 border border-amber-200 font-mono font-bold text-xs flex flex-col items-center justify-center shrink-0">
-                        <span>{h.date.split('-')[2]}</span>
-                        <span className="text-[9px] uppercase">{new Date(h.date).toLocaleDateString([], { month: 'short' })}</span>
-                      </div>
-                      <div>
-                        <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                          <span>{h.reason}</span>
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-bold">
-                            {h.date}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-slate-500 mt-0.5">
-                          Designated by: <span className="font-bold text-slate-700">{h.markedBy || 'Principal'}</span>
-                        </div>
-                      </div>
-                    </div>
+                allHolidaysList.map(h => {
+                  const isAll = !h.targetClasses || h.targetClasses.includes('all');
+                  const targetLabel = isAll
+                    ? 'All Classes'
+                    : (h.targetClasses || []).map(cId => classes.find(c => c.id === cId)?.name || cId.replace(/^(cls_|class_)/i, 'Class ')).join(', ');
 
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveHoliday(h.date)}
-                      className="px-3.5 py-1.5 text-xs font-bold text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-xl transition cursor-pointer flex items-center gap-1.5"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Restore Regular Working Day</span>
-                    </button>
-                  </div>
-                ))
+                  return (
+                    <div key={h.id || h.date} className="p-4 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50 transition">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-900 border border-amber-200 font-mono font-bold text-xs flex flex-col items-center justify-center shrink-0">
+                          <span>{h.date.split('-')[2]}</span>
+                          <span className="text-[9px] uppercase">{new Date(h.date).toLocaleDateString([], { month: 'short' })}</span>
+                        </div>
+                        <div>
+                          <div className="font-bold text-slate-900 text-sm flex items-center gap-2 flex-wrap">
+                            <span>{h.reason}</span>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-bold">
+                              {h.date}
+                            </span>
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                isAll
+                                  ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                  : 'bg-amber-100 text-amber-950 border-amber-300'
+                              }`}
+                            >
+                              Target: {targetLabel}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-500 mt-0.5">
+                            Designated by: <span className="font-bold text-slate-700">{h.markedBy || h.createdBy || 'Principal'}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveHoliday(h.id || h.date, h.date)}
+                        className="px-3.5 py-1.5 text-xs font-bold text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-xl transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Restore Regular Working Day</span>
+                      </button>
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>

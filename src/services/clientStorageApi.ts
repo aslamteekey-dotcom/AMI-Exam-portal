@@ -20,6 +20,8 @@ import {
   FeePayment,
   ClassAttendanceConfig,
   InstitutionHoliday,
+  SpecialWorkingDay,
+  isClassMatch,
   AttendanceEditRequest,
   DEFAULT_ADMIN_PERMISSIONS,
 } from '../types';
@@ -39,6 +41,7 @@ export interface MadrasaDatabase {
   feePayments: FeePayment[];
   attendanceConfigs: ClassAttendanceConfig[];
   institutionHolidays?: InstitutionHoliday[];
+  specialWorkingDays?: SpecialWorkingDay[];
   attendanceEditRequests?: AttendanceEditRequest[];
 }
 
@@ -754,8 +757,70 @@ export class ClientStorageApi {
         s.nameEn !== 'Adil Mansoor' &&
         s.nameEn !== 'Adil Ibrahim'
     );
+    this.performJune24Class5Cleanup();
     this.saveDB();
     this.initFirestoreSync();
+  }
+
+  /**
+   * Data Cleanup: Purge erroneous 24/06 holiday from Class 5 and restore working day count
+   */
+  public performJune24Class5Cleanup(): void {
+    const june24Keys = ['2026-06-24', '24/06/2026', '24-06-2026'];
+    // 1. Clean from institutionHolidays
+    if (this.db.institutionHolidays) {
+      this.db.institutionHolidays = this.db.institutionHolidays.filter(h => {
+        const isJune24 = june24Keys.includes(h.date) || june24Keys.includes(h.id);
+        if (!isJune24) return true;
+        const targets = h.targetClasses || ['all'];
+        const targetsClass5 = targets.some(c => c === 'all' || c === 'cls_5' || c === 'class_5' || c === '5');
+        if (targetsClass5) {
+          // If specifically for class 5 or only class 5
+          const remaining = targets.filter(c => c !== 'cls_5' && c !== 'class_5' && c !== '5');
+          if (remaining.length === 0 || targets.includes('cls_5') || targets.includes('class_5')) {
+            if (remaining.length > 0 && !targets.includes('all')) {
+              h.targetClasses = remaining;
+              return true;
+            }
+            return false;
+          }
+        }
+        return true;
+      });
+    }
+
+    // 2. Clean from Class 5 attendance configs
+    if (this.db.attendanceConfigs) {
+      const cls5Configs = this.db.attendanceConfigs.filter(
+        c => c.classId === 'cls_5' || c.classId === 'class_5' || c.classId === '5'
+      );
+      cls5Configs.forEach(cfg => {
+        if (cfg.dailyRecords) {
+          june24Keys.forEach(k => {
+            if (cfg.dailyRecords?.[k]?.isHoliday) {
+              delete cfg.dailyRecords[k];
+            }
+          });
+          const holidayCount = Object.values(cfg.dailyRecords).filter(r => r.isHoliday).length;
+          cfg.totalWorkingDays = Math.max(1, 88 - holidayCount);
+          cfg.updatedAt = new Date().toISOString();
+        }
+      });
+    }
+
+    // 3. Normalize student attendance percentages in Class 5
+    if (this.db.students) {
+      this.db.students
+        .filter(s => s.classId === 'cls_5' || s.classId === 'class_5' || s.classId === '5')
+        .forEach(st => {
+          if (st.attendance) {
+            st.attendance.totalWorkingDays = 88;
+            if (st.attendance.daysAttended > 88) {
+              st.attendance.daysAttended = 88;
+            }
+          }
+        });
+    }
   }
 
   /**
@@ -963,12 +1028,35 @@ export class ClientStorageApi {
         },
         onHolidays: (remoteHolidays) => {
           if (Array.isArray(remoteHolidays)) {
-            this.db.institutionHolidays = remoteHolidays;
+            const filtered = remoteHolidays.filter(h => {
+              const isJune24 = h.date === '2026-06-24' || h.date === '24/06/2026' || h.id === '2026-06-24';
+              if (isJune24) {
+                const targets = h.targetClasses || ['all'];
+                if (targets.includes('cls_5') || targets.includes('class_5') || targets.includes('5')) {
+                  const rem = targets.filter(c => c !== 'cls_5' && c !== 'class_5' && c !== '5');
+                  if (rem.length === 0) return false;
+                  h.targetClasses = rem;
+                }
+              }
+              return true;
+            });
+            this.db.institutionHolidays = filtered;
             try {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
             } catch {}
             if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('madrasa_holidays_updated', { detail: remoteHolidays }));
+              window.dispatchEvent(new CustomEvent('madrasa_holidays_updated', { detail: filtered }));
+            }
+          }
+        },
+        onSpecialWorkingDays: (remoteDays) => {
+          if (Array.isArray(remoteDays)) {
+            this.db.specialWorkingDays = remoteDays;
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
+            } catch {}
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('madrasa_special_working_days_updated', { detail: remoteDays }));
             }
           }
         },
@@ -3767,18 +3855,25 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/institution-holidays' && method === 'POST') {
-        const { date, reason, markedBy, academicYear } = bodyData;
+        const { date, reason, markedBy, createdBy, academicYear, targetClasses, rangeStart, rangeEnd, rangeGroupId, totalRangeDays } = bodyData;
         if (!date) return this.jsonResponse({ error: 'Date is required' }, 400);
         if (!this.db.institutionHolidays) this.db.institutionHolidays = [];
-        const existingIdx = this.db.institutionHolidays.findIndex(h => h.date === date);
+        const existingIdx = this.db.institutionHolidays.findIndex(h => h.date === date || h.id === date);
+        const resolvedTargetClasses = Array.isArray(targetClasses) && targetClasses.length > 0 ? targetClasses : ['all'];
         const item: InstitutionHoliday = {
           id: date,
           date,
+          targetClasses: resolvedTargetClasses,
           reason: reason || 'Official Holiday / Non-Working Day',
-          markedBy: markedBy || 'Class Teacher',
+          markedBy: markedBy || createdBy || 'Principal',
+          createdBy: createdBy || markedBy || 'Principal',
           markedAt: new Date().toISOString(),
           academicYear: academicYear || '2026-2027',
           createdAt: new Date().toISOString(),
+          rangeStart,
+          rangeEnd,
+          rangeGroupId,
+          totalRangeDays,
         };
         if (existingIdx >= 0) {
           this.db.institutionHolidays[existingIdx] = item;
@@ -3791,14 +3886,91 @@ export class ClientStorageApi {
       }
 
       const holidayDeleteMatch = path.match(/^\/api\/institution-holidays\/([^/]+)$/);
-      if (holidayDeleteMatch && method === 'DELETE') {
-        const hDate = holidayDeleteMatch[1];
-        if (this.db.institutionHolidays) {
-          this.db.institutionHolidays = this.db.institutionHolidays.filter(h => h.date !== hDate);
+      if ((holidayDeleteMatch || path === '/api/institution-holidays') && method === 'DELETE') {
+        const rangeGroupId = params.get('rangeGroupId');
+        if (rangeGroupId && this.db.institutionHolidays) {
+          const toDelete = this.db.institutionHolidays.filter(h => h.rangeGroupId === rangeGroupId);
+          this.db.institutionHolidays = this.db.institutionHolidays.filter(h => h.rangeGroupId !== rangeGroupId);
+          toDelete.forEach(h => {
+            (this.db.attendanceConfigs || []).forEach(cfg => {
+              if (cfg.dailyRecords && cfg.dailyRecords[h.date]?.isHoliday) {
+                delete cfg.dailyRecords[h.date];
+                const remainingHolidays = Object.values(cfg.dailyRecords).filter(r => r.isHoliday).length;
+                cfg.totalWorkingDays = Math.max(1, 88 - remainingHolidays);
+                cfg.updatedAt = new Date().toISOString();
+              }
+            });
+            firestoreSync.deleteHoliday(h.date).catch(() => {});
+          });
+          this.saveDB();
+          return this.jsonResponse({ success: true, rangeGroupId });
+        }
+        const hTarget = (holidayDeleteMatch ? holidayDeleteMatch[1] : (params.get('date') || params.get('id'))) || '';
+        if (hTarget && this.db.institutionHolidays) {
+          this.db.institutionHolidays = this.db.institutionHolidays.filter(
+            h => h.date !== hTarget && h.id !== hTarget
+          );
+          // Restore working days for any attendance configs that recorded this holiday
+          (this.db.attendanceConfigs || []).forEach(cfg => {
+            if (cfg.dailyRecords && cfg.dailyRecords[hTarget]?.isHoliday) {
+              delete cfg.dailyRecords[hTarget];
+              const remainingHolidays = Object.values(cfg.dailyRecords).filter(r => r.isHoliday).length;
+              cfg.totalWorkingDays = Math.max(1, 88 - remainingHolidays);
+              cfg.updatedAt = new Date().toISOString();
+            }
+          });
           this.saveDB();
         }
-        firestoreSync.deleteHoliday(hDate).catch(e => console.warn('Firestore deleteHoliday error:', e));
-        return this.jsonResponse({ success: true, date: hDate });
+        if (hTarget) {
+          firestoreSync.deleteHoliday(hTarget).catch(e => console.warn('Firestore deleteHoliday error:', e));
+        }
+        return this.jsonResponse({ success: true, dateOrId: hTarget });
+      }
+
+      // Special Working Days (Principal Sunday Unlock) endpoints
+      if (path === '/api/special-working-days' && method === 'GET') {
+        return this.jsonResponse(this.db.specialWorkingDays || []);
+      }
+
+      if (path === '/api/special-working-days' && method === 'POST') {
+        const { date, reason, targetClasses, unlockedBy, academicYear } = bodyData;
+        if (!date) return this.jsonResponse({ error: 'Sunday Date is required' }, 400);
+        if (!this.db.specialWorkingDays) this.db.specialWorkingDays = [];
+        const existingIdx = this.db.specialWorkingDays.findIndex(w => w.date === date || w.id === date);
+        const resolvedTargetClasses = Array.isArray(targetClasses) && targetClasses.length > 0 ? targetClasses : ['all'];
+        const item: SpecialWorkingDay = {
+          id: date,
+          date,
+          targetClasses: resolvedTargetClasses,
+          reason: reason || 'KMEB Examination Session',
+          unlockedBy: unlockedBy || 'Principal ASLAM TK',
+          unlockedAt: new Date().toISOString(),
+          academicYear: academicYear || '2026-2027',
+          createdAt: new Date().toISOString(),
+        };
+        if (existingIdx >= 0) {
+          this.db.specialWorkingDays[existingIdx] = item;
+        } else {
+          this.db.specialWorkingDays.push(item);
+        }
+        this.saveDB();
+        firestoreSync.syncSpecialWorkingDay(item).catch(e => console.warn('Firestore syncSpecialWorkingDay error:', e));
+        return this.jsonResponse(item);
+      }
+
+      const specialWorkingDeleteMatch = path.match(/^\/api\/special-working-days\/([^/]+)$/);
+      if ((specialWorkingDeleteMatch || path === '/api/special-working-days') && method === 'DELETE') {
+        const wTarget = (specialWorkingDeleteMatch ? specialWorkingDeleteMatch[1] : (params.get('date') || params.get('id'))) || '';
+        if (wTarget && this.db.specialWorkingDays) {
+          this.db.specialWorkingDays = this.db.specialWorkingDays.filter(
+            w => w.date !== wTarget && w.id !== wTarget
+          );
+          this.saveDB();
+        }
+        if (wTarget) {
+          firestoreSync.deleteSpecialWorkingDay(wTarget).catch(e => console.warn('Firestore deleteSpecialWorkingDay error:', e));
+        }
+        return this.jsonResponse({ success: true, dateOrId: wTarget });
       }
 
       // Attendance Edit Requests endpoints
