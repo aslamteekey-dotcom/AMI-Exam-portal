@@ -69,8 +69,10 @@ export const FeeManagement: React.FC = () => {
       const sData: Student[] = await resS.json();
       const pData: FeePayment[] = await resP.json();
 
-      setClasses(cData);
-      setStudents(sortStudentsBoysFirst(sData));
+      const uniqueStudents = Array.from(
+        new Map((sData || []).map(s => [s.admissionNo?.toString() || s.id, s])).values()
+      );
+      setStudents(sortStudentsBoysFirst(uniqueStudents));
       setPayments(pData);
       if (cData.length > 0 && !selectedClassId) {
         setSelectedClassId(cData[0].id);

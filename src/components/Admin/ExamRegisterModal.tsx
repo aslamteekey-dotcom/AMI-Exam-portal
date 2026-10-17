@@ -105,8 +105,12 @@ export const ExamRegisterModal: React.FC<Props> = ({
       );
       if (res.ok) {
         const data: StudentRegItem[] = await res.json();
+        // Strict deduplication by admissionNo or studentId
+        const unique = Array.from(
+          new Map((data || []).map(s => [s.admissionNo?.toString() || s.studentId, s])).values()
+        );
         // Strict Unified Sort: Boys (male/boy) A-Z first, then Girls (female/girl) A-Z
-        const sorted = sortStudentsBoysFirst(data).map((s, idx) => ({
+        const sorted = sortStudentsBoysFirst(unique).map((s, idx) => ({
           ...s,
           rollNo: idx + 1,
         }));

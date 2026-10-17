@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Student, ClassItem, sortStudentsBoysFirst } from '../../types';
+import { Student, ClassItem, sortStudentsBoysFirst, assignClassSequentialRollNumbers } from '../../types';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
@@ -65,21 +65,20 @@ export const StudentManagement: React.FC = () => {
       const clsData = await resCls.json();
       const stdData: Student[] = await resStd.json();
       setClasses(clsData);
-      setStudents(
-        (stdData || []).filter(
-          st =>
-            st &&
-            st.id !== 'st_501' &&
-            st.id !== 'st_301' &&
-            st.id !== 'st_903' &&
-            st.admissionNo !== '5001' &&
-            st.admissionNo !== '3001' &&
-            st.admissionNo !== '9003' &&
-            st.nameEn !== 'Ahmed Nihal' &&
-            st.nameEn !== 'Adil Mansoor' &&
-            st.nameEn !== 'Adil Ibrahim'
-        )
+      const filtered = (stdData || []).filter(
+        st =>
+          st &&
+          st.id !== 'st_501' &&
+          st.id !== 'st_301' &&
+          st.id !== 'st_903' &&
+          st.admissionNo !== '5001' &&
+          st.admissionNo !== '3001' &&
+          st.admissionNo !== '9003' &&
+          st.nameEn !== 'Ahmed Nihal' &&
+          st.nameEn !== 'Adil Mansoor' &&
+          st.nameEn !== 'Adil Ibrahim'
       );
+      setStudents(assignClassSequentialRollNumbers(filtered));
       if (clsData.length > 0 && !importClassId) {
         setImportClassId(clsData[0].id);
       }
@@ -100,19 +99,29 @@ export const StudentManagement: React.FC = () => {
         collection(db, 'students'),
         (snapshot) => {
           if (!snapshot.empty) {
-            // Delete any rogue mock students from Firestore
+            // Delete rogue mock students from Firestore
+            const rogueIdsToDelete: string[] = [];
+
             snapshot.docs.forEach((d) => {
               const data = d.data() as any;
+              const adm = String(data?.admissionNo || '').trim();
+              const name = String(data?.nameEn || '').trim();
+
               if (
                 ['st_501', 'st_301', 'st_903'].includes(d.id) ||
-                ['5001', '3001', '9003'].includes(String(data?.admissionNo)) ||
-                ['Ahmed Nihal', 'Adil Mansoor', 'Adil Ibrahim'].includes(data?.nameEn)
+                ['5001', '3001', '9003'].includes(adm) ||
+                ['Ahmed Nihal', 'Adil Mansoor', 'Adil Ibrahim'].includes(name)
               ) {
-                deleteDoc(doc(db, 'students', d.id)).catch(() => {});
+                rogueIdsToDelete.push(d.id);
               }
             });
 
+            rogueIdsToDelete.forEach((id) => {
+              deleteDoc(doc(db, 'students', id)).catch(() => {});
+            });
+
             const remoteStudents = snapshot.docs
+              .filter(d => !rogueIdsToDelete.includes(d.id))
               .map((d) => ({
                 ...d.data(),
                 id: d.id,
@@ -130,8 +139,10 @@ export const StudentManagement: React.FC = () => {
                   st.nameEn !== 'Adil Mansoor' &&
                   st.nameEn !== 'Adil Ibrahim'
               );
-            // Update React state strictly with authentic Firestore documents
-            setStudents(remoteStudents);
+
+            // Resequence roll numbers without suppressing duplicates so duplicates are clearly visible for resolution
+            const resequenced = assignClassSequentialRollNumbers(remoteStudents);
+            setStudents(resequenced);
           } else {
             setStudents([]);
           }
@@ -183,9 +194,28 @@ export const StudentManagement: React.FC = () => {
   const handleSaveStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const trimmedAdmission = formData.admissionNo.trim();
+      if (!trimmedAdmission) {
+        alert('Admission Number is required.');
+        return;
+      }
+
+      // Strict uniqueness check against existing students in the system
+      const conflict = students.find(s => {
+        if (editingStudent && (s.id === editingStudent.id || s.admissionNo === editingStudent.admissionNo)) {
+          return false;
+        }
+        return String(s.admissionNo || '').trim().toLowerCase() === trimmedAdmission.toLowerCase();
+      });
+
+      if (conflict) {
+        alert(`Admission Number [${trimmedAdmission}] already exists! Please use a unique Admission Number.`);
+        return;
+      }
+
       if (editingStudent) {
         const updateData: Partial<Student> = {
-          admissionNo: formData.admissionNo.trim(),
+          admissionNo: trimmedAdmission,
           rollNo: Number(formData.rollNo),
           nameEn: formData.nameEn.trim(),
           nameMl: formData.nameMl.trim() || formData.nameEn.trim(),
@@ -198,12 +228,25 @@ export const StudentManagement: React.FC = () => {
         // 1. Persistent Firestore write
         try {
           await setDoc(doc(db, 'students', editingStudent.id), cleanForFirestore(updateData), { merge: true });
+          if (editingStudent.admissionNo && editingStudent.admissionNo !== editingStudent.id) {
+            await setDoc(doc(db, 'students', editingStudent.admissionNo), cleanForFirestore(updateData), { merge: true }).catch(() => {});
+          }
         } catch (firestoreErr: any) {
           console.error('Firestore write error when updating student:', firestoreErr);
           handleFirestoreError(firestoreErr, OperationType.WRITE, `students/${editingStudent.id}`);
           alert(`Firestore error: ${firestoreErr.message || 'Failed to update student in cloud database'}`);
           return;
         }
+
+        // Immediately update React state
+        setStudents(prev =>
+          prev.map(s => {
+            if (s.id === editingStudent.id || (editingStudent.admissionNo && s.admissionNo === editingStudent.admissionNo)) {
+              return { ...s, ...updateData };
+            }
+            return s;
+          })
+        );
 
         const res = await fetchWithAuth(`/api/students/${editingStudent.id}`, {
           method: 'PUT',
@@ -223,7 +266,7 @@ export const StudentManagement: React.FC = () => {
           recordId: editingStudent.id,
         }).catch(e => console.warn('Audit log error:', e));
       } else {
-        const studentId = formData.admissionNo.trim();
+        const studentId = trimmedAdmission;
         const newStudentData: Student = {
           id: studentId,
           admissionNo: studentId,
@@ -275,6 +318,44 @@ export const StudentManagement: React.FC = () => {
     }
   };
 
+  const handleResolveDuplicate = async (student: Student) => {
+    const confirm = window.confirm(
+      `Resolve duplicate: Remove redundant entry for "${student.nameEn}" (Doc ID: ${student.id}, Adm: ${student.admissionNo}) and keep the canonical record?`
+    );
+    if (!confirm) return;
+
+    try {
+      // 1. Immediately delete this specific document from local state
+      setStudents(prev => prev.filter(s => s.id !== student.id));
+
+      // 2. Delete from Firestore directly for this specific document ID
+      try {
+        await deleteDoc(doc(db, 'students', student.id));
+      } catch (firestoreErr: any) {
+        console.warn('Firestore duplicate student delete error:', firestoreErr);
+      }
+
+      // 3. Delete from backend/storage API with onlyThisDoc flag
+      await fetchWithAuth(
+        `/api/students/${student.id}?admissionNo=${encodeURIComponent(student.admissionNo || '')}&onlyThisDoc=true`,
+        { method: 'DELETE' }
+      );
+
+      logAuditEvent({
+        action: 'STUDENT_DELETED',
+        details: `User ${user?.name || 'Administrator'} resolved duplicate record by removing redundant student entry ${student.nameEn} (ID: ${student.id}, Adm: ${student.admissionNo}).`,
+        currentUser: user,
+        recordType: 'student',
+        recordId: student.id,
+      }).catch(e => console.warn('Audit log error:', e));
+
+      await loadData();
+    } catch (err: any) {
+      alert('Failed to resolve duplicate: ' + (err.message || 'Unknown error'));
+      loadData();
+    }
+  };
+
   const handleDeleteStudent = async (student: Student) => {
     const confirm = window.confirm(
       `Are you sure you want to delete student "${student.nameEn}" (${student.admissionNo})?`
@@ -282,17 +363,30 @@ export const StudentManagement: React.FC = () => {
     if (!confirm) return;
 
     try {
-      // 1. Delete from Firestore
+      // 1. Immediately delete from local state
+      setStudents(prev =>
+        prev.filter(s => s.id !== student.id && (!student.admissionNo || s.admissionNo !== student.admissionNo))
+      );
+
+      // 2. Delete from Firestore directly for document ID and also any duplicate documents with same admissionNo
       try {
         await deleteDoc(doc(db, 'students', student.id));
+        if (student.admissionNo && student.admissionNo !== student.id) {
+          await deleteDoc(doc(db, 'students', student.admissionNo)).catch(() => {});
+        }
       } catch (firestoreErr: any) {
         console.warn('Firestore student delete error:', firestoreErr);
       }
 
-      // 2. Delete from local state
-      const res = await fetchWithAuth(`/api/students/${student.id}`, {
-        method: 'DELETE',
-      });
+      await firestoreSync.deleteStudent(student.id, student.admissionNo);
+
+      // 3. Delete from backend/storage API
+      const res = await fetchWithAuth(
+        `/api/students/${student.id}?admissionNo=${encodeURIComponent(student.admissionNo || '')}`,
+        {
+          method: 'DELETE',
+        }
+      );
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || 'Failed to delete student');
@@ -595,19 +689,57 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
     }
   };
 
+  // Admission number frequency calculation to detect duplicates in real-time
+  const admFrequency = useMemo(() => {
+    const counts = new Map<string, number>();
+    students.forEach(s => {
+      const adm = String(s.admissionNo || '').trim().toLowerCase();
+      if (adm) {
+        counts.set(adm, (counts.get(adm) || 0) + 1);
+      }
+    });
+    return counts;
+  }, [students]);
+
+  const duplicateAdmissionsList = useMemo(() => {
+    const list: string[] = [];
+    admFrequency.forEach((cnt, adm) => {
+      if (cnt > 1) list.push(adm);
+    });
+    return list;
+  }, [admFrequency]);
+
+  // Immediate validation check for Add / Edit Student modal
+  const trimmedAdmissionNo = formData.admissionNo.trim();
+  const duplicateAdmissionConflict = useMemo(() => {
+    if (!trimmedAdmissionNo) return null;
+    return students.find(s => {
+      if (editingStudent && (s.id === editingStudent.id || s.admissionNo === editingStudent.admissionNo)) {
+        return false;
+      }
+      return String(s.admissionNo || '').trim().toLowerCase() === trimmedAdmissionNo.toLowerCase();
+    });
+  }, [trimmedAdmissionNo, students, editingStudent]);
+
+  const isAdmissionNumberDuplicate = Boolean(duplicateAdmissionConflict);
+
   // Filter students with strict sorting: Boys first, then Girls; alphabetical A to Z within each
-  const filteredStudents = sortStudentsBoysFirst(
-    students.filter(s => {
-      const matchClass = selectedClassId ? s.classId === selectedClassId : true;
-      const q = searchQuery.toLowerCase();
-      const matchSearch =
-        s.nameEn.toLowerCase().includes(q) ||
-        (s.nameMl && s.nameMl.includes(q)) ||
-        s.admissionNo.toLowerCase().includes(q) ||
-        String(s.rollNo).includes(q);
-      return matchClass && matchSearch;
-    })
-  );
+  const classStudents = students.filter(s => {
+    const matchClass = selectedClassId ? s.classId === selectedClassId : true;
+    const q = searchQuery.toLowerCase();
+    const matchSearch =
+      s.nameEn.toLowerCase().includes(q) ||
+      (s.nameMl && s.nameMl.includes(q)) ||
+      (s.admissionNo && s.admissionNo.toLowerCase().includes(q)) ||
+      String(s.rollNo).includes(q);
+    return matchClass && matchSearch;
+  });
+
+  const sortedStudents = sortStudentsBoysFirst(classStudents);
+  const filteredStudents = sortedStudents.map((s, idx) => ({
+    ...s,
+    rollNo: idx + 1,
+  }));
 
   return (
     <div className="space-y-6">
@@ -741,6 +873,27 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
         </div>
       </div>
 
+      {/* Duplicate Admission Number Alert Banner */}
+      {duplicateAdmissionsList.length > 0 && (
+        <div className="bg-red-50 border border-red-300 rounded-2xl p-4 text-xs text-red-900 flex items-start justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-sm text-red-800">
+                Duplicate Admission Numbers Detected ({duplicateAdmissionsList.length})
+              </p>
+              <p className="mt-0.5 text-red-700">
+                The following admission number(s) appear on multiple student records:{' '}
+                <span className="font-mono font-bold bg-red-100 text-red-800 px-1.5 py-0.5 rounded border border-red-300">
+                  {duplicateAdmissionsList.join(', ')}
+                </span>
+                . Duplicate rows are highlighted in red below. Use the <strong>Resolve / Delete</strong> button on any duplicate row to delete the redundant record.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Students Table strictly aligned with CSV: Admission No | Name | Class | Gender | Parent Name | Phone | Actions */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden w-full">
         <div className="overflow-x-auto w-full scrollbar-thin">
@@ -754,7 +907,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                 <th className="p-3 text-center whitespace-nowrap">Gender</th>
                 <th className="p-3 whitespace-nowrap">Parent Name</th>
                 <th className="p-3 whitespace-nowrap">Phone</th>
-                <th className="p-3 text-center w-24 whitespace-nowrap">Actions</th>
+                <th className="p-3 text-center w-28 whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -767,16 +920,41 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
               ) : (
                 filteredStudents.map(student => {
                   const cls = classes.find(c => c.id === student.classId);
+                  const isDuplicate =
+                    (admFrequency.get(String(student.admissionNo || '').trim().toLowerCase()) || 0) > 1;
+
                   return (
-                    <tr key={student.id} className="hover:bg-slate-50 transition">
+                    <tr
+                      key={student.id}
+                      className={
+                        isDuplicate
+                          ? 'bg-red-50/90 border-l-4 border-red-500 hover:bg-red-100/70 transition'
+                          : 'hover:bg-slate-50 transition'
+                      }
+                    >
                       <td className="p-3 text-center font-mono font-bold text-slate-700 whitespace-nowrap">
                         {student.rollNo}
                       </td>
-                      <td className="p-3 font-mono font-semibold text-slate-700 whitespace-nowrap">
-                        {student.admissionNo}
+                      <td className="p-3 font-mono font-semibold whitespace-nowrap">
+                        <span
+                          className={
+                            isDuplicate
+                              ? 'px-2 py-0.5 rounded-md bg-red-100 text-red-800 font-bold border border-red-300 inline-block shadow-2xs'
+                              : 'text-slate-700'
+                          }
+                        >
+                          {student.admissionNo}
+                        </span>
                       </td>
                       <td className="p-3 min-w-[140px] whitespace-nowrap">
-                        <span className="font-bold text-slate-900 block">{student.nameEn}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-slate-900">{student.nameEn}</span>
+                          {isDuplicate && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-300 shadow-2xs">
+                              ⚠️ Duplicate Adm No
+                            </span>
+                          )}
+                        </div>
                         {student.nameMl && (
                           <span className="text-[11px] text-slate-500 font-ml block leading-tight">
                             {student.nameMl}
@@ -784,7 +962,11 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                         )}
                       </td>
                       <td className="p-3 whitespace-nowrap">
-                        <span className={`bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md font-semibold ${isMl ? 'font-ml' : ''}`}>
+                        <span
+                          className={`bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md font-semibold ${
+                            isMl ? 'font-ml' : ''
+                          }`}
+                        >
                           {isMl ? cls?.nameMl : cls?.name}
                         </span>
                       </td>
@@ -800,7 +982,9 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                         </span>
                       </td>
                       <td className="p-3 min-w-[140px] whitespace-nowrap">
-                        <span className="font-medium text-slate-800 block">{student.parentNameEn || '—'}</span>
+                        <span className="font-medium text-slate-800 block">
+                          {student.parentNameEn || '—'}
+                        </span>
                         {student.parentNameMl && (
                           <span className="text-[11px] text-slate-500 font-ml block leading-tight">
                             {student.parentNameMl}
@@ -811,7 +995,17 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                         {student.parentPhone || '—'}
                       </td>
                       <td className="p-3 text-center whitespace-nowrap">
-                        <div className="flex items-center justify-center gap-1">
+                        <div className="flex items-center justify-center gap-1.5">
+                          {isDuplicate && (
+                            <button
+                              onClick={() => handleResolveDuplicate(student)}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg shadow-2xs transition cursor-pointer mr-1"
+                              title="Resolve duplicate entry: Permanently removes this redundant student record"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              <span>Resolve / Delete</span>
+                            </button>
+                          )}
                           <button
                             onClick={() => handleOpenEdit(student)}
                             className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition cursor-pointer"
@@ -847,14 +1041,24 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
             <form onSubmit={handleSaveStudent} className="space-y-3 text-xs">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">{t.admissionNo}</label>
+                  <label className="block font-bold text-slate-700 mb-1">{t.admissionNo} *</label>
                   <input
                     type="text"
                     value={formData.admissionNo}
                     onChange={e => setFormData({ ...formData, admissionNo: e.target.value })}
-                    className="w-full p-2 border rounded-lg font-mono"
+                    className={`w-full p-2 border rounded-lg font-mono focus:outline-none focus:ring-2 ${
+                      isAdmissionNumberDuplicate
+                        ? 'border-red-500 bg-red-50 text-red-900 focus:ring-red-400'
+                        : 'border-slate-300 focus:ring-emerald-700'
+                    }`}
                     required
                   />
+                  {isAdmissionNumberDuplicate && (
+                    <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-red-600">
+                      <AlertTriangle className="w-3 h-3 shrink-0" />
+                      Admission Number [{trimmedAdmissionNo}] already exists! Please use a unique Admission Number.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">{t.rollNo}</label>
@@ -862,7 +1066,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                     type="number"
                     value={formData.rollNo}
                     onChange={e => setFormData({ ...formData, rollNo: e.target.value })}
-                    className="w-full p-2 border rounded-lg font-mono"
+                    className="w-full p-2 border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-emerald-700"
                     required
                   />
                   <p className="text-[10px] text-slate-500 mt-1">
@@ -872,13 +1076,13 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Student Name (English)</label>
+                <label className="block font-bold text-slate-700 mb-1">Student Name (English) *</label>
                 <input
                   type="text"
                   value={formData.nameEn}
                   onChange={e => setFormData({ ...formData, nameEn: e.target.value })}
                   placeholder="e.g. Ahmad Rayan"
-                  className="w-full p-2 border rounded-lg"
+                  className="w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700"
                   required
                 />
               </div>
@@ -890,16 +1094,16 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                   value={formData.nameMl}
                   onChange={e => setFormData({ ...formData, nameMl: e.target.value })}
                   placeholder="ഉദാ: അഹ്മദ് റയാൻ"
-                  className="w-full p-2 border rounded-lg"
+                  className="w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700"
                 />
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">{t.class}</label>
+                <label className="block font-bold text-slate-700 mb-1">{t.class} *</label>
                 <select
                   value={formData.classId}
                   onChange={e => setFormData({ ...formData, classId: e.target.value })}
-                  className="w-full p-2 border rounded-lg bg-slate-50"
+                  className="w-full p-2 border border-slate-300 rounded-lg bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-700"
                   required
                 >
                   {classes.map(c => (
@@ -918,7 +1122,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                     value={formData.parentNameEn}
                     onChange={e => setFormData({ ...formData, parentNameEn: e.target.value })}
                     placeholder="e.g. Shamsudheen P."
-                    className="w-full p-2 border rounded-lg"
+                    className="w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700"
                   />
                 </div>
                 <div>
@@ -928,7 +1132,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                     value={formData.parentPhone}
                     onChange={e => setFormData({ ...formData, parentPhone: e.target.value })}
                     placeholder="+91 9845..."
-                    className="w-full p-2 border rounded-lg"
+                    className="w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700"
                   />
                 </div>
               </div>
@@ -937,13 +1141,14 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="px-3.5 py-2 text-slate-600 bg-slate-100 rounded-lg"
+                  className="px-3.5 py-2 text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 font-bold text-white bg-emerald-800 rounded-lg hover:bg-emerald-900"
+                  disabled={isAdmissionNumberDuplicate}
+                  className="px-4 py-2 font-bold text-white bg-emerald-800 rounded-lg hover:bg-emerald-900 transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-xs"
                 >
                   Save Record
                 </button>

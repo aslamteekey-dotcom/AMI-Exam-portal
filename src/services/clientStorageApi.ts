@@ -463,7 +463,7 @@ export function getInitialClientSeedData(): MadrasaDatabase {
     },
     // Class 7
     {
-      id: 'st_701',
+      id: '862',
       admissionNo: '862',
       rollNo: 1,
       nameEn: 'Muhammed Hafiz C',
@@ -620,8 +620,7 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       assignedTeacherId: 'usr_t2',
       status: 'approved',
       studentMarks: {
-        st_701: { studentId: 'st_701', isAbsent: false, componentMarks: { omr: 19, descriptive: 18, ce: 10 }, subjectTotal: 47 },
-        '862': { studentId: 'st_701', isAbsent: false, componentMarks: { omr: 19, descriptive: 18, ce: 10 }, subjectTotal: 47 },
+        '862': { studentId: '862', isAbsent: false, componentMarks: { omr: 19, descriptive: 18, ce: 10 }, subjectTotal: 47 },
         st_702: { studentId: 'st_702', isAbsent: false, componentMarks: { omr: 18, descriptive: 17, ce: 9 }, subjectTotal: 44 },
       },
       verifiedAt: '2026-10-18T12:00:00Z',
@@ -637,8 +636,7 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       assignedTeacherId: 'usr_t1',
       status: 'approved',
       studentMarks: {
-        st_701: { studentId: 'st_701', isAbsent: false, componentMarks: { omr: 19, descriptive: 19, ce: 10 }, subjectTotal: 48 },
-        '862': { studentId: 'st_701', isAbsent: false, componentMarks: { omr: 19, descriptive: 19, ce: 10 }, subjectTotal: 48 },
+        '862': { studentId: '862', isAbsent: false, componentMarks: { omr: 19, descriptive: 19, ce: 10 }, subjectTotal: 48 },
         st_702: { studentId: 'st_702', isAbsent: false, componentMarks: { omr: 17, descriptive: 18, ce: 9 }, subjectTotal: 44 },
       },
       verifiedAt: '2026-10-18T12:00:00Z',
@@ -764,6 +762,24 @@ export class ClientStorageApi {
    * 2nd: Girls ('female' / 'girl') alphabetically (A to Z) -> Roll n+1, n+2...
    */
   public resequenceClassRollNumbers(targetClassId?: string): void {
+    // Strictly deduplicate by admission number or ID
+    const uniqueMap = new Map<string, Student>();
+    for (const st of (this.db.students || [])) {
+      const key = st.admissionNo?.toString() || st.id;
+      if (key) {
+        if (uniqueMap.has(key)) {
+          const existing = uniqueMap.get(key)!;
+          // Prefer non-st_ ID
+          if (existing.id.startsWith('st_') && !st.id.startsWith('st_')) {
+            uniqueMap.set(key, st);
+          }
+        } else {
+          uniqueMap.set(key, st);
+        }
+      }
+    }
+    this.db.students = Array.from(uniqueMap.values());
+
     const classIds = targetClassId
       ? [targetClassId]
       : Array.from(new Set(this.db.students.map(s => s.classId)));
@@ -819,7 +835,10 @@ export class ClientStorageApi {
                 examRegNo: (st as any).examRegNo || Object.values(regNos)[0] || '',
               };
             });
-            const resequenced = assignClassSequentialRollNumbers(mapped);
+            const uniqueStudents = Array.from(
+              new Map(mapped.map(s => [s.admissionNo?.toString() || s.id, s])).values()
+            );
+            const resequenced = assignClassSequentialRollNumbers(uniqueStudents);
             this.db.students = resequenced;
             try {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
@@ -1026,23 +1045,38 @@ export class ClientStorageApi {
           parsed.subjects = Array.isArray(parsed.subjects) ? parsed.subjects : [];
           parsed.academicYears = Array.isArray(parsed.academicYears) ? parsed.academicYears : [];
           parsed.examinations = Array.isArray(parsed.examinations) ? parsed.examinations : [];
-          parsed.students = Array.isArray(parsed.students)
-            ? assignClassSequentialRollNumbers(
-                parsed.students.filter(
-                  (s: any) =>
-                    s &&
-                    s.id !== 'st_501' &&
-                    s.id !== 'st_301' &&
-                    s.id !== 'st_903' &&
-                    s.admissionNo !== '5001' &&
-                    s.admissionNo !== '3001' &&
-                    s.admissionNo !== '9003' &&
-                    s.nameEn !== 'Ahmed Nihal' &&
-                    s.nameEn !== 'Adil Mansoor' &&
-                    s.nameEn !== 'Adil Ibrahim'
-                )
-              )
-            : [];
+          if (Array.isArray(parsed.students)) {
+            const rawFiltered = parsed.students.filter(
+              (s: any) =>
+                s &&
+                s.id !== 'st_501' &&
+                s.id !== 'st_301' &&
+                s.id !== 'st_903' &&
+                s.admissionNo !== '5001' &&
+                s.admissionNo !== '3001' &&
+                s.admissionNo !== '9003' &&
+                s.nameEn !== 'Ahmed Nihal' &&
+                s.nameEn !== 'Adil Mansoor' &&
+                s.nameEn !== 'Adil Ibrahim'
+            );
+            const uniqueMap = new Map<string, any>();
+            rawFiltered.forEach((s: any) => {
+              const key = s.admissionNo?.toString() || s.id;
+              if (key) {
+                if (uniqueMap.has(key)) {
+                  const existing = uniqueMap.get(key);
+                  if (String(existing.id).startsWith('st_') && !String(s.id).startsWith('st_')) {
+                    uniqueMap.set(key, s);
+                  }
+                } else {
+                  uniqueMap.set(key, s);
+                }
+              }
+            });
+            parsed.students = assignClassSequentialRollNumbers(Array.from(uniqueMap.values()));
+          } else {
+            parsed.students = [];
+          }
           parsed.teacherAssignments = Array.isArray(parsed.teacherAssignments) ? parsed.teacherAssignments : [];
           parsed.markSheets = Array.isArray(parsed.markSheets) ? parsed.markSheets : [];
           parsed.auditLogs = Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [];
@@ -2220,7 +2254,11 @@ export class ClientStorageApi {
         if (classId) {
           students = students.filter(s => s.classId === classId);
         }
-        return this.jsonResponse(sortStudentsBoysFirst(students));
+        const uniqueStudents = Array.from(
+          new Map(students.map(s => [s.admissionNo?.toString() || s.id, s])).values()
+        );
+        const resequenced = assignClassSequentialRollNumbers(uniqueStudents);
+        return this.jsonResponse(sortStudentsBoysFirst(resequenced));
       }
 
       if (path === '/api/students/resequence-rolls' && method === 'POST') {
@@ -2237,10 +2275,25 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/students' && method === 'POST') {
+        const incomingAdm = String(bodyData.admissionNo || '').trim();
+        if (!incomingAdm) {
+          return this.jsonResponse({ error: 'Admission number is required.' }, 400);
+        }
+        // Strict uniqueness check against all existing students in the system
+        const conflict = this.db.students.find(
+          s => String(s.admissionNo || '').trim().toLowerCase() === incomingAdm.toLowerCase()
+        );
+        if (conflict) {
+          return this.jsonResponse(
+            { error: `Admission Number ${incomingAdm} already exists! Please use a unique Admission Number.` },
+            400
+          );
+        }
+
         const studentId = bodyData.id || `stu_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
         const newStudent: Student = {
           id: studentId,
-          admissionNo: bodyData.admissionNo.trim(),
+          admissionNo: incomingAdm,
           rollNo: Number(bodyData.rollNo) || 1,
           nameEn: bodyData.nameEn.trim(),
           nameMl: bodyData.nameMl?.trim() || bodyData.nameEn.trim(),
@@ -2302,11 +2355,39 @@ export class ClientStorageApi {
       const studentIdMatch = path.match(/^\/api\/students\/([^/]+)$/);
       if (studentIdMatch && method === 'PUT') {
         const sId = studentIdMatch[1];
-        const student = this.db.students.find(s => s.id === sId);
+        let student = this.db.students.find(s => s.id === sId || s.admissionNo === sId);
+        if (!student && bodyData?.admissionNo) {
+          student = this.db.students.find(s => s.admissionNo === bodyData.admissionNo);
+        }
         if (!student) return this.jsonResponse({ error: 'Student not found' }, 404);
+
+        if (bodyData?.admissionNo) {
+          const incomingAdm = String(bodyData.admissionNo).trim();
+          const conflict = this.db.students.find(
+            s =>
+              s.id !== student!.id &&
+              s.admissionNo !== student!.admissionNo &&
+              String(s.admissionNo || '').trim().toLowerCase() === incomingAdm.toLowerCase()
+          );
+          if (conflict) {
+            return this.jsonResponse(
+              { error: `Admission Number ${incomingAdm} already exists! Please use a unique Admission Number.` },
+              400
+            );
+          }
+        }
 
         const prevClassId = student.classId;
         Object.assign(student, bodyData);
+
+        // Remove any other student object in memory that shared this admissionNo (eliminate duplicate)
+        if (student.admissionNo) {
+          const adm = student.admissionNo;
+          this.db.students = this.db.students.filter(
+            s => s === student || s.admissionNo !== adm
+          );
+        }
+
         this.resequenceClassRollNumbers(student.classId);
         if (prevClassId && prevClassId !== student.classId) {
           this.resequenceClassRollNumbers(prevClassId);
@@ -2325,9 +2406,19 @@ export class ClientStorageApi {
 
       if (studentIdMatch && method === 'DELETE') {
         const sId = studentIdMatch[1];
-        const targetStudent = this.db.students.find(s => s.id === sId);
+        const admQuery = params.get('admissionNo') || '';
+        const onlyThisDoc = params.get('onlyThisDoc') === 'true';
+        const targetStudent = this.db.students.find(s => s.id === sId || (admQuery && s.admissionNo === admQuery));
         const targetClassId = targetStudent?.classId;
-        this.db.students = this.db.students.filter(s => s.id !== sId);
+        const targetAdmNo = targetStudent?.admissionNo || admQuery;
+
+        if (onlyThisDoc) {
+          this.db.students = this.db.students.filter(s => s.id !== sId);
+        } else {
+          this.db.students = this.db.students.filter(
+            s => s.id !== sId && (!targetAdmNo || s.admissionNo !== targetAdmNo)
+          );
+        }
         if (targetClassId) {
           this.resequenceClassRollNumbers(targetClassId);
           const affected = this.db.students.filter(s => s.classId === targetClassId);
@@ -2337,7 +2428,7 @@ export class ClientStorageApi {
         }
         this.saveDB();
 
-        firestoreSync.deleteStudent(sId).catch(e => {
+        firestoreSync.deleteStudent(sId, targetAdmNo).catch(e => {
           console.warn('Firestore deleteStudent error:', e);
         });
 
@@ -3217,15 +3308,17 @@ export class ClientStorageApi {
         const cls = this.db.classes.find(c => c.id === cId || String(c.numericGrade) === cId || c.name === cId);
         const targetClassId = cls?.id || cId;
         const targetGrade = cls?.numericGrade;
-        const students = sortStudentsBoysFirst(
-          this.db.students.filter(
-            s =>
-              (s.classId === targetClassId ||
-                (targetGrade !== undefined && (String(s.classId) === String(targetGrade) || s.classId === `cls_${targetGrade}`)) ||
-                (cls?.name && s.classId === cls.name)) &&
-              s.status === 'active'
-          )
+        const rawClassStudents = this.db.students.filter(
+          s =>
+            (s.classId === targetClassId ||
+              (targetGrade !== undefined && (String(s.classId) === String(targetGrade) || s.classId === `cls_${targetGrade}`)) ||
+              (cls?.name && s.classId === cls.name)) &&
+            s.status === 'active'
         );
+        const uniqueClassStudents = Array.from(
+          new Map(rawClassStudents.map(s => [s.admissionNo?.toString() || s.id, s])).values()
+        );
+        const students = sortStudentsBoysFirst(uniqueClassStudents);
         const reports: StudentProgressReport[] = [];
         students.forEach(st => {
           const r = this.generateStudentProgressReport(st.id, eId);
@@ -3266,7 +3359,11 @@ export class ClientStorageApi {
       if (regNosMatch && method === 'GET') {
         const [, eId, cId] = regNosMatch;
         this.resequenceClassRollNumbers(cId);
-        const students = sortStudentsBoysFirst(this.db.students.filter(s => s.classId === cId && s.status === 'active'));
+        const rawClassStudents = this.db.students.filter(s => s.classId === cId && s.status === 'active');
+        const uniqueClassStudents = Array.from(
+          new Map(rawClassStudents.map(s => [s.admissionNo?.toString() || s.id, s])).values()
+        );
+        const students = sortStudentsBoysFirst(uniqueClassStudents);
         const list = students.map((s, idx) => ({
           studentId: s.id,
           admissionNo: s.admissionNo,

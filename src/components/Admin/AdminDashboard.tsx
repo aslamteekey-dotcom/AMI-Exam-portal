@@ -178,10 +178,10 @@ export const AdminDashboard: React.FC = () => {
       </div>
 
       {/* Navigation Tabs Bar */}
-      <div className="bg-white p-1.5 md:p-2 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-1 sm:gap-1.5 md:gap-1.5 lg:gap-2 overflow-x-auto md:overflow-visible md:flex-wrap no-scrollbar scroll-smooth text-xs font-bold print:hidden">
+      <div className="bg-white px-3 sm:px-4 py-2 rounded-2xl border border-slate-200 shadow-xs flex flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap scroll-smooth no-scrollbar scrollbar-none [-ms-overflow-style:none] [scrollbar-width:none] text-xs font-bold print:hidden">
         <button
           onClick={() => setActiveTab('overview')}
-          className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+          className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
             activeTab === 'overview'
               ? 'bg-emerald-800 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -194,7 +194,7 @@ export const AdminDashboard: React.FC = () => {
         {(!user?.permissions || user.permissions.marksReports?.view !== false) && (
           <button
             onClick={() => setActiveTab('monitoring')}
-            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'monitoring'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -208,7 +208,7 @@ export const AdminDashboard: React.FC = () => {
         {(!user?.permissions || user.permissions.marksReports?.view !== false) && (
           <button
             onClick={() => setActiveTab('reports')}
-            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'reports'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -222,7 +222,7 @@ export const AdminDashboard: React.FC = () => {
         {(!user?.permissions || user.permissions.academicExams?.view !== false) && (
           <button
             onClick={() => setActiveTab('exams')}
-            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'exams'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -236,7 +236,7 @@ export const AdminDashboard: React.FC = () => {
         {(!user?.permissions || user.permissions.academicExams?.view !== false) && (
           <button
             onClick={() => setActiveTab('classes_subjects')}
-            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'classes_subjects'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -250,7 +250,7 @@ export const AdminDashboard: React.FC = () => {
         {(!user?.permissions || user.permissions.students?.view !== false) && (
           <button
             onClick={() => setActiveTab('students')}
-            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'students'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -264,7 +264,7 @@ export const AdminDashboard: React.FC = () => {
         {(!user?.permissions || user.permissions.teachers?.view !== false) && (
           <button
             onClick={() => setActiveTab('teachers')}
-            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'teachers'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -278,7 +278,7 @@ export const AdminDashboard: React.FC = () => {
         {(!user?.permissions || user.permissions.students?.view !== false) && (
           <button
             onClick={() => setActiveTab('parents')}
-            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'parents'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -292,7 +292,7 @@ export const AdminDashboard: React.FC = () => {
         {(!user?.permissions || user.permissions.feesCollections?.view !== false) && (
           <button
             onClick={() => setActiveTab('fees')}
-            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'fees'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -305,7 +305,7 @@ export const AdminDashboard: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('attendance')}
-          className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+          className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
             activeTab === 'attendance'
               ? 'bg-emerald-800 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -317,7 +317,7 @@ export const AdminDashboard: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('study_materials')}
-          className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+          className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
             activeTab === 'study_materials'
               ? 'bg-emerald-800 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -329,7 +329,7 @@ export const AdminDashboard: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('audit_logs')}
-          className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+          className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
             activeTab === 'audit_logs'
               ? 'bg-emerald-800 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -342,7 +342,7 @@ export const AdminDashboard: React.FC = () => {
         {(!user?.permissions || user.permissions.settings?.view !== false) && (
           <button
             onClick={() => setActiveTab('settings')}
-            className={`px-2.5 sm:px-3 py-1.5 md:py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
               activeTab === 'settings'
                 ? 'bg-emerald-800 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'

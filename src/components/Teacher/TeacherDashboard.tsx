@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
   TeacherAssignment,
@@ -28,7 +28,7 @@ import {
   setDoc,
   deleteDoc,
 } from 'firebase/firestore';
-import { cleanForFirestore } from '../../services/firestoreSync';
+import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { logAuditEvent } from '../../services/auditLogger';
 import {
   BookOpen,
@@ -36,6 +36,7 @@ import {
   Clock,
   CheckCircle,
   AlertCircle,
+  AlertTriangle,
   Lock,
   Edit3,
   Shield,
@@ -1318,6 +1319,31 @@ export const TeacherDashboard: React.FC = () => {
     }
   };
 
+  // Real-time duplicate detection across all students for Teacher portal
+  const teacherAdmCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    allStudents.forEach(s => {
+      const adm = String(s.admissionNo || '').trim().toLowerCase();
+      if (adm) {
+        counts.set(adm, (counts.get(adm) || 0) + 1);
+      }
+    });
+    return counts;
+  }, [allStudents]);
+
+  const trimmedTeacherAdm = studentFormData.admissionNo.trim();
+  const teacherDuplicateConflict = useMemo(() => {
+    if (!trimmedTeacherAdm) return null;
+    return allStudents.find(s => {
+      if (editingStudent && (s.id === editingStudent.id || s.admissionNo === editingStudent.admissionNo)) {
+        return false;
+      }
+      return String(s.admissionNo || '').trim().toLowerCase() === trimmedTeacherAdm.toLowerCase();
+    });
+  }, [trimmedTeacherAdm, allStudents, editingStudent]);
+
+  const isTeacherAdmDuplicate = Boolean(teacherDuplicateConflict);
+
   // Student Edit / Delete Handlers in "My Class"
   const handleOpenEditStudent = (st: Student) => {
     setEditingStudent(st);
@@ -1335,13 +1361,25 @@ export const TeacherDashboard: React.FC = () => {
   const handleSaveStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingStudent) return;
+
+    const trimmedAdm = studentFormData.admissionNo.trim();
+    if (!trimmedAdm) {
+      alert('Admission Number is required.');
+      return;
+    }
+
+    if (isTeacherAdmDuplicate) {
+      alert(`Admission Number [${trimmedAdm}] already exists! Please use a unique Admission Number.`);
+      return;
+    }
+
     setIsSavingStudent(true);
     try {
       const updateData: Partial<Student> = {
         nameEn: studentFormData.nameEn.trim(),
         nameMl: studentFormData.nameMl.trim() || studentFormData.nameEn.trim(),
         rollNo: Number(studentFormData.rollNo) || editingStudent.rollNo,
-        admissionNo: studentFormData.admissionNo.trim(),
+        admissionNo: trimmedAdm,
         gender: studentFormData.gender,
         parentNameEn: studentFormData.parentNameEn.trim(),
         parentPhone: studentFormData.parentPhone.trim(),
@@ -1349,6 +1387,9 @@ export const TeacherDashboard: React.FC = () => {
 
       // 1. Direct Firestore write
       await setDoc(doc(db, 'students', editingStudent.id), cleanForFirestore(updateData), { merge: true });
+      if (editingStudent.admissionNo && editingStudent.admissionNo !== editingStudent.id) {
+        await setDoc(doc(db, 'students', editingStudent.admissionNo), cleanForFirestore(updateData), { merge: true }).catch(() => {});
+      }
 
       // 2. Local API sync
       await fetchWithAuth(`/api/students/${editingStudent.id}`, {
@@ -1360,7 +1401,12 @@ export const TeacherDashboard: React.FC = () => {
       // 3. React state update
       setAllStudents(prev =>
         sortStudentsBoysFirst(
-          prev.map(s => (s.id === editingStudent.id ? { ...s, ...updateData } : s))
+          prev.map(s => {
+            if (s.id === editingStudent.id || (editingStudent.admissionNo && s.admissionNo === editingStudent.admissionNo)) {
+              return { ...s, ...updateData };
+            }
+            return s;
+          })
         )
       );
 
@@ -1387,11 +1433,21 @@ export const TeacherDashboard: React.FC = () => {
     if (!confirmed) return;
     setIsDeletingStudent(st.id);
     try {
-      // 1. Delete from Firestore
-      await deleteDoc(doc(db, 'students', st.id));
+      // 1. Immediately delete from local state
+      setAllStudents(prev => prev.filter(s => s.id !== st.id && (!st.admissionNo || s.admissionNo !== st.admissionNo)));
 
-      // 2. Delete from API / local state
-      await fetchWithAuth(`/api/students/${st.id}`, { method: 'DELETE' });
+      // 2. Delete from Firestore directly
+      await deleteDoc(doc(db, 'students', st.id)).catch(() => {});
+      if (st.admissionNo && st.admissionNo !== st.id) {
+        await deleteDoc(doc(db, 'students', st.admissionNo)).catch(() => {});
+      }
+      await firestoreSync.deleteStudent(st.id, st.admissionNo);
+
+      // 3. Delete from API / local state
+      await fetchWithAuth(
+        `/api/students/${st.id}?admissionNo=${encodeURIComponent(st.admissionNo || '')}`,
+        { method: 'DELETE' }
+      );
 
       logAuditEvent({
         action: 'STUDENT_DELETED',
@@ -1400,8 +1456,6 @@ export const TeacherDashboard: React.FC = () => {
         recordType: 'student',
         recordId: st.id,
       }).catch(e => console.warn('Audit log error:', e));
-
-      setAllStudents(prev => prev.filter(s => s.id !== st.id));
     } catch (err: any) {
       alert('Failed to delete student: ' + (err.message || 'Unknown error'));
     } finally {
@@ -2080,16 +2134,22 @@ export const TeacherDashboard: React.FC = () => {
                         st.examRegisterNumbers?.[selectedExamId] ||
                         (st as any).examRegisterNos?.[selectedExamId] ||
                         (st as any).examRegNo;
+                      const isDuplicate =
+                        (teacherAdmCounts.get(String(st.admissionNo || '').trim().toLowerCase()) || 0) > 1;
 
                       return (
                         <div
                           key={st.id}
-                          className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs hover:shadow-xs transition flex flex-col justify-between relative group"
+                          className={`${
+                            isDuplicate
+                              ? 'bg-red-50/90 rounded-xl border-2 border-red-400 p-3.5 shadow-xs transition flex flex-col justify-between relative'
+                              : 'bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs hover:shadow-xs transition flex flex-col justify-between relative group'
+                          }`}
                         >
                           <div>
                             {/* Top Row: Roll No Badge, Gender Badge & Action Buttons */}
                             <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-1.5 flex-wrap">
                                 <span className="w-6 h-6 rounded-lg bg-emerald-800 text-white font-mono font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
                                   {st.rollNo}
                                 </span>
@@ -2100,6 +2160,11 @@ export const TeacherDashboard: React.FC = () => {
                                 >
                                   {st.gender || 'M'}
                                 </span>
+                                {isDuplicate && (
+                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700 border border-red-300">
+                                    ⚠️ Duplicate Adm No
+                                  </span>
+                                )}
                               </div>
 
                               <div className="flex items-center gap-1">
@@ -2137,7 +2202,15 @@ export const TeacherDashboard: React.FC = () => {
                             <div className="mt-2.5 pt-2 border-t border-slate-100 space-y-1 text-[11px]">
                               <div className="flex items-center justify-between text-slate-500">
                                 <span>Adm No:</span>
-                                <span className="font-mono font-bold text-slate-700">{st.admissionNo}</span>
+                                <span
+                                  className={`font-mono font-bold ${
+                                    isDuplicate
+                                      ? 'text-red-700 bg-red-100 px-1 py-0.5 rounded border border-red-200'
+                                      : 'text-slate-700'
+                                  }`}
+                                >
+                                  {st.admissionNo}
+                                </span>
                               </div>
                               <div className="flex items-center justify-between text-slate-500">
                                 <span>Class:</span>
@@ -2158,6 +2231,18 @@ export const TeacherDashboard: React.FC = () => {
                                 </div>
                               )}
                             </div>
+
+                            {isDuplicate && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteStudent(st)}
+                                className="w-full mt-2.5 py-1 px-2 text-[11px] font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg shadow-2xs transition flex items-center justify-center gap-1 cursor-pointer"
+                                title="Resolve duplicate: Permanently removes this redundant student record"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Resolve / Delete</span>
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -2352,8 +2437,18 @@ export const TeacherDashboard: React.FC = () => {
                       required
                       value={studentFormData.admissionNo}
                       onChange={e => setStudentFormData({ ...studentFormData, admissionNo: e.target.value })}
-                      className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none font-mono"
+                      className={`w-full p-2 border rounded-xl focus:ring-2 focus:outline-none font-mono ${
+                        isTeacherAdmDuplicate
+                          ? 'border-red-500 bg-red-50 text-red-900 focus:ring-red-400'
+                          : 'border-slate-300 focus:ring-emerald-700'
+                      }`}
                     />
+                    {isTeacherAdmDuplicate && (
+                      <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-red-600">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        Admission Number [{trimmedTeacherAdm}] already exists! Please use a unique Admission Number.
+                      </p>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
@@ -2387,8 +2482,8 @@ export const TeacherDashboard: React.FC = () => {
                     </button>
                     <button
                       type="submit"
-                      disabled={isSavingStudent}
-                      className="px-4 py-2 text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition font-bold disabled:opacity-50 cursor-pointer flex items-center gap-1.5 shadow-xs"
+                      disabled={isSavingStudent || isTeacherAdmDuplicate}
+                      className="px-4 py-2 text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition font-bold disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1.5 shadow-xs"
                     >
                       <Save className="w-3.5 h-3.5" />
                       <span>{isSavingStudent ? 'Saving...' : 'Save Changes'}</span>
@@ -3178,19 +3273,23 @@ export const TeacherDashboard: React.FC = () => {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                         {classStudents.map(st => {
                           const isPresent = dailyStatusMap[st.id] !== false;
+                          const isDupAdm =
+                            (teacherAdmCounts.get(String(st.admissionNo || '').trim().toLowerCase()) || 0) > 1;
 
                           return (
                             <div
                               key={st.id}
                               onClick={() => !isDailyLocked && !isDailyHoliday && toggleDailyStudent(st.id)}
                               className={`flex items-center justify-between p-3 rounded-xl border transition-all select-none ${
-                                isDailyHoliday
+                                isDupAdm
+                                  ? 'bg-red-50/95 border-2 border-red-400 text-red-950'
+                                  : isDailyHoliday
                                   ? 'bg-amber-50/30 border-amber-200/60 cursor-default opacity-85'
                                   : isDailyLocked
                                   ? 'cursor-default'
                                   : 'cursor-pointer'
                               } ${
-                                !isDailyHoliday && (isPresent
+                                !isDailyHoliday && !isDupAdm && (isPresent
                                   ? isDailyLocked
                                     ? 'bg-emerald-50/40 border-emerald-200/70'
                                     : 'bg-emerald-50/60 border-emerald-200 hover:bg-emerald-50'
@@ -3204,8 +3303,13 @@ export const TeacherDashboard: React.FC = () => {
                                   {st.rollNo}
                                 </span>
                                 <div className="min-w-0">
-                                  <div className="font-bold text-slate-900 text-sm truncate flex items-center gap-1.5">
+                                  <div className="font-bold text-slate-900 text-sm truncate flex items-center gap-1.5 flex-wrap">
                                     <span className="whitespace-nowrap">{st.nameEn}</span>
+                                    {isDupAdm && (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-300 shadow-2xs">
+                                        ⚠️ Duplicate Adm No
+                                      </span>
+                                    )}
                                     <span
                                       className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
                                         st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
@@ -3215,7 +3319,16 @@ export const TeacherDashboard: React.FC = () => {
                                     </span>
                                   </div>
                                   <div className="text-[11px] text-slate-500 whitespace-nowrap">
-                                    Adm: <span className="font-mono font-bold text-slate-700">{st.admissionNo}</span>
+                                    Adm:{' '}
+                                    <span
+                                      className={`font-mono font-bold ${
+                                        isDupAdm
+                                          ? 'text-red-700 bg-red-100 px-1 py-0.5 rounded border border-red-200'
+                                          : 'text-slate-700'
+                                      }`}
+                                    >
+                                      {st.admissionNo}
+                                    </span>
                                     {st.nameMl && (
                                       <span className="ml-2 text-slate-500 font-ml">{st.nameMl}</span>
                                     )}
@@ -3224,6 +3337,20 @@ export const TeacherDashboard: React.FC = () => {
                               </div>
 
                               <div className="flex items-center gap-2 shrink-0">
+                                {isDupAdm && (
+                                  <button
+                                    type="button"
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      handleDeleteStudent(st);
+                                    }}
+                                    className="px-2 py-1 text-[11px] font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg shadow-2xs transition flex items-center gap-1 cursor-pointer"
+                                    title="Resolve duplicate student by removing this record"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                    <span>Resolve / Delete</span>
+                                  </button>
+                                )}
                                 {isDailyHoliday ? (
                                   <span className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-amber-100 text-amber-900 border border-amber-200">
                                     🏖️ Exempt (Holiday)
@@ -3501,15 +3628,52 @@ export const TeacherDashboard: React.FC = () => {
                           elapsedWorkingDays.forEach(d => {
                             if (studentWeek[d.dateStr] !== false) weekPresentCount++;
                           });
+                          const isDupAdm =
+                            (teacherAdmCounts.get(String(st.admissionNo || '').trim().toLowerCase()) || 0) > 1;
 
                           return (
-                            <tr key={st.id} className="hover:bg-slate-50/80 transition">
+                            <tr
+                              key={st.id}
+                              className={
+                                isDupAdm
+                                  ? 'bg-red-50/90 border-l-4 border-red-500 hover:bg-red-100/70 transition'
+                                  : 'hover:bg-slate-50/80 transition'
+                              }
+                            >
                               <td className="py-3 px-3 text-center font-mono font-bold text-slate-600">
                                 {st.rollNo}
                               </td>
                               <td className="py-3 px-4 whitespace-nowrap">
-                                <div className="font-bold text-slate-900">{st.nameEn}</div>
-                                <div className="text-[10px] text-slate-500 font-mono">Adm: {st.admissionNo}</div>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-bold text-slate-900">{st.nameEn}</span>
+                                  {isDupAdm && (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-red-100 text-red-700 border border-red-300 shadow-2xs">
+                                      ⚠️ Duplicate Adm No
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-slate-500 font-mono mt-0.5 flex items-center gap-1.5">
+                                  <span>Adm:</span>
+                                  <span
+                                    className={
+                                      isDupAdm
+                                        ? 'text-red-700 bg-red-100 px-1 rounded font-bold border border-red-200'
+                                        : ''
+                                    }
+                                  >
+                                    {st.admissionNo}
+                                  </span>
+                                  {isDupAdm && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteStudent(st)}
+                                      className="ml-2 px-1.5 py-0.5 text-[9px] font-bold text-white bg-red-600 hover:bg-red-700 rounded shadow-2xs transition cursor-pointer"
+                                      title="Resolve duplicate entry"
+                                    >
+                                      Resolve / Delete
+                                    </button>
+                                  )}
+                                </div>
                               </td>
 
                               {weekDays.map(d => {

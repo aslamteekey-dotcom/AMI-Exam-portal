@@ -90,9 +90,13 @@ export const BulkReportsPrint: React.FC = () => {
         const data = await res.json();
         const rawReports: StudentProgressReport[] = Array.isArray(data.reports) ? data.reports : [];
         const safeReports = rawReports.filter(r => r && r.student);
+        // Strict deduplication by admissionNo or id
+        const uniqueReports = Array.from(
+          new Map(safeReports.map(r => [r.student.admissionNo?.toString() || r.student.id, r])).values()
+        );
 
         // Sort: Boys first, then alphabetical by student English name
-        const sortedReports = [...safeReports].sort((a, b) => {
+        const sortedReports = [...uniqueReports].sort((a, b) => {
           const isGirlA = (a.student?.gender || 'M').toUpperCase().startsWith('F');
           const isGirlB = (b.student?.gender || 'M').toUpperCase().startsWith('F');
           if (isGirlA !== isGirlB) return isGirlA ? 1 : -1;
@@ -100,7 +104,13 @@ export const BulkReportsPrint: React.FC = () => {
             .trim()
             .toLowerCase()
             .localeCompare((b.student?.nameEn || '').trim().toLowerCase());
-        });
+        }).map((r, idx) => ({
+          ...r,
+          student: {
+            ...r.student,
+            rollNo: idx + 1,
+          },
+        }));
 
         setReportsData({
           reports: sortedReports,

@@ -6,10 +6,12 @@ import {
   deleteDoc,
   onSnapshot,
   writeBatch,
+  query,
+  where,
   Unsubscribe,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
-import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination, FeePayment, ClassAttendanceConfig, InstitutionHoliday, AuditLog, InstitutionSettings } from '../types';
+import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination, FeePayment, ClassAttendanceConfig, InstitutionHoliday, AuditLog, InstitutionSettings, assignClassSequentialRollNumbers } from '../types';
 
 /**
  * Removes undefined fields from objects before saving to Firestore,
@@ -94,19 +96,48 @@ export class FirestoreSyncService {
           async snapshot => {
             if (!snapshot.empty) {
               markGloballySeeded();
-              // Purge mock students from Firestore if present
+              // 1. Purge rogue mock students and deduplicate multiple documents with same admission number
+              const seenAdmissions = new Map<string, string>(); // admNo -> canonical doc.id
+              const duplicateDocIdsToDelete: string[] = [];
+
               snapshot.docs.forEach(d => {
                 const data = d.data() as any;
+                const adm = String(data?.admissionNo || '').trim();
+                const name = String(data?.nameEn || '').trim();
+
+                // Rogue mock students removal
                 if (
                   ['st_501', 'st_301', 'st_903'].includes(d.id) ||
-                  ['5001', '3001', '9003'].includes(String(data?.admissionNo)) ||
-                  ['Ahmed Nihal', 'Adil Mansoor', 'Adil Ibrahim'].includes(data?.nameEn)
+                  ['5001', '3001', '9003'].includes(adm) ||
+                  ['Ahmed Nihal', 'Adil Mansoor', 'Adil Ibrahim'].includes(name)
                 ) {
-                  deleteDoc(doc(db, 'students', d.id)).catch(() => {});
+                  duplicateDocIdsToDelete.push(d.id);
+                  return;
+                }
+
+                // If document is legacy 'st_701' and there's also '862' (or duplicate admission numbers)
+                if (adm) {
+                  if (seenAdmissions.has(adm)) {
+                    const existingId = seenAdmissions.get(adm)!;
+                    // Prefer doc whose ID matches admissionNo or non-st_ ID
+                    if (existingId.startsWith('st_') && !d.id.startsWith('st_')) {
+                      duplicateDocIdsToDelete.push(existingId);
+                      seenAdmissions.set(adm, d.id);
+                    } else {
+                      duplicateDocIdsToDelete.push(d.id);
+                    }
+                  } else {
+                    seenAdmissions.set(adm, d.id);
+                  }
                 }
               });
 
-              const students = snapshot.docs
+              duplicateDocIdsToDelete.forEach(dupId => {
+                deleteDoc(doc(db, 'students', dupId)).catch(() => {});
+              });
+
+              const rawStudents = snapshot.docs
+                .filter(d => !duplicateDocIdsToDelete.includes(d.id))
                 .map(doc => {
                   const data = doc.data() as any;
                   const regNos: Record<string, string> = {
@@ -142,7 +173,13 @@ export class FirestoreSyncService {
                     st.nameEn !== 'Adil Mansoor' &&
                     st.nameEn !== 'Adil Ibrahim'
                 );
-              callbacks.onStudents?.(students);
+
+              // Strict deduplication by admissionNo or id
+              const uniqueStudents = Array.from(
+                new Map(rawStudents.map(s => [s.admissionNo?.toString() || s.id, s])).values()
+              );
+              const resequenced = assignClassSequentialRollNumbers(uniqueStudents);
+              callbacks.onStudents?.(resequenced);
             } else {
               // Collection is empty in Firestore
               if (!isGloballySeeded() && !localSeeded && callbacks.getInitialStudents) {
@@ -151,8 +188,11 @@ export class FirestoreSyncService {
                 try {
                   const initialList = callbacks.getInitialStudents();
                   if (Array.isArray(initialList) && initialList.length > 0) {
-                    callbacks.onStudents?.(initialList);
-                    for (const st of initialList) {
+                    const uniqueInit = Array.from(
+                      new Map(initialList.map(s => [s.admissionNo?.toString() || s.id, s])).values()
+                    );
+                    callbacks.onStudents?.(uniqueInit);
+                    for (const st of uniqueInit) {
                       await setDoc(doc(db, 'students', st.id), cleanForFirestore(st));
                     }
                   } else {
@@ -584,19 +624,21 @@ export class FirestoreSyncService {
     this.unsubscribers = [];
   }
 
-  // Sync single student (strictly deduplicated across student.id and sanitized Admission No)
+  // Sync single student to their canonical document ID
   public async syncStudent(student: Student): Promise<void> {
     try {
-      const cleanData = cleanForFirestore({ ...student });
-      if (student.id) {
-        await setDoc(doc(db, 'students', student.id), cleanData, { merge: true });
-      }
+      const canonicalId = student.id || String(student.admissionNo).trim();
+      if (!canonicalId) return;
+      const cleanData = cleanForFirestore({ ...student, id: canonicalId });
+      await setDoc(doc(db, 'students', canonicalId), cleanData, { merge: true });
+
+      // Clean up legacy alias doc if student ID and admission number differed, so duplicate docs are not kept in Firestore
       const admKey = String(student.admissionNo || '').trim();
-      if (admKey && admKey !== student.id) {
-        await setDoc(doc(db, 'students', admKey), cleanData, { merge: true });
+      if (admKey && admKey !== canonicalId && canonicalId.startsWith('st_')) {
+        deleteDoc(doc(db, 'students', admKey)).catch(() => {});
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `students/${student.admissionNo || student.id}`);
+      handleFirestoreError(e, OperationType.WRITE, `students/${student.id || student.admissionNo}`);
       throw e;
     }
   }
@@ -643,9 +685,26 @@ export class FirestoreSyncService {
   }
 
   // Delete student
-  public async deleteStudent(studentId: string): Promise<void> {
+  public async deleteStudent(studentId: string, admissionNo?: string): Promise<void> {
     try {
-      await deleteDoc(doc(db, 'students', studentId));
+      if (studentId) {
+        await deleteDoc(doc(db, 'students', studentId)).catch(() => {});
+      }
+      const admKey = String(admissionNo || '').trim();
+      if (admKey) {
+        if (admKey !== studentId) {
+          await deleteDoc(doc(db, 'students', admKey)).catch(() => {});
+        }
+        try {
+          const q = query(collection(db, 'students'), where('admissionNo', '==', admKey));
+          const snap = await getDocs(q);
+          for (const d of snap.docs) {
+            await deleteDoc(doc(db, 'students', d.id)).catch(() => {});
+          }
+        } catch (qErr) {
+          console.warn('Firestore query by admissionNo delete error:', qErr);
+        }
+      }
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `students/${studentId}`);
       throw e;

@@ -70,7 +70,10 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
       setSubject(data.subject);
       setExam(data.examination || data.exam);
       setComponents(data.components || []);
-      const sortedStudents = sortStudentsBoysFirst<Student>(data.students || []).map((s, idx) => ({
+      const uniqueRaw = Array.from(
+        new Map((data.students || []).map((s: Student) => [s.admissionNo?.toString() || s.id, s])).values()
+      ) as Student[];
+      const sortedStudents = sortStudentsBoysFirst<Student>(uniqueRaw).map((s, idx) => ({
         ...s,
         rollNo: idx + 1,
       }));

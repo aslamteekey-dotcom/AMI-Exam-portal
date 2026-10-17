@@ -86,7 +86,10 @@ export const ParentManagement: React.FC = () => {
       const sData = await resS.json();
       const cData = await resC.json();
       setParents(pData);
-      setStudents(sortStudentsBoysFirst(sData));
+      const uniqueStudents = Array.from(
+        new Map((sData || []).map((s: Student) => [s.admissionNo?.toString() || s.id, s])).values()
+      ) as Student[];
+      setStudents(sortStudentsBoysFirst<Student>(uniqueStudents));
       setClasses(cData);
     } catch (err) {
       console.error('Error loading parents:', err);
@@ -316,10 +319,6 @@ export const ParentManagement: React.FC = () => {
             };
             if (st.id) {
               batch.set(doc(db, 'students', st.id), cleanForFirestore(studentUpdate), { merge: true });
-            }
-            const admKey = String(st.admissionNo || '').trim();
-            if (admKey && admKey !== st.id) {
-              batch.set(doc(db, 'students', admKey), cleanForFirestore(studentUpdate), { merge: true });
             }
           }
           await batch.commit();

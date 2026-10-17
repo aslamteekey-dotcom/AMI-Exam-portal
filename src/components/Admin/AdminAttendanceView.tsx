@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
-import { cleanForFirestore } from '../../services/firestoreSync';
+import { cleanForFirestore, firestoreSync } from '../../services/firestoreSync';
 import { collection, doc, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
 import {
   ClassItem,
@@ -23,10 +23,12 @@ import {
   ChevronRight,
   RotateCcw,
   AlertCircle,
+  AlertTriangle,
   Save,
   CheckCheck,
   Edit3,
   Users,
+  Trash2,
 } from 'lucide-react';
 
 const formatLocalDate = (d: Date): string => {
@@ -166,6 +168,42 @@ export const AdminAttendanceView: React.FC = () => {
   const classStudents = sortStudentsBoysFirst(
     students.filter(s => s.classId === selectedClassId && s.status === 'active')
   );
+
+  const adminAdmCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    students.forEach(s => {
+      const adm = String(s.admissionNo || '').trim().toLowerCase();
+      if (adm) {
+        counts.set(adm, (counts.get(adm) || 0) + 1);
+      }
+    });
+    return counts;
+  }, [students]);
+
+  const handleResolveDuplicate = async (st: Student) => {
+    if (!window.confirm(`Delete duplicate student "${st.nameEn}" (${st.admissionNo})?`)) return;
+    try {
+      setStudents(prev => prev.filter(s => s.id !== st.id && (!st.admissionNo || s.admissionNo !== st.admissionNo)));
+      await deleteDoc(doc(db, 'students', st.id)).catch(() => {});
+      if (st.admissionNo && st.admissionNo !== st.id) {
+        await deleteDoc(doc(db, 'students', st.admissionNo)).catch(() => {});
+      }
+      await firestoreSync.deleteStudent(st.id, st.admissionNo);
+      await fetchWithAuth(
+        `/api/students/${st.id}?admissionNo=${encodeURIComponent(st.admissionNo || '')}`,
+        { method: 'DELETE' }
+      );
+      logAuditEvent({
+        action: 'STUDENT_DELETED',
+        details: `Administrator resolved duplicate student ${st.nameEn} (Adm: ${st.admissionNo}) from Attendance Roster.`,
+        currentUser: user,
+        recordType: 'student',
+        recordId: st.id,
+      }).catch(e => console.warn('Audit log error:', e));
+    } catch (err: any) {
+      alert('Failed to delete duplicate student: ' + (err.message || 'Unknown error'));
+    }
+  };
 
   const selectedClass = classes.find(c => c.id === selectedClassId);
 

@@ -65,6 +65,15 @@ html[lang="ml"] td {
   font-family: 'Noto Serif Malayalam', 'Inter', serif;
 }
 
+/* Cross-browser no-scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 @page {
   size: A4 portrait;
   margin: 8mm 10mm;
