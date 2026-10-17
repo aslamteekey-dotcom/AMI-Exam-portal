@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { db, handleFirestoreError, OperationType } from '../../services/firebase';
-import { cleanForFirestore, firestoreSync } from '../../services/firestoreSync';
-import { collection, doc, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
+import { db } from '../../services/firebase';
+import { cleanForFirestore } from '../../services/firestoreSync';
+import { handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
+import { collection, doc, onSnapshot, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import {
   ClassItem,
   Student,
   ClassAttendanceConfig,
   DailyAttendanceRecord,
   InstitutionHoliday,
+  AttendanceEditRequest,
   sortStudentsBoysFirst,
 } from '../../types';
 import { logAuditEvent } from '../../services/auditLogger';
@@ -18,10 +20,10 @@ import {
   Check,
   X,
   Lock,
+  Unlock,
   CheckCircle,
   ChevronLeft,
   ChevronRight,
-  RotateCcw,
   AlertCircle,
   AlertTriangle,
   Save,
@@ -29,7 +31,15 @@ import {
   Edit3,
   Users,
   Trash2,
+  FileSpreadsheet,
+  Clock,
+  Shield,
+  Bell,
+  Sparkles,
+  HelpCircle,
 } from 'lucide-react';
+
+const ACADEMIC_YEAR_START_DATE = '2026-06-01';
 
 const formatLocalDate = (d: Date): string => {
   const y = d.getFullYear();
@@ -62,19 +72,34 @@ export const AdminAttendanceView: React.FC = () => {
   const [selectedClassId, setSelectedClassId] = useState<string>('class_1');
   const [students, setStudents] = useState<Student[]>([]);
   const [classAttendanceConfig, setClassAttendanceConfig] = useState<ClassAttendanceConfig | null>(null);
-  const [attendanceMode, setAttendanceMode] = useState<'daily' | 'weekly'>('daily');
+
+  // Tab Modes: 'overview' (Ledger & Summary) | 'daily' | 'weekly' | 'holidays' | 'requests'
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'daily' | 'weekly' | 'holidays' | 'requests'>('overview');
+
   const [todayStr] = useState<string>(() => formatLocalDate(new Date()));
   const [selectedDate, setSelectedDate] = useState<string>(() => formatLocalDate(new Date()));
   const [selectedWeekDate, setSelectedWeekDate] = useState<string>(() => formatLocalDate(new Date()));
   const [institutionHolidays, setInstitutionHolidays] = useState<Record<string, InstitutionHoliday>>({});
+  
+  // Holiday Form State
+  const [newHolidayDate, setNewHolidayDate] = useState<string>(() => formatLocalDate(new Date()));
+  const [newHolidayReason, setNewHolidayReason] = useState<string>('');
   const [holidayModalDate, setHolidayModalDate] = useState<string | null>(null);
   const [holidayReasonInput, setHolidayReasonInput] = useState<string>('');
   const [isSavingHoliday, setIsSavingHoliday] = useState(false);
+
+  // Edit Requests
+  const [editRequests, setEditRequests] = useState<AttendanceEditRequest[]>([]);
+  const [requestFilter, setRequestFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [isProcessingRequest, setIsProcessingRequest] = useState<string | null>(null);
+
+  // Attendance states
   const [unlockedDates, setUnlockedDates] = useState<Record<string, boolean>>({});
   const [dailyStatusMap, setDailyStatusMap] = useState<Record<string, boolean>>({});
   const [weeklyStatusMap, setWeeklyStatusMap] = useState<Record<string, Record<string, boolean>>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [dailyViewLayout, setDailyViewLayout] = useState<'table' | 'cards'>('table');
 
   // Load Classes and Students
   useEffect(() => {
@@ -100,7 +125,7 @@ export const AdminAttendanceView: React.FC = () => {
     loadInitialData();
   }, []);
 
-  // Listen to institutionHolidays from Firestore
+  // Listen to institutionHolidays from Firestore in real-time
   useEffect(() => {
     let unsub: (() => void) | undefined;
     try {
@@ -126,6 +151,39 @@ export const AdminAttendanceView: React.FC = () => {
       );
     } catch (e) {
       console.warn('Could not subscribe to institutionHolidays in AdminAttendanceView:', e);
+    }
+    return () => {
+      if (unsub) unsub();
+    };
+  }, []);
+
+  // Listen to attendanceEditRequests from Firestore in real-time
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    try {
+      unsub = onSnapshot(
+        collection(db, 'attendanceEditRequests'),
+        snapshot => {
+          const list: AttendanceEditRequest[] = [];
+          snapshot.docs.forEach(docSnap => {
+            const data = docSnap.data() as AttendanceEditRequest;
+            list.push({
+              ...data,
+              id: docSnap.id,
+            });
+          });
+          // Sort pending first, then by requestedAt desc
+          list.sort((a, b) => {
+            if (a.status === 'pending' && b.status !== 'pending') return -1;
+            if (a.status !== 'pending' && b.status === 'pending') return 1;
+            return new Date(b.requestedAt || 0).getTime() - new Date(a.requestedAt || 0).getTime();
+          });
+          setEditRequests(list);
+        },
+        err => console.warn('attendanceEditRequests listener error:', err)
+      );
+    } catch (e) {
+      console.warn('Could not subscribe to attendanceEditRequests:', e);
     }
     return () => {
       if (unsub) unsub();
@@ -165,45 +223,11 @@ export const AdminAttendanceView: React.FC = () => {
     };
   }, [selectedClassId]);
 
-  const classStudents = sortStudentsBoysFirst(
-    students.filter(s => s.classId === selectedClassId && s.status === 'active')
-  );
-
-  const adminAdmCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    students.forEach(s => {
-      const adm = String(s.admissionNo || '').trim().toLowerCase();
-      if (adm) {
-        counts.set(adm, (counts.get(adm) || 0) + 1);
-      }
-    });
-    return counts;
-  }, [students]);
-
-  const handleResolveDuplicate = async (st: Student) => {
-    if (!window.confirm(`Delete duplicate student "${st.nameEn}" (${st.admissionNo})?`)) return;
-    try {
-      setStudents(prev => prev.filter(s => s.id !== st.id && (!st.admissionNo || s.admissionNo !== st.admissionNo)));
-      await deleteDoc(doc(db, 'students', st.id)).catch(() => {});
-      if (st.admissionNo && st.admissionNo !== st.id) {
-        await deleteDoc(doc(db, 'students', st.admissionNo)).catch(() => {});
-      }
-      await firestoreSync.deleteStudent(st.id, st.admissionNo);
-      await fetchWithAuth(
-        `/api/students/${st.id}?admissionNo=${encodeURIComponent(st.admissionNo || '')}`,
-        { method: 'DELETE' }
-      );
-      logAuditEvent({
-        action: 'STUDENT_DELETED',
-        details: `Administrator resolved duplicate student ${st.nameEn} (Adm: ${st.admissionNo}) from Attendance Roster.`,
-        currentUser: user,
-        recordType: 'student',
-        recordId: st.id,
-      }).catch(e => console.warn('Audit log error:', e));
-    } catch (err: any) {
-      alert('Failed to delete duplicate student: ' + (err.message || 'Unknown error'));
-    }
-  };
+  const classStudents = useMemo(() => {
+    return sortStudentsBoysFirst(
+      students.filter(s => s.classId === selectedClassId && s.status === 'active')
+    );
+  }, [students, selectedClassId]);
 
   const selectedClass = classes.find(c => c.id === selectedClassId);
 
@@ -227,7 +251,7 @@ export const AdminAttendanceView: React.FC = () => {
       }
     });
     setDailyStatusMap(initialMap);
-  }, [selectedClassId, selectedDate, classAttendanceConfig, students]);
+  }, [selectedClassId, selectedDate, classAttendanceConfig, classStudents]);
 
   // Week days generator
   const getWeekDays = (baseDateStr: string) => {
@@ -274,7 +298,7 @@ export const AdminAttendanceView: React.FC = () => {
       });
     });
     setWeeklyStatusMap(map);
-  }, [selectedClassId, selectedWeekDate, classAttendanceConfig, students]);
+  }, [selectedClassId, selectedWeekDate, classAttendanceConfig, classStudents]);
 
   const isDateHoliday = (dateStr: string): boolean => {
     if (institutionHolidays[dateStr]) return true;
@@ -298,27 +322,31 @@ export const AdminAttendanceView: React.FC = () => {
   };
 
   const isDateLocked = (dateStr: string): boolean => {
-    if (isDateHoliday(dateStr)) return true; // Holidays locked against checkbox editing
-    if (dateStr > todayStr) return true; // Future dates locked
-    if (unlockedDates[dateStr]) return false; // Unlocked by user
-    return Boolean(classAttendanceConfig?.dailyRecords?.[dateStr]); // Locked if recorded
+    if (isDateHoliday(dateStr)) return true;
+    if (dateStr > todayStr) return true;
+    if (unlockedDates[dateStr]) return false;
+    const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
+    if (!rec) return false;
+    // If record exists and marked unlocked by admin/principal approval
+    if (rec.unlocked === true || rec.editable === true) return false;
+    return true;
   };
 
-  const handleOpenMarkHoliday = (dateStr: string) => {
-    setHolidayModalDate(dateStr);
-    const existing = getHolidayInfo(dateStr);
-    setHolidayReasonInput(existing?.reason || '');
-  };
-
-  const handleConfirmMarkHoliday = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!holidayModalDate) return;
+  // -------------------------------------------------------------
+  // Holiday Management (Exclusively for Admin / Principal)
+  // -------------------------------------------------------------
+  const handleDeclareHoliday = async (dateStr: string, reasonInput: string) => {
+    if (!dateStr) return;
+    if (dateStr < ACADEMIC_YEAR_START_DATE) {
+      alert(`Dates prior to June 1 of the academic year (${ACADEMIC_YEAR_START_DATE}) cannot be modified.`);
+      return;
+    }
     setIsSavingHoliday(true);
     try {
-      const reason = holidayReasonInput.trim() || 'Official Holiday / Non-Working Day';
+      const reason = reasonInput.trim() || 'Official Holiday / Non-Working Day';
       const holidayData: InstitutionHoliday = {
-        id: holidayModalDate,
-        date: holidayModalDate,
+        id: dateStr,
+        date: dateStr,
         reason,
         markedBy: user?.name || 'Principal ASLAM TK',
         markedAt: new Date().toISOString(),
@@ -327,20 +355,20 @@ export const AdminAttendanceView: React.FC = () => {
       };
 
       // 1. Direct write to Firestore 'institutionHolidays'
-      await setDoc(doc(db, 'institutionHolidays', holidayModalDate), cleanForFirestore(holidayData), { merge: true });
+      await setDoc(doc(db, 'institutionHolidays', dateStr), cleanForFirestore(holidayData), { merge: true });
 
       // 2. Update local state
       setInstitutionHolidays(prev => ({
         ...prev,
-        [holidayModalDate]: holidayData,
+        [dateStr]: holidayData,
       }));
 
-      // 3. Update classAttendanceConfig.dailyRecords with isHoliday
+      // 3. Update classAttendanceConfig.dailyRecords with isHoliday if selected
       if (selectedClassId) {
         const updatedDailyRecords = {
           ...(classAttendanceConfig?.dailyRecords || {}),
-          [holidayModalDate]: {
-            date: holidayModalDate,
+          [dateStr]: {
+            date: dateStr,
             presentStudentIds: [],
             absentStudentIds: [],
             statusMap: {},
@@ -352,7 +380,7 @@ export const AdminAttendanceView: React.FC = () => {
         };
 
         const totalHolidays = Object.keys(updatedDailyRecords).filter(
-          k => updatedDailyRecords[k]?.isHoliday || institutionHolidays[k] || k === holidayModalDate
+          k => updatedDailyRecords[k]?.isHoliday || institutionHolidays[k] || k === dateStr
         ).length;
         const totalWorking = Math.max(1, (classAttendanceConfig?.totalWorkingDays || 88) - totalHolidays);
 
@@ -375,17 +403,18 @@ export const AdminAttendanceView: React.FC = () => {
         body: JSON.stringify(holidayData),
       });
 
-      // 5. Trigger immutable audit log
+      // 5. Immutable Audit Log
       logAuditEvent({
         action: 'HOLIDAY_MARKED',
-        details: `Principal ${user?.name || 'ASLAM TK'} officially declared ${holidayModalDate} as Holiday ("${reason}").`,
+        details: `Principal ${user?.name || 'ASLAM TK'} designated ${dateStr} as Official Holiday ("${reason}"). Excluded from working days across the institution.`,
         currentUser: user,
         recordType: 'institution_holiday',
-        recordId: holidayModalDate,
+        recordId: dateStr,
       }).catch(e => console.warn('Audit log error:', e));
 
       setHolidayModalDate(null);
-      alert(`Date ${holidayModalDate} officially designated as Holiday ("${reason}"). Working days and attendance percentages are safeguarded without penalty.`);
+      setNewHolidayReason('');
+      alert(`Date ${dateStr} successfully designated as Holiday ("${reason}"). Working days and attendance percentages are automatically safeguarded across the institution.`);
     } catch (err: any) {
       alert('Failed to mark holiday: ' + (err.message || 'Unknown error'));
     } finally {
@@ -395,7 +424,7 @@ export const AdminAttendanceView: React.FC = () => {
 
   const handleRemoveHoliday = async (dateStr: string) => {
     const confirm = window.confirm(
-      `Restore date ${dateStr} as a regular working day? This will remove the holiday exemption banner.`
+      `Restore date ${dateStr} as a regular working day? This will remove the holiday exemption across the entire institution.`
     );
     if (!confirm) return;
 
@@ -429,12 +458,139 @@ export const AdminAttendanceView: React.FC = () => {
 
       await fetchWithAuth(`/api/institution-holidays?date=${dateStr}`, { method: 'DELETE' });
 
+      logAuditEvent({
+        action: 'HOLIDAY_REMOVED',
+        details: `Principal ${user?.name || 'ASLAM TK'} restored date ${dateStr} as a regular working day.`,
+        currentUser: user,
+        recordType: 'institution_holiday',
+        recordId: dateStr,
+      }).catch(e => console.warn('Audit log error:', e));
+
       alert(`Holiday designation removed for ${dateStr}. Restored to normal working day.`);
     } catch (err: any) {
       alert('Failed to remove holiday: ' + (err.message || 'Unknown error'));
     }
   };
 
+  // -------------------------------------------------------------
+  // Attendance Edit Request Approvals (Principal Unlock Workflow)
+  // -------------------------------------------------------------
+  const handleApproveUnlockRequest = async (req: AttendanceEditRequest) => {
+    setIsProcessingRequest(req.id);
+    try {
+      const nowIso = new Date().toISOString();
+      const approverName = user?.name || 'Principal ASLAM TK';
+
+      // 1. Update attendanceEditRequests in Firestore
+      await setDoc(
+        doc(db, 'attendanceEditRequests', req.id),
+        {
+          status: 'approved',
+          resolvedAt: nowIso,
+          resolvedBy: approverName,
+        },
+        { merge: true }
+      );
+
+      // 2. Unlock the attendance daily record for that class and date in Firestore
+      const classRef = doc(db, 'attendance', req.classId);
+      await setDoc(
+        classRef,
+        {
+          dailyRecords: {
+            [req.date]: {
+              unlocked: true,
+              editable: true,
+              unlockedAt: nowIso,
+              unlockedBy: approverName,
+            },
+          },
+          updatedAt: nowIso,
+        },
+        { merge: true }
+      );
+
+      // 3. Local API sync
+      await fetchWithAuth(`/api/attendance-edit-requests/${req.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'approved',
+          resolvedAt: nowIso,
+          resolvedBy: approverName,
+        }),
+      });
+
+      // 4. Audit Log
+      logAuditEvent({
+        action: 'ATTENDANCE_UNLOCKED',
+        details: `Principal approved attendance edit request for Class ${req.className || req.classId} on ${req.date}. Requested by ${req.teacherName}. Reason: "${req.reason}".`,
+        currentUser: user,
+        recordType: 'attendance_edit_request',
+        recordId: req.id,
+      }).catch(e => console.warn('Audit log error:', e));
+
+      // Update local state if currently viewing this class
+      if (req.classId === selectedClassId) {
+        setUnlockedDates(prev => ({ ...prev, [req.date]: true }));
+      }
+
+      alert(`Attendance edit request APPROVED & UNLOCKED for ${req.className || req.classId} on ${req.date}. Teacher ${req.teacherName} can now make corrections.`);
+    } catch (err: any) {
+      alert('Failed to approve unlock request: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsProcessingRequest(null);
+    }
+  };
+
+  const handleRejectUnlockRequest = async (req: AttendanceEditRequest) => {
+    const reason = prompt('Optional reason for rejecting this unlock request:') || 'Rejected by Principal';
+    setIsProcessingRequest(req.id);
+    try {
+      const nowIso = new Date().toISOString();
+      const approverName = user?.name || 'Principal ASLAM TK';
+
+      await setDoc(
+        doc(db, 'attendanceEditRequests', req.id),
+        {
+          status: 'rejected',
+          resolvedAt: nowIso,
+          resolvedBy: approverName,
+          resolutionNote: reason,
+        },
+        { merge: true }
+      );
+
+      await fetchWithAuth(`/api/attendance-edit-requests/${req.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'rejected',
+          resolvedAt: nowIso,
+          resolvedBy: approverName,
+          resolutionNote: reason,
+        }),
+      });
+
+      logAuditEvent({
+        action: 'ATTENDANCE_UNLOCK_REJECTED',
+        details: `Principal rejected attendance edit request for Class ${req.className || req.classId} on ${req.date}. Requested by ${req.teacherName}. Note: "${reason}".`,
+        currentUser: user,
+        recordType: 'attendance_edit_request',
+        recordId: req.id,
+      }).catch(e => console.warn('Audit log error:', e));
+
+      alert(`Unlock request rejected.`);
+    } catch (err: any) {
+      alert('Failed to reject unlock request: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsProcessingRequest(null);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // Daily Attendance Marking & Saving
+  // -------------------------------------------------------------
   const toggleDailyStudent = (studentId: string) => {
     if (isDateLocked(selectedDate)) return;
     setDailyStatusMap(prev => ({
@@ -487,6 +643,8 @@ export const AdminAttendanceView: React.FC = () => {
         holidayReason: isHoliday ? (holInfo?.reason || 'Non-Working Day') : undefined,
         markedAt: new Date().toISOString(),
         markedBy: user?.name || 'Principal ASLAM TK',
+        unlocked: false,
+        editable: false,
       };
 
       const updatedDailyRecords = {
@@ -494,13 +652,11 @@ export const AdminAttendanceView: React.FC = () => {
         [selectedDate]: dailyRecord,
       };
 
-      // Recalculate working days strictly excluding holidays
       const totalHolidays = Object.keys(updatedDailyRecords).filter(
         dKey => updatedDailyRecords[dKey]?.isHoliday || institutionHolidays[dKey]
       ).length;
       const totalWorking = Math.max(1, 88 - totalHolidays);
 
-      // Recalculate student days attended
       const updatedDaysAttended: Record<string, number> = {};
       classStudents.forEach(st => {
         let attended = 0;
@@ -521,10 +677,8 @@ export const AdminAttendanceView: React.FC = () => {
         updatedAt: new Date().toISOString(),
       };
 
-      // 1. Direct Firestore write
       await setDoc(doc(db, 'attendance', selectedClassId), cleanForFirestore(updatedConfig), { merge: true });
 
-      // 2. Also update student documents in Firestore
       for (const st of classStudents) {
         try {
           await setDoc(
@@ -540,17 +694,15 @@ export const AdminAttendanceView: React.FC = () => {
         } catch {}
       }
 
-      // 3. API endpoint call
       await fetchWithAuth(`/api/attendance/class/${selectedClassId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedConfig),
       });
 
-      // 4. Audit Log
       logAuditEvent({
         action: 'ATTENDANCE_MARKED',
-        details: `Principal ${user?.name || 'ASLAM TK'} marked attendance for Class ${selectedClass?.name || selectedClassId} on ${selectedDate}.`,
+        details: `Principal ${user?.name || 'ASLAM TK'} saved attendance for Class ${selectedClass?.name || selectedClassId} on ${selectedDate}.`,
         currentUser: user,
         recordType: 'attendance',
         recordId: `${selectedClassId}_${selectedDate}`,
@@ -574,7 +726,7 @@ export const AdminAttendanceView: React.FC = () => {
       const updatedDailyRecords = { ...(classAttendanceConfig?.dailyRecords || {}) };
 
       weekDays.forEach(w => {
-        if (w.dateStr <= todayStr) {
+        if (w.dateStr <= todayStr && w.dateStr >= ACADEMIC_YEAR_START_DATE) {
           const isHol = isDateHoliday(w.dateStr);
           const holInfo = getHolidayInfo(w.dateStr);
           const pIds: string[] = [];
@@ -597,6 +749,8 @@ export const AdminAttendanceView: React.FC = () => {
             holidayReason: isHol ? (holInfo?.reason || 'Non-Working Day') : undefined,
             markedAt: new Date().toISOString(),
             markedBy: user?.name || 'Principal ASLAM TK',
+            unlocked: false,
+            editable: false,
           };
         }
       });
@@ -667,10 +821,89 @@ export const AdminAttendanceView: React.FC = () => {
     }
   };
 
+  // -------------------------------------------------------------
+  // Class-wise Overview & Ledger Calculations
+  // -------------------------------------------------------------
+  const allDailyKeys = Object.keys(classAttendanceConfig?.dailyRecords || {});
+  const markedDailyRecords = Object.values(classAttendanceConfig?.dailyRecords || {}).filter(
+    r => !r.isHoliday && r.date <= todayStr && r.date >= ACADEMIC_YEAR_START_DATE
+  );
+
+  const totalDeclaredHolidaysCount = Object.keys(institutionHolidays).length;
+  const netClassWorkingDays = Math.max(1, (classAttendanceConfig?.totalWorkingDays || 88));
+
+  // Compute student-wise attended days & percentages
+  const studentLedger = useMemo(() => {
+    return classStudents.map(st => {
+      let attended = 0;
+      let totalAssessedDays = 0;
+
+      markedDailyRecords.forEach(rec => {
+        const isHol = rec.isHoliday || institutionHolidays[rec.date];
+        if (!isHol) {
+          totalAssessedDays++;
+          if (rec.statusMap && rec.statusMap[st.id] !== undefined) {
+            if (rec.statusMap[st.id]) attended++;
+          } else if (rec.presentStudentIds && rec.presentStudentIds.includes(st.id)) {
+            attended++;
+          } else {
+            // default present if not explicitly marked absent
+            if (!rec.absentStudentIds?.includes(st.id)) {
+              attended++;
+            }
+          }
+        }
+      });
+
+      // If recorded in studentDaysAttended, reconcile
+      const recordedDays = classAttendanceConfig?.studentDaysAttended?.[st.id] ?? attended;
+      const finalAttended = totalAssessedDays > 0 ? attended : recordedDays;
+      const finalWorking = totalAssessedDays > 0 ? totalAssessedDays : netClassWorkingDays;
+      const percentage = finalWorking > 0 ? Math.round((finalAttended / finalWorking) * 100) : 100;
+
+      return {
+        student: st,
+        attended: finalAttended,
+        workingDays: finalWorking,
+        percentage,
+      };
+    });
+  }, [classStudents, markedDailyRecords, classAttendanceConfig, institutionHolidays, netClassWorkingDays]);
+
+  const classOverallPercentage = studentLedger.length > 0
+    ? Math.round(studentLedger.reduce((acc, s) => acc + s.percentage, 0) / studentLedger.length)
+    : 100;
+
+  // Monthly Academic Calendar Breakdown
+  const academicMonths = useMemo(() => {
+    return [
+      { key: '2026-06', monthEn: 'June 2026', monthMl: 'ജൂൺ 2026', nominalWorkingDays: 20 },
+      { key: '2026-07', monthEn: 'July 2026', monthMl: 'ജൂലൈ 2026', nominalWorkingDays: 22 },
+      { key: '2026-08', monthEn: 'August 2026', monthMl: 'ഓഗസ്റ്റ് 2026', nominalWorkingDays: 20 },
+      { key: '2026-09', monthEn: 'September 2026', monthMl: 'സെപ്റ്റംബർ 2026', nominalWorkingDays: 21 },
+      { key: '2026-10', monthEn: 'October 2026', monthMl: 'ഒക്ടോബർ 2026', nominalWorkingDays: 19 },
+    ].map(m => {
+      // Find holidays falling into this month
+      const monthHolidays = Object.keys(institutionHolidays).filter(hDate => hDate.startsWith(m.key)).length;
+      const actualWorking = Math.max(0, m.nominalWorkingDays - monthHolidays);
+      
+      // Marked days in this month
+      const monthMarked = markedDailyRecords.filter(r => r.date.startsWith(m.key)).length;
+
+      return {
+        ...m,
+        holidaysExcluded: monthHolidays,
+        actualWorkingDays: actualWorking,
+        markedDays: monthMarked,
+      };
+    });
+  }, [institutionHolidays, markedDailyRecords]);
+
+  // Daily status computation for selectedDate
   const isDailyHoliday = isDateHoliday(selectedDate);
   const dailyHolidayInfo = getHolidayInfo(selectedDate);
   const isDailyLocked = isDateLocked(selectedDate);
-  const isDailyEditing = classAttendanceConfig?.dailyRecords?.[selectedDate] && unlockedDates[selectedDate];
+  const isDailyEditing = classAttendanceConfig?.dailyRecords?.[selectedDate] && (unlockedDates[selectedDate] || classAttendanceConfig.dailyRecords[selectedDate].unlocked);
 
   let dailyPresentCount = 0;
   let dailyAbsentCount = 0;
@@ -682,97 +915,434 @@ export const AdminAttendanceView: React.FC = () => {
     ? Math.round((dailyPresentCount / classStudents.length) * 100)
     : 100;
 
+  const pendingRequestsCount = editRequests.filter(r => r.status === 'pending').length;
+
+  const filteredEditRequests = editRequests.filter(r => {
+    if (requestFilter === 'all') return true;
+    return r.status === requestFilter;
+  });
+
+  const allHolidaysList = Object.values(institutionHolidays).sort(
+    (a, b) => b.date.localeCompare(a.date)
+  );
+
   return (
     <div className="space-y-6">
-      {/* Top Banner and Class Selection */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-bold text-slate-900">Institution Attendance &amp; Holiday Management</h2>
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-              Principal Console
-            </span>
+      {/* Top Banner and Navigation Bar */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-bold text-slate-900">Institution Attendance &amp; Holiday Management</h2>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                Principal Console
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              Comprehensive attendance oversight, class percentage ledger, institution non-working day designations, and teacher edit approvals.
+            </p>
           </div>
-          <p className="text-xs text-slate-500 mt-1">
-            Designate non-working days &amp; official holidays. Marked holidays are automatically excluded from working days and percentages across all portals.
-          </p>
+
+          {/* Class Selection Dropdown */}
+          <div className="flex items-center gap-3">
+            <label className="text-xs font-bold text-slate-700 whitespace-nowrap">Select Class:</label>
+            <select
+              value={selectedClassId}
+              onChange={e => setSelectedClassId(e.target.value)}
+              className="px-3.5 py-2 rounded-xl border border-slate-300 bg-slate-50 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700 shadow-2xs cursor-pointer"
+            >
+              {classes.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
-        {/* Class Selection Dropdown */}
-        <div className="flex items-center gap-3">
-          <label className="text-xs font-bold text-slate-600">Select Class:</label>
-          <select
-            value={selectedClassId}
-            onChange={e => setSelectedClassId(e.target.value)}
-            className="px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-          >
-            {classes.map(c => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+        {/* Pending Edit Requests Alert Banner */}
+        {pendingRequestsCount > 0 && (
+          <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-300 rounded-xl p-3.5 flex items-center justify-between gap-3 shadow-2xs">
+            <div className="flex items-center gap-2.5">
+              <span className="w-8 h-8 rounded-lg bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-800 text-sm font-bold shrink-0">
+                <Bell className="w-4 h-4 animate-bounce" />
+              </span>
+              <div>
+                <span className="text-xs font-bold text-amber-950 block">
+                  {pendingRequestsCount} Teacher Attendance Edit Request{pendingRequestsCount > 1 ? 's' : ''} Pending Principal Approval!
+                </span>
+                <span className="text-[11px] text-amber-900">
+                  Teachers cannot alter locked attendance records without explicit Principal approval.
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('requests')}
+              className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg transition shadow-2xs cursor-pointer whitespace-nowrap"
+            >
+              Review Requests ({pendingRequestsCount}) →
+            </button>
+          </div>
+        )}
 
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-            <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
-            Cloud Sync Active
-          </span>
-        </div>
-      </div>
-
-      {/* Mode Toggle: Daily vs Weekly */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold">
+        {/* Navigation Tabs Bar for Attendance Console */}
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-2 border-t border-slate-100" onWheel={handleHorizontalWheel}>
           <button
             type="button"
-            onClick={() => setAttendanceMode('daily')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition cursor-pointer ${
-              attendanceMode === 'daily'
+            onClick={() => setActiveSubTab('overview')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+              activeSubTab === 'overview'
                 ? 'bg-emerald-800 text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>Class Overview &amp; Ledger</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('daily')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+              activeSubTab === 'daily'
+                ? 'bg-emerald-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
             <Calendar className="w-4 h-4" />
-            <span>Daily Attendance</span>
+            <span>Daily Attendance Roster</span>
           </button>
+
           <button
             type="button"
-            onClick={() => setAttendanceMode('weekly')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition cursor-pointer ${
-              attendanceMode === 'weekly'
+            onClick={() => setActiveSubTab('weekly')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+              activeSubTab === 'weekly'
                 ? 'bg-emerald-800 text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
             <CalendarDays className="w-4 h-4" />
-            <span>Weekly Attendance Grid</span>
+            <span>Weekly Grid</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('holidays')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+              activeSubTab === 'holidays'
+                ? 'bg-emerald-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <span>🏖️</span>
+            <span>Institution Holidays ({Object.keys(institutionHolidays).length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('requests')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap relative ${
+              activeSubTab === 'requests'
+                ? 'bg-emerald-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Unlock className="w-4 h-4" />
+            <span>Edit Requests</span>
+            {pendingRequestsCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500 text-white">
+                {pendingRequestsCount}
+              </span>
+            )}
           </button>
         </div>
-
-        {saveSuccess && (
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
-            <CheckCheck className="w-4 h-4 text-emerald-700" />
-            <span>Attendance &amp; Holidays Synced Live with Parent Portal!</span>
-          </div>
-        )}
       </div>
 
-      {/* VIEW 1: DAILY ATTENDANCE */}
-      {attendanceMode === 'daily' && (
+      {/* SUB-TAB 1: CLASS-WISE ATTENDANCE OVERVIEW & LEDGER */}
+      {activeSubTab === 'overview' && (
+        <div className="space-y-6">
+          {/* Quick Metrics Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                Enrolled Students
+              </span>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-black text-slate-900 font-mono">
+                  {classStudents.length}
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  ({classStudents.filter(s => s.gender === 'M').length} Boys · {classStudents.filter(s => s.gender === 'F').length} Girls)
+                </span>
+              </div>
+              <div className="text-[10px] text-emerald-800 font-medium">Sorted Boys A-Z then Girls A-Z</div>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                Net Working Days
+              </span>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-black text-slate-900 font-mono">
+                  {netClassWorkingDays}
+                </span>
+                <span className="text-[11px] text-amber-700 font-bold">
+                  ({totalDeclaredHolidaysCount} Holidays Excluded)
+                </span>
+              </div>
+              <div className="text-[10px] text-slate-400">Official Non-Working Days Safeguarded</div>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                Class Attendance Rate
+              </span>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-black text-emerald-700 font-mono">
+                  {classOverallPercentage}%
+                </span>
+                <span className="text-[11px] text-slate-400">Class Average</span>
+              </div>
+              <div className="text-[10px] text-emerald-700 font-medium">
+                {classOverallPercentage >= 85 ? '✓ Excellent Discipline' : 'Needs Regularity'}
+              </div>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                Recorded Sessions
+              </span>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-black text-slate-900 font-mono">
+                  {markedDailyRecords.length}
+                </span>
+                <span className="text-[11px] text-slate-400">Days Logged</span>
+              </div>
+              <div className="text-[10px] text-slate-400 font-mono">
+                From {ACADEMIC_YEAR_START_DATE} to {todayStr}
+              </div>
+            </div>
+          </div>
+
+          {/* Monthly Working Days Breakdown Table */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-emerald-800" />
+                  <span>Academic Year Monthly Working Days Breakdown</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Institution holidays automatically subtract from working days so attendance percentages remain completely unpenalized.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('holidays')}
+                className="text-xs font-bold text-emerald-800 hover:text-emerald-950 flex items-center gap-1 cursor-pointer"
+              >
+                <span>🏖️ Manage Holidays →</span>
+              </button>
+            </div>
+
+            <div className="overflow-x-auto w-full scrollbar-thin" onWheel={handleHorizontalWheel}>
+              <table className="w-full text-left text-xs min-w-[620px] border-collapse">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
+                  <tr>
+                    <th className="py-3 px-4">Academic Month</th>
+                    <th className="py-3 px-3 text-center">Calendar Days</th>
+                    <th className="py-3 px-3 text-center text-amber-800">Declared Holidays</th>
+                    <th className="py-3 px-3 text-center text-emerald-900">Net Working Days</th>
+                    <th className="py-3 px-3 text-center">Class Sessions Marked</th>
+                    <th className="py-3 px-4 text-center">Compliance Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {academicMonths.map(m => (
+                    <tr key={m.key} className="hover:bg-slate-50/70 transition">
+                      <td className="py-3 px-4 font-bold text-slate-900">
+                        <span>{m.monthEn}</span>
+                        <span className="text-[11px] text-slate-400 block font-normal">{m.monthMl}</span>
+                      </td>
+                      <td className="py-3 px-3 text-center font-mono text-slate-600">
+                        {m.nominalWorkingDays}
+                      </td>
+                      <td className="py-3 px-3 text-center font-mono font-bold text-amber-700">
+                        {m.holidaysExcluded > 0 ? (
+                          <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-950 border border-amber-300">
+                            - {m.holidaysExcluded} days
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">0</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 text-center font-mono font-bold text-emerald-800">
+                        {m.actualWorkingDays} days
+                      </td>
+                      <td className="py-3 px-3 text-center font-mono text-slate-700">
+                        {m.markedDays}
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        {m.markedDays > 0 ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                            <Check className="w-3 h-3 text-emerald-700" /> Recorded &amp; Synced
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-slate-400">Upcoming</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Student-wise Attendance Percentage Ledger */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-800" />
+                  <span>Student Attendance Ledger &amp; Percentage Record: {selectedClass?.name}</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Roll No &amp; Student Name remain frozen while scrolling. Mouse-wheel horizontal scroll active.
+                </p>
+              </div>
+              <div className="text-xs font-mono font-bold text-slate-600">
+                Total Students: {classStudents.length}
+              </div>
+            </div>
+
+            <div
+              onWheel={handleHorizontalWheel}
+              className="overflow-x-auto relative w-full scrollbar-thin rounded-b-2xl border-t border-slate-100"
+            >
+              <table className="w-full text-left text-xs min-w-[700px] border-collapse">
+                <thead className="sticky top-0 bg-slate-100 z-30">
+                  <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                    <th className="py-3 px-3 text-center w-12 font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">
+                      Roll
+                    </th>
+                    <th className="py-3 px-4 min-w-[200px] sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                      Student Name
+                    </th>
+                    <th className="py-3 px-2 w-20 text-center font-mono">Adm No</th>
+                    <th className="py-3 px-2 w-16 text-center">Gender</th>
+                    <th className="py-3 px-3 text-center font-mono">Days Attended</th>
+                    <th className="py-3 px-3 text-center font-mono">Total Working</th>
+                    <th className="py-3 px-3 text-center font-mono">Attendance %</th>
+                    <th className="py-3 px-4 text-center">Discipline Rating</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {studentLedger.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-10 text-center text-slate-400">
+                        No active students found in this class.
+                      </td>
+                    </tr>
+                  ) : (
+                    studentLedger.map(({ student: st, attended, workingDays, percentage }) => {
+                      const isHigh = percentage >= 85;
+                      const isMed = percentage >= 75 && percentage < 85;
+
+                      return (
+                        <tr key={st.id} className="hover:bg-slate-50/80 transition group">
+                          <td className="py-3 px-3 text-center font-mono font-bold text-slate-700 w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] bg-white group-hover:bg-slate-50">
+                            {st.rollNo}
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap min-w-[200px] sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] bg-white group-hover:bg-slate-50">
+                            <span className="font-bold text-slate-900 block">{st.nameEn}</span>
+                            {st.nameMl && (
+                              <div className="text-[11px] text-slate-500 font-ml leading-tight mt-0.5">
+                                {st.nameMl}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-2 text-center font-mono font-bold text-slate-700 w-20">
+                            {st.admissionNo}
+                          </td>
+                          <td className="py-3 px-2 text-center w-16">
+                            <span
+                              className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                                st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                              }`}
+                            >
+                              {st.gender || 'M'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-center font-mono font-bold text-emerald-800">
+                            {attended}
+                          </td>
+                          <td className="py-3 px-3 text-center font-mono text-slate-600">
+                            {workingDays}
+                          </td>
+                          <td className="py-3 px-3 text-center font-mono font-bold text-sm">
+                            <span
+                              className={`px-2 py-0.5 rounded-lg border ${
+                                isHigh
+                                  ? 'bg-emerald-100 text-emerald-950 border-emerald-300'
+                                  : isMed
+                                  ? 'bg-amber-100 text-amber-950 border-amber-300'
+                                  : 'bg-rose-100 text-rose-950 border-rose-300'
+                              }`}
+                            >
+                              {percentage}%
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            {isHigh ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 inline-block">
+                                Regular
+                              </span>
+                            ) : isMed ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 inline-block">
+                                Average
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-800 border border-rose-200 inline-block">
+                                Shortage Alert
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 2: DAILY ATTENDANCE ROSTER & MARKING */}
+      {activeSubTab === 'daily' && (
         <div className="space-y-4">
-          {/* Controls Bar */}
           <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              {/* Date Navigators */}
+              {/* Date Navigators with June 1 Boundary and Today Max */}
               <div className="flex items-center gap-2 flex-wrap">
                 <button
                   type="button"
                   onClick={() => {
                     const d = parseLocalDate(selectedDate);
                     d.setDate(d.getDate() - 1);
-                    setSelectedDate(formatLocalDate(d));
+                    const prev = formatLocalDate(d);
+                    if (prev >= ACADEMIC_YEAR_START_DATE) {
+                      setSelectedDate(prev);
+                    }
                   }}
-                  className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer"
+                  disabled={selectedDate <= ACADEMIC_YEAR_START_DATE}
+                  className={`p-2 rounded-xl border border-slate-200 transition ${
+                    selectedDate <= ACADEMIC_YEAR_START_DATE
+                      ? 'bg-slate-100 text-slate-300 opacity-40 cursor-not-allowed'
+                      : 'bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer'
+                  }`}
                   title="Previous Day"
                 >
                   <ChevronLeft className="w-4 h-4" />
@@ -783,8 +1353,15 @@ export const AdminAttendanceView: React.FC = () => {
                   <input
                     type="date"
                     value={selectedDate}
+                    min={ACADEMIC_YEAR_START_DATE}
                     max={todayStr}
-                    onChange={e => e.target.value && setSelectedDate(e.target.value)}
+                    onChange={e => {
+                      const val = e.target.value;
+                      if (!val) return;
+                      if (val < ACADEMIC_YEAR_START_DATE) setSelectedDate(ACADEMIC_YEAR_START_DATE);
+                      else if (val > todayStr) setSelectedDate(todayStr);
+                      else setSelectedDate(val);
+                    }}
                     className="bg-transparent text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
                   />
                 </div>
@@ -837,7 +1414,7 @@ export const AdminAttendanceView: React.FC = () => {
                 ) : isDailyEditing ? (
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300">
                     <Edit3 className="w-3.5 h-3.5 text-amber-700" />
-                    Unlocked for Editing
+                    Unlocked for Principal Editing
                   </span>
                 ) : (
                   <span className="text-xs text-slate-500 font-medium">
@@ -850,7 +1427,6 @@ export const AdminAttendanceView: React.FC = () => {
             {/* Action Buttons Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
               <div className="flex items-center gap-2 flex-wrap">
-                {/* Clear Holiday Toggle Button */}
                 {isDailyHoliday ? (
                   <button
                     type="button"
@@ -863,7 +1439,10 @@ export const AdminAttendanceView: React.FC = () => {
                 ) : (
                   <button
                     type="button"
-                    onClick={() => handleOpenMarkHoliday(selectedDate)}
+                    onClick={() => {
+                      setHolidayModalDate(selectedDate);
+                      setHolidayReasonInput('');
+                    }}
                     className="px-3.5 py-2 text-xs font-bold rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-950 transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
                   >
                     <span>🏖️</span>
@@ -939,7 +1518,7 @@ export const AdminAttendanceView: React.FC = () => {
             </div>
           </div>
 
-          {/* Prominent Friendly Banner Across Daily View on Holiday */}
+          {/* Prominent Banner on Holiday */}
           {isDailyHoliday && (
             <div className="bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 rounded-2xl border-2 border-amber-300 p-6 text-center space-y-3 shadow-xs">
               <div className="w-12 h-12 rounded-full bg-amber-100 border border-amber-300 flex items-center justify-center text-2xl mx-auto shadow-2xs">
@@ -972,102 +1551,249 @@ export const AdminAttendanceView: React.FC = () => {
 
           {/* Student Daily List */}
           <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-              <span className="text-xs font-bold text-slate-700">
-                Enrolled Students in {selectedClass?.name} ({classStudents.length})
-              </span>
-              <span className="text-[11px] text-slate-400">
-                {isDailyHoliday
-                  ? '🏖️ Official Holiday: Checkboxes disabled, attendance exempt.'
-                  : isDailyLocked
-                  ? 'Locked. Click "Unlock to Edit" above to make authorized changes.'
-                  : 'Click anywhere on student row or button to toggle status'}
-              </span>
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
+              <div>
+                <span className="text-xs font-bold text-slate-700">
+                  Enrolled Students in {selectedClass?.name} ({classStudents.length})
+                </span>
+                <span className="text-[11px] text-slate-400 block sm:inline sm:ml-2">
+                  {isDailyHoliday
+                    ? '🏖️ Official Holiday: Checkboxes disabled, attendance exempt.'
+                    : isDailyLocked
+                    ? 'Locked. Click "Unlock to Edit" above to make authorized changes.'
+                    : 'Click button to toggle status. Roll No and Student Name remain frozen while scrolling.'}
+                </span>
+              </div>
+
+              {/* View Layout Switcher */}
+              <div className="inline-flex p-0.5 bg-slate-100 rounded-lg border border-slate-200 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setDailyViewLayout('table')}
+                  className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                    dailyViewLayout === 'table'
+                      ? 'bg-emerald-800 text-white shadow-2xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Roster Table
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDailyViewLayout('cards')}
+                  className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                    dailyViewLayout === 'cards'
+                      ? 'bg-emerald-800 text-white shadow-2xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Card Grid
+                </button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-              {classStudents.map(st => {
-                const isPresent = dailyStatusMap[st.id] !== false;
+            {classStudents.length === 0 ? (
+              <div className="text-center py-10 text-slate-400 text-xs">
+                No active students found in this class.
+              </div>
+            ) : dailyViewLayout === 'table' ? (
+              <div
+                onWheel={handleHorizontalWheel}
+                className="overflow-x-auto relative w-full scrollbar-thin rounded-xl border border-slate-200"
+              >
+                <table className="w-full text-left text-xs min-w-[660px] border-collapse">
+                  <thead className="sticky top-0 bg-slate-100 z-30">
+                    <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                      <th className="py-3 px-3 text-center w-12 font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">
+                        Roll
+                      </th>
+                      <th className="py-3 px-4 min-w-[180px] md:min-w-[220px] sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                        Student Name
+                      </th>
+                      <th className="py-3 px-2 w-20 text-center font-mono">Adm No</th>
+                      <th className="py-3 px-2 w-16 text-center">Gender</th>
+                      <th className="py-3 px-4 text-center min-w-[150px]">Attendance Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {classStudents.map(st => {
+                      const isPresent = dailyStatusMap[st.id] !== false;
 
-                return (
-                  <div
-                    key={st.id}
-                    onClick={() => !isDailyLocked && !isDailyHoliday && toggleDailyStudent(st.id)}
-                    className={`flex items-center justify-between p-3 rounded-xl border transition-all select-none ${
-                      isDailyHoliday
-                        ? 'bg-amber-50/40 border-amber-200 cursor-default opacity-85'
-                        : isDailyLocked
-                        ? 'cursor-default'
-                        : 'cursor-pointer hover:bg-slate-50'
-                    } ${
-                      !isDailyHoliday && (isPresent
-                        ? 'bg-emerald-50/40 border-emerald-200'
-                        : 'bg-rose-50/40 border-rose-200')
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className="w-8 h-8 rounded-lg bg-white border border-slate-200 font-mono font-bold text-xs flex items-center justify-center shrink-0 text-slate-700 shadow-2xs">
-                        {st.rollNo}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="font-bold text-slate-900 text-sm truncate flex items-center gap-1.5">
-                          <span className="whitespace-nowrap">{st.nameEn}</span>
-                          <span
-                            className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
-                              st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
-                            }`}
-                          >
-                            {st.gender || 'M'}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-slate-500 whitespace-nowrap">
-                          Adm: <span className="font-mono font-bold text-slate-700">{st.admissionNo}</span>
-                          {st.nameMl && <span className="ml-2 text-slate-500 font-ml">{st.nameMl}</span>}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      {isDailyHoliday ? (
-                        <span className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-amber-100 text-amber-950 border border-amber-300">
-                          🏖️ Exempt (Holiday)
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={isDailyLocked || isDailyHoliday}
-                          onClick={e => {
-                            e.stopPropagation();
-                            if (!isDailyLocked && !isDailyHoliday) toggleDailyStudent(st.id);
-                          }}
-                          className={`min-h-10 min-w-10 w-10 h-10 rounded-xl flex items-center justify-center transition-all border ${
-                            isDailyLocked
-                              ? isPresent
-                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300 opacity-90'
-                                : 'bg-rose-100 text-rose-800 border-rose-300 opacity-90'
+                      return (
+                        <tr
+                          key={st.id}
+                          className={`transition group ${
+                            isDailyHoliday
+                              ? 'bg-amber-50/30'
                               : isPresent
-                              ? 'bg-emerald-700 text-white border-emerald-800 shadow-2xs cursor-pointer'
-                              : 'bg-white text-rose-600 border-rose-300 cursor-pointer'
+                              ? 'bg-white hover:bg-slate-50/80'
+                              : 'bg-rose-50/30 hover:bg-rose-50/60'
                           }`}
                         >
-                          {isPresent ? (
-                            <Check className="w-5 h-5 stroke-[3]" />
-                          ) : (
-                            <X className="w-5 h-5 stroke-[3]" />
-                          )}
-                        </button>
-                      )}
+                          <td
+                            className={`py-3 px-3 text-center font-mono font-bold text-slate-700 w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${
+                              isDailyHoliday
+                                ? 'bg-amber-50 group-hover:bg-amber-100'
+                                : isPresent
+                                ? 'bg-white group-hover:bg-slate-50'
+                                : 'bg-rose-50/70 group-hover:bg-rose-100/70'
+                            }`}
+                          >
+                            {st.rollNo}
+                          </td>
+                          <td
+                            className={`py-3 px-4 whitespace-nowrap min-w-[180px] md:min-w-[220px] sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
+                              isDailyHoliday
+                                ? 'bg-amber-50 group-hover:bg-amber-100'
+                                : isPresent
+                                ? 'bg-white group-hover:bg-slate-50'
+                                : 'bg-rose-50/70 group-hover:bg-rose-100/70'
+                            }`}
+                          >
+                            <span className="font-bold text-slate-900 block">{st.nameEn}</span>
+                            {st.nameMl && (
+                              <div className="text-[11px] text-slate-500 font-ml leading-tight mt-0.5">
+                                {st.nameMl}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-2 text-center font-mono font-bold text-slate-700 w-20">
+                            {st.admissionNo}
+                          </td>
+                          <td className="py-3 px-2 text-center w-16">
+                            <span
+                              className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                                st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                              }`}
+                            >
+                              {st.gender || 'M'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            {isDailyHoliday ? (
+                              <span className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-amber-100 text-amber-950 border border-amber-300 inline-block">
+                                🏖️ Exempt (Holiday)
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={isDailyLocked}
+                                onClick={() => toggleDailyStudent(st.id)}
+                                className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition-all inline-flex items-center justify-center gap-1.5 min-w-[120px] ${
+                                  isDailyLocked
+                                    ? isPresent
+                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300 opacity-90 cursor-not-allowed'
+                                      : 'bg-rose-100 text-rose-800 border-rose-300 opacity-90 cursor-not-allowed'
+                                    : isPresent
+                                    ? 'bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-800 shadow-2xs cursor-pointer'
+                                    : 'bg-white hover:bg-rose-50 text-rose-600 border-rose-300 cursor-pointer'
+                                }`}
+                              >
+                                {isPresent ? (
+                                  <>
+                                    <Check className="w-4 h-4 stroke-[3]" />
+                                    <span>Present</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <X className="w-4 h-4 stroke-[3]" />
+                                    <span>Absent</span>
+                                  </>
+                                )}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                {classStudents.map(st => {
+                  const isPresent = dailyStatusMap[st.id] !== false;
+
+                  return (
+                    <div
+                      key={st.id}
+                      onClick={() => !isDailyLocked && !isDailyHoliday && toggleDailyStudent(st.id)}
+                      className={`flex items-center justify-between p-3 rounded-xl border transition-all select-none ${
+                        isDailyHoliday
+                          ? 'bg-amber-50/40 border-amber-200 cursor-default opacity-85'
+                          : isDailyLocked
+                          ? 'cursor-default'
+                          : 'cursor-pointer hover:bg-slate-50'
+                      } ${
+                        !isDailyHoliday && (isPresent
+                          ? 'bg-emerald-50/40 border-emerald-200'
+                          : 'bg-rose-50/40 border-rose-200')
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="w-8 h-8 rounded-lg bg-white border border-slate-200 font-mono font-bold text-xs flex items-center justify-center shrink-0 text-slate-700 shadow-2xs">
+                          {st.rollNo}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-900 text-sm truncate flex items-center gap-1.5">
+                            <span className="whitespace-nowrap">{st.nameEn}</span>
+                            <span
+                              className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
+                                st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                              }`}
+                            >
+                              {st.gender || 'M'}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-500 whitespace-nowrap">
+                            Adm: <span className="font-mono font-bold text-slate-700">{st.admissionNo}</span>
+                            {st.nameMl && <span className="ml-2 text-slate-500 font-ml">{st.nameMl}</span>}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {isDailyHoliday ? (
+                          <span className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-amber-100 text-amber-950 border border-amber-300">
+                            🏖️ Exempt
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={isDailyLocked || isDailyHoliday}
+                            onClick={e => {
+                              e.stopPropagation();
+                              if (!isDailyLocked && !isDailyHoliday) toggleDailyStudent(st.id);
+                            }}
+                            className={`min-h-10 min-w-10 w-10 h-10 rounded-xl flex items-center justify-center transition-all border ${
+                              isDailyLocked
+                                ? isPresent
+                                  ? 'bg-emerald-100 text-emerald-800 border-emerald-300 opacity-90'
+                                  : 'bg-rose-100 text-rose-800 border-rose-300 opacity-90'
+                                : isPresent
+                                ? 'bg-emerald-700 text-white border-emerald-800 shadow-2xs cursor-pointer'
+                                : 'bg-white text-rose-600 border-rose-300 cursor-pointer'
+                            }`}
+                          >
+                            {isPresent ? (
+                              <Check className="w-5 h-5 stroke-[3]" />
+                            ) : (
+                              <X className="w-5 h-5 stroke-[3]" />
+                            )}
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* VIEW 2: WEEKLY ATTENDANCE GRID */}
-      {attendanceMode === 'weekly' && (
+      {/* SUB-TAB 3: WEEKLY ATTENDANCE GRID */}
+      {activeSubTab === 'weekly' && (
         <div className="space-y-4">
           <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 flex-wrap">
@@ -1076,15 +1802,23 @@ export const AdminAttendanceView: React.FC = () => {
                 onClick={() => {
                   const monday = parseLocalDate(getWeekMondayStr(selectedWeekDate));
                   monday.setDate(monday.getDate() - 7);
-                  setSelectedWeekDate(formatLocalDate(monday));
+                  const prev = formatLocalDate(monday);
+                  if (prev >= ACADEMIC_YEAR_START_DATE) {
+                    setSelectedWeekDate(prev);
+                  }
                 }}
-                className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer"
+                disabled={getWeekMondayStr(selectedWeekDate) <= ACADEMIC_YEAR_START_DATE}
+                className={`p-2 rounded-xl border border-slate-200 transition ${
+                  getWeekMondayStr(selectedWeekDate) <= ACADEMIC_YEAR_START_DATE
+                    ? 'bg-slate-100 text-slate-300 opacity-40 cursor-not-allowed'
+                    : 'bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer'
+                }`}
                 title="Previous Week"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
 
-              <span className="text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-slate-800">
+              <span className="text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-slate-800 font-mono">
                 Week: {weekDays[0]?.shortDate || ''} – {weekDays[5]?.shortDate || ''}
               </span>
 
@@ -1113,15 +1847,6 @@ export const AdminAttendanceView: React.FC = () => {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => handleOpenMarkHoliday(selectedDate || todayStr)}
-                className="px-3.5 py-2 text-xs font-bold rounded-xl bg-amber-50 text-amber-950 border border-amber-300 hover:bg-amber-100 transition cursor-pointer flex items-center gap-1.5"
-              >
-                <span>🏖️</span>
-                <span>Mark Holiday</span>
-              </button>
-
-              <button
-                type="button"
                 onClick={handleSaveWeekly}
                 disabled={isSaving}
                 className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs disabled:opacity-50 cursor-pointer"
@@ -1134,12 +1859,15 @@ export const AdminAttendanceView: React.FC = () => {
 
           {/* Weekly Table */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="overflow-x-auto w-full">
-              <table className="w-full text-left text-xs min-w-[780px]">
-                <thead>
+            <div
+              onWheel={handleHorizontalWheel}
+              className="overflow-x-auto w-full scrollbar-thin relative"
+            >
+              <table className="w-full text-left text-xs min-w-[780px] border-collapse">
+                <thead className="sticky top-0 bg-slate-100 z-30">
                   <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                    <th className="py-3 px-3 text-center w-12 font-mono">Roll</th>
-                    <th className="py-3 px-4 min-w-[160px]">Student Name</th>
+                    <th className="py-3 px-3 text-center w-12 font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
+                    <th className="py-3 px-4 min-w-[180px] md:min-w-[220px] sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Student Name</th>
                     {weekDays.map(d => {
                       const isFuture = d.dateStr > todayStr;
                       const isDayHoliday = isDateHoliday(d.dateStr);
@@ -1162,34 +1890,6 @@ export const AdminAttendanceView: React.FC = () => {
                             {isFuture && <Lock className="w-3 h-3 text-slate-400" />}
                           </div>
                           <div className="text-[10px] font-mono text-slate-500">{d.shortDate}</div>
-
-                          <div className="mt-1">
-                            {isDayHoliday ? (
-                              <div className="space-y-0.5">
-                                <span
-                                  className="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-200 text-amber-950 truncate max-w-[74px]"
-                                  title={holInfo?.reason}
-                                >
-                                  {holInfo?.reason || 'Holiday'}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveHoliday(d.dateStr)}
-                                  className="text-[9px] text-amber-950 hover:underline font-bold cursor-pointer block mx-auto"
-                                >
-                                  Restore
-                                </button>
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenMarkHoliday(d.dateStr)}
-                                className="text-[9px] text-amber-800 hover:text-amber-950 underline font-medium cursor-pointer"
-                              >
-                                🏖️ Holiday
-                              </button>
-                            )}
-                          </div>
                         </th>
                       );
                     })}
@@ -1206,11 +1906,11 @@ export const AdminAttendanceView: React.FC = () => {
                     });
 
                     return (
-                      <tr key={st.id} className="hover:bg-slate-50">
-                        <td className="py-3 px-3 text-center font-mono font-bold text-slate-600">
+                      <tr key={st.id} className="hover:bg-slate-50 transition group">
+                        <td className="py-3 px-3 text-center font-mono font-bold text-slate-600 w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] bg-white group-hover:bg-slate-50">
                           {st.rollNo}
                         </td>
-                        <td className="py-3 px-4 whitespace-nowrap">
+                        <td className="py-3 px-4 whitespace-nowrap min-w-[180px] md:min-w-[220px] sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] bg-white group-hover:bg-slate-50">
                           <div className="font-bold text-slate-900">{st.nameEn}</div>
                           {st.nameMl && <div className="text-[11px] text-slate-500 font-ml leading-tight">{st.nameMl}</div>}
                           <div className="text-[10px] text-slate-500 font-mono">Adm: {st.admissionNo}</div>
@@ -1287,7 +1987,287 @@ export const AdminAttendanceView: React.FC = () => {
         </div>
       )}
 
-      {/* HOLIDAY DESIGNATION MODAL */}
+      {/* SUB-TAB 4: INSTITUTION HOLIDAYS & NON-WORKING DAYS (EXCLUSIVE PRINCIPAL INTERFACE) */}
+      {activeSubTab === 'holidays' && (
+        <div className="space-y-6">
+          {/* Add Holiday Card */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-xl">
+                🏖️
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  Designate Institution Holiday / Non-Working Day
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Select a specific calendar date and provide the official reason. This updates Firestore <code className="text-amber-800 font-mono font-bold">institutionHolidays</code> and automatically excludes this date from working day counts across the entire institution.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700">Select Date:</label>
+                <input
+                  type="date"
+                  value={newHolidayDate}
+                  min={ACADEMIC_YEAR_START_DATE}
+                  onChange={e => setNewHolidayDate(e.target.value)}
+                  className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-bold bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="md:col-span-2 space-y-1.5">
+                <label className="text-xs font-bold text-slate-700">Holiday Title / Reason:</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newHolidayReason}
+                    onChange={e => setNewHolidayReason(e.target.value)}
+                    placeholder="e.g. Friday Holiday, Eid al-Fitr, Milad-un-Nabi, Monsoon Leave"
+                    className="flex-1 p-2.5 border border-slate-300 rounded-xl text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleDeclareHoliday(newHolidayDate, newHolidayReason)}
+                    disabled={isSavingHoliday || !newHolidayDate}
+                    className="px-5 py-2.5 text-xs font-bold text-amber-950 bg-amber-300 hover:bg-amber-400 border border-amber-400 rounded-xl transition shadow-xs cursor-pointer whitespace-nowrap disabled:opacity-50"
+                  >
+                    {isSavingHoliday ? 'Designating...' : 'Declare Holiday'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Suggestion Chips */}
+            <div className="space-y-1.5 pt-2">
+              <span className="text-[11px] font-bold text-slate-500">Quick Suggestions:</span>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  'Friday Holiday',
+                  'Eid al-Fitr',
+                  'Eid al-Adha',
+                  'Milad-un-Nabi',
+                  'Study Leave',
+                  'Ramadan Break',
+                  'Monsoon Leave',
+                  'National Public Holiday',
+                ].map(preset => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setNewHolidayReason(preset)}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg border transition cursor-pointer ${
+                      newHolidayReason === preset
+                        ? 'bg-amber-100 text-amber-950 border-amber-400 font-bold'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* List of Declared Holidays */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <span>🏖️</span>
+                  <span>Currently Declared Institution Holidays ({allHolidaysList.length})</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  These dates are exempt from attendance in Admin, Teacher, and Parent portals.
+                </p>
+              </div>
+            </div>
+
+            <div className="divide-y divide-slate-100 text-xs">
+              {allHolidaysList.length === 0 ? (
+                <div className="p-8 text-center text-slate-400">
+                  No institution holidays currently declared. Use the form above to add one.
+                </div>
+              ) : (
+                allHolidaysList.map(h => (
+                  <div key={h.id || h.date} className="p-4 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50 transition">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-900 border border-amber-200 font-mono font-bold text-xs flex flex-col items-center justify-center shrink-0">
+                        <span>{h.date.split('-')[2]}</span>
+                        <span className="text-[9px] uppercase">{new Date(h.date).toLocaleDateString([], { month: 'short' })}</span>
+                      </div>
+                      <div>
+                        <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                          <span>{h.reason}</span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-bold">
+                            {h.date}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 mt-0.5">
+                          Designated by: <span className="font-bold text-slate-700">{h.markedBy || 'Principal'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveHoliday(h.date)}
+                      className="px-3.5 py-1.5 text-xs font-bold text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Restore Regular Working Day</span>
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 5: ATTENDANCE UNLOCK / EDIT REQUEST APPROVALS */}
+      {activeSubTab === 'requests' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <Unlock className="w-5 h-5 text-emerald-800" />
+                  <span>Teacher Attendance Edit &amp; Unlock Requests</span>
+                </h3>
+                {pendingRequestsCount > 0 && (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500 text-white animate-pulse">
+                    {pendingRequestsCount} Pending
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                When a teacher submits an edit request for a locked attendance date, it appears here for Principal review. Approving unlocks the record in Firestore so the teacher can save corrections.
+              </p>
+            </div>
+
+            {/* Filter Buttons */}
+            <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold">
+              {(['all', 'pending', 'approved', 'rejected'] as const).map(f => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setRequestFilter(f)}
+                  className={`px-3 py-1.5 rounded-lg transition capitalize cursor-pointer ${
+                    requestFilter === f
+                      ? 'bg-emerald-800 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {f} {f === 'pending' && pendingRequestsCount > 0 ? `(${pendingRequestsCount})` : ''}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Requests List */}
+          <div className="space-y-3">
+            {filteredEditRequests.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400 text-xs shadow-xs">
+                No attendance edit requests matching filter &quot;{requestFilter}&quot;.
+              </div>
+            ) : (
+              filteredEditRequests.map(req => {
+                const isPending = req.status === 'pending';
+                const isApproved = req.status === 'approved';
+                const isRejected = req.status === 'rejected';
+
+                return (
+                  <div
+                    key={req.id}
+                    className={`bg-white rounded-2xl border p-5 shadow-xs transition space-y-3 ${
+                      isPending
+                        ? 'border-amber-300 ring-2 ring-amber-100'
+                        : isApproved
+                        ? 'border-emerald-200 bg-emerald-50/20'
+                        : 'border-slate-200 opacity-80'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-slate-900 text-sm">
+                            {req.className || `Class ${req.classId}`}
+                          </span>
+                          <span className="font-mono text-xs font-bold px-2.5 py-0.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200">
+                            Date: {req.date}
+                          </span>
+                          {isPending && (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-950 border border-amber-300">
+                              <Clock className="w-3 h-3 text-amber-700 animate-spin" />
+                              Pending Principal Approval
+                            </span>
+                          )}
+                          {isApproved && (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-950 border border-emerald-300">
+                              <CheckCircle className="w-3 h-3 text-emerald-700" />
+                              Approved &amp; Unlocked
+                            </span>
+                          )}
+                          {isRejected && (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-950 border border-rose-300">
+                              <X className="w-3 h-3 text-rose-700" />
+                              Request Rejected
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="text-xs text-slate-600 mt-1">
+                          Teacher: <span className="font-bold text-slate-800">{req.teacherName}</span> · Submitted: <span className="font-mono text-slate-500">{new Date(req.requestedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                        </div>
+                      </div>
+
+                      {/* Action buttons for pending requests */}
+                      {isPending && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleRejectUnlockRequest(req)}
+                            disabled={isProcessingRequest === req.id}
+                            className="px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded-xl transition cursor-pointer disabled:opacity-50"
+                          >
+                            Reject
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleApproveUnlockRequest(req)}
+                            disabled={isProcessingRequest === req.id}
+                            className="px-4 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 border border-emerald-800 rounded-xl transition shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                          >
+                            <Unlock className="w-3.5 h-3.5" />
+                            <span>Approve &amp; Unlock</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Reason text */}
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800">
+                      <span className="font-bold text-slate-600 block mb-0.5">Reason for Edit:</span>
+                      <p className="italic text-slate-700">{req.reason || 'No specific reason provided.'}</p>
+                    </div>
+
+                    {req.resolutionNote && (
+                      <div className="text-[11px] text-slate-500 italic">
+                        Principal Note: {req.resolutionNote}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* HOLIDAY DESIGNATION POPUP MODAL */}
       {holidayModalDate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-5 animate-scale-in">
@@ -1314,10 +2294,16 @@ export const AdminAttendanceView: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleConfirmMarkHoliday} className="space-y-4">
+            <form
+              onSubmit={e => {
+                e.preventDefault();
+                handleDeclareHoliday(holidayModalDate, holidayReasonInput);
+              }}
+              className="space-y-4"
+            >
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700">
-                  Holiday Reason / Title (Optional)
+                  Holiday Reason / Title
                 </label>
                 <input
                   type="text"
@@ -1364,7 +2350,7 @@ export const AdminAttendanceView: React.FC = () => {
                   <span>Attendance Safeguard Active</span>
                 </div>
                 <p className="text-[11px] text-amber-900 leading-relaxed">
-                  Marking this date will subtract 1 day from the class working days count (`actualWorkingDays = totalCalendarDays - markedHolidaysCount`). Students are NOT penalized as absent.
+                  Marking this date will subtract 1 day from the class working days count. Students are NOT penalized as absent.
                 </p>
               </div>
 

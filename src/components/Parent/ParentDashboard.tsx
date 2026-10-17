@@ -17,6 +17,7 @@ import {
 } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
 import { StudyMaterialsView } from './StudyMaterialsView';
+import { useHorizontalScroll, handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
 import {
   User,
   GraduationCap,
@@ -82,6 +83,7 @@ export const ParentDashboard: React.FC = () => {
   const [examinations, setExaminations] = useState<Examination[]>([]);
   const [selectedExamId, setSelectedExamId] = useState<string>('');
   const [activeTab, setActiveTab] = useState<ParentPortalTab>('home');
+  const { scrollProps: navScrollProps } = useHorizontalScroll();
   const [childPayments, setChildPayments] = useState<FeePayment[]>([]);
   const [activeReceipt, setActiveReceipt] = useState<FeePayment | null>(null);
   const [settings, setSettings] = useState<InstitutionSettings | null>(null);
@@ -734,7 +736,10 @@ export const ParentDashboard: React.FC = () => {
           </div>
 
           {/* View Mode Toggle: All Portal Navigation Tabs with Mobile Horizontal Scroll */}
-          <div className="flex items-center gap-1.5 sm:gap-2 border-b border-slate-200 pb-2 overflow-x-auto no-scrollbar print:hidden">
+          <div
+            {...navScrollProps}
+            className="flex items-center gap-1.5 sm:gap-2 border-b border-slate-200 pb-2 overflow-x-auto no-scrollbar print:hidden cursor-grab active:cursor-grabbing select-none"
+          >
             <button
               type="button"
               onClick={() => setActiveTab('home')}
@@ -1564,7 +1569,10 @@ export const ParentDashboard: React.FC = () => {
                         <span className="text-xs text-slate-500">Official Institution Records</span>
                       </div>
 
-                      <div className="overflow-x-auto w-full scrollbar-thin">
+                      <div
+                        onWheel={handleHorizontalWheel}
+                        className="overflow-x-auto w-full scrollbar-thin"
+                      >
                         <table className="w-full text-left text-xs min-w-[650px] border-collapse">
                           <thead>
                             <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
@@ -1887,7 +1895,10 @@ export const ParentDashboard: React.FC = () => {
                           No fee payment receipts recorded yet for {selectedChild?.nameEn}.
                         </div>
                       ) : (
-                        <div className="overflow-x-auto">
+                        <div
+                          onWheel={handleHorizontalWheel}
+                          className="overflow-x-auto"
+                        >
                           <table className="w-full text-left text-xs border-collapse">
                             <thead>
                               <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">

@@ -324,11 +324,11 @@ export const ExamRegisterModal: React.FC<Props> = ({
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                 <tr>
-                  <th className="py-2.5 px-3 w-12 text-center">Roll</th>
+                  <th className="py-2.5 px-3 w-12 text-center font-mono">Roll</th>
                   <th className="py-2.5 px-3 w-16 text-center">Gender</th>
-                  <th className="py-2.5 px-3 w-24">Adm No</th>
+                  <th className="py-2.5 px-2 w-20 text-center font-mono">Adm No</th>
                   <th className="py-2.5 px-3">Student Name</th>
-                  <th className="py-2.5 px-3 w-40 text-center">Exam Reg No</th>
+                  <th className="py-2.5 px-3 w-28 text-center font-mono">Reg No</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -348,7 +348,7 @@ export const ExamRegisterModal: React.FC<Props> = ({
                           {isGirl ? 'Girl' : 'Boy'}
                         </span>
                       </td>
-                      <td className="py-2.5 px-3 font-mono text-slate-600">
+                      <td className="py-2.5 px-2 text-center font-mono text-slate-600 w-20">
                         {student.admissionNo}
                       </td>
                       <td className="py-2.5 px-3 font-medium text-slate-900">

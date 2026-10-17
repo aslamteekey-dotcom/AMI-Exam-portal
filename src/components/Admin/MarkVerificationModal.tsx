@@ -450,12 +450,12 @@ export const MarkVerificationModal: React.FC<Props> = ({
         )}
 
         {/* Marks Table with Fallback Guards */}
-        <div className="border border-slate-200 rounded-xl overflow-x-auto w-full scrollbar-thin">
-          <table className="w-full min-w-[560px] text-xs text-left">
-            <thead className="bg-slate-100 font-bold text-slate-700 border-b">
+        <div className="border border-slate-200 rounded-xl overflow-x-auto relative w-full scrollbar-thin">
+          <table className="w-full min-w-[560px] text-xs text-left border-collapse">
+            <thead className="sticky top-0 bg-slate-100 font-bold text-slate-700 border-b z-30">
               <tr>
-                <th className="p-2.5 text-center w-12 whitespace-nowrap">Roll</th>
-                <th className="p-2.5 whitespace-nowrap">Student Name</th>
+                <th className="p-2.5 text-center w-12 whitespace-nowrap sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
+                <th className="p-2.5 whitespace-nowrap sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[180px] md:min-w-[220px]">Student Name</th>
                 {components.map((c: SubjectAssessmentRule) => (
                   <th key={c.componentKey} className="p-2.5 text-center whitespace-nowrap">
                     {c.labelEn} ({c.maxMarks})
@@ -475,16 +475,16 @@ export const MarkVerificationModal: React.FC<Props> = ({
                 const isAbsent = entry?.isAbsent;
 
                 return (
-                  <tr key={entry?.studentId || student?.id || index} className={isAbsent ? 'bg-amber-50/50' : 'hover:bg-slate-50'}>
-                    <td className="p-2.5 text-center font-mono font-bold text-slate-600">
+                  <tr key={entry?.studentId || student?.id || index} className={`transition group ${isAbsent ? 'bg-amber-50/50 hover:bg-amber-100/50' : 'hover:bg-slate-50'}`}>
+                    <td className={`p-2.5 text-center font-mono font-bold text-slate-600 w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${isAbsent ? 'bg-amber-50 group-hover:bg-amber-100' : 'bg-white group-hover:bg-slate-50'}`}>
                       {rollNo}
                     </td>
-                    <td className="p-2.5 font-medium">
+                    <td className={`p-2.5 font-medium sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[180px] md:min-w-[220px] ${isAbsent ? 'bg-amber-50 group-hover:bg-amber-100' : 'bg-white group-hover:bg-slate-50'}`}>
                       <div className="font-bold text-slate-900">{studentName}</div>
                       {bilingualName && bilingualName !== studentName && (
                         <div className="text-[11px] text-slate-500 font-ml">{bilingualName}</div>
                       )}
-                      <div className="text-[11px] text-slate-400 font-mono">{admissionNo}</div>
+                      <div className="text-[11px] text-slate-400 font-mono">Adm: {admissionNo}</div>
                     </td>
 
                     {components.map((c: SubjectAssessmentRule) => (

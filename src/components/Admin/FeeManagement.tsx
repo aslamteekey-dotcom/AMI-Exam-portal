@@ -9,6 +9,7 @@ import {
   SpecialFeeBreakdown,
   sortStudentsBoysFirst,
 } from '../../types';
+import { handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
 import {
   CreditCard,
   Plus,
@@ -383,7 +384,10 @@ export const FeeManagement: React.FC = () => {
             </span>
           </div>
 
-          <div className="overflow-x-auto">
+          <div
+            onWheel={handleHorizontalWheel}
+            className="overflow-x-auto"
+          >
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
@@ -491,7 +495,10 @@ export const FeeManagement: React.FC = () => {
             </h3>
           </div>
 
-          <div className="overflow-x-auto">
+          <div
+            onWheel={handleHorizontalWheel}
+            className="overflow-x-auto"
+          >
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">

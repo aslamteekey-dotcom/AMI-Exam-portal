@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 import { ExamManagement } from './ExamManagement';
 import { ClassSubjectConfig } from './ClassSubjectConfig';
 import { StudentManagement } from './StudentManagement';
@@ -83,6 +84,7 @@ export const AdminDashboard: React.FC = () => {
   } | null>(null);
 
   const isMl = lang === 'ml';
+  const { scrollProps: navScrollProps } = useHorizontalScroll();
 
   const loadOverview = async () => {
     setLoading(true);
@@ -178,7 +180,10 @@ export const AdminDashboard: React.FC = () => {
       </div>
 
       {/* Navigation Tabs Bar */}
-      <div className="bg-white px-3 sm:px-4 py-2 rounded-2xl border border-slate-200 shadow-xs flex flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap scroll-smooth no-scrollbar scrollbar-none [-ms-overflow-style:none] [scrollbar-width:none] text-xs font-bold print:hidden">
+      <div
+        {...navScrollProps}
+        className="bg-white px-3 sm:px-4 py-2 rounded-2xl border border-slate-200 shadow-xs flex flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap scroll-smooth no-scrollbar scrollbar-none [-ms-overflow-style:none] [scrollbar-width:none] text-xs font-bold print:hidden cursor-grab active:cursor-grabbing select-none"
+      >
         <button
           onClick={() => setActiveTab('overview')}
           className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${

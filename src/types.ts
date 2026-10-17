@@ -107,6 +107,7 @@ export interface Student {
   status: 'active' | 'inactive';
   dob?: string;
   gender?: 'M' | 'F';
+  schoolClass?: string; // Regular school grade/class (e.g., 'Class 1' to 'Class 10', 'Plus Two')
   examRegisterNumbers?: Record<string, string>; // examinationId -> exam register number
   examRegisterNos?: Record<string, string>; // examinationId -> exam register number (cloud persistence schema alias)
   examRegNo?: string; // current active exam register number (cloud persistence schema alias)
@@ -311,6 +312,25 @@ export interface DailyAttendanceRecord {
   markedBy?: string;
   isHoliday?: boolean;
   holidayReason?: string;
+  unlocked?: boolean;
+  editable?: boolean;
+  unlockedAt?: string;
+  unlockedBy?: string;
+}
+
+export interface AttendanceEditRequest {
+  id: string; // e.g. `${classId}_${date}`
+  classId: string;
+  className?: string;
+  date: string; // "YYYY-MM-DD"
+  teacherId: string;
+  teacherName: string;
+  reason: string;
+  requestedAt: string;
+  status: 'pending' | 'approved' | 'rejected' | 'resolved';
+  resolvedAt?: string;
+  resolvedBy?: string;
+  resolutionNote?: string;
 }
 
 export interface MonthlyAttendanceStat {
@@ -391,6 +411,68 @@ export function assignClassSequentialRollNumbers<T extends { id?: string; gender
   });
 
   return updatedStudents;
+}
+
+/**
+ * Re-sequences both roll numbers and exam register numbers for class students
+ * according to updated gender: all boys A-Z first, then all girls A-Z.
+ */
+export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gender?: string; nameEn?: string; name?: string; rollNo?: number; classId?: string; examRegisterNumbers?: Record<string, string>; examRegisterNos?: Record<string, string>; examRegNo?: string }>(
+  classStudents: T[],
+  className?: string
+): T[] {
+  const sorted = sortStudentsBoysFirst(classStudents);
+  const classNumeral = (className || '').replace(/[^0-9]/g, '') || (sorted[0]?.classId ? sorted[0].classId.replace(/[^0-9]/g, '') : '') || '7';
+
+  // Gather all exam IDs that have register numbers across this class
+  const examIds = new Set<string>();
+  sorted.forEach(s => {
+    const regMap = s.examRegisterNumbers || (s as any).examRegisterNos || {};
+    Object.keys(regMap).forEach(eId => examIds.add(eId));
+  });
+
+  const updated: T[] = sorted.map((student, index) => ({
+    ...student,
+    rollNo: index + 1,
+  }));
+
+  // Re-sequence exam register numbers if any exist
+  examIds.forEach(eId => {
+    let minBoyReg = parseInt(`${classNumeral}101`, 10) || 7101;
+    let minGirlReg = parseInt(`${classNumeral}201`, 10) || 7201;
+    let hasCustomBoy = false;
+    let hasCustomGirl = false;
+
+    classStudents.forEach(s => {
+      const reg = s.examRegisterNumbers?.[eId] || (s as any).examRegisterNos?.[eId] || '';
+      const num = parseInt(reg, 10);
+      if (!isNaN(num)) {
+        if (isBoyStudent(s.gender)) {
+          if (!hasCustomBoy || num < minBoyReg) { minBoyReg = num; hasCustomBoy = true; }
+        } else {
+          if (!hasCustomGirl || num < minGirlReg) { minGirlReg = num; hasCustomGirl = true; }
+        }
+      }
+    });
+
+    let boyCounter = minBoyReg;
+    let girlCounter = minGirlReg;
+
+    updated.forEach(s => {
+      const existingReg = s.examRegisterNumbers?.[eId] || (s as any).examRegisterNos?.[eId];
+      if (existingReg !== undefined || hasCustomBoy || hasCustomGirl) {
+        const isBoy = isBoyStudent(s.gender);
+        const newReg = isBoy ? String(boyCounter++) : String(girlCounter++);
+        if (!s.examRegisterNumbers) s.examRegisterNumbers = {};
+        s.examRegisterNumbers[eId] = newReg;
+        if (!(s as any).examRegisterNos) (s as any).examRegisterNos = {};
+        (s as any).examRegisterNos[eId] = newReg;
+        (s as any).examRegNo = newReg;
+      }
+    });
+  });
+
+  return updated;
 }
 
 export interface NewsItem {

@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { ClassItem, Examination, StudentProgressReport, InstitutionSettings, sortStudentsBoysFirst } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
 import { computeClassLedgerRankings, calculateStudentReportMetrics } from '../../utils/reportCalculations';
+import { handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
 import {
   Printer,
   Download,
@@ -665,20 +666,23 @@ export const BulkReportsPrint: React.FC = () => {
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div
+              onWheel={handleHorizontalWheel}
+              className="overflow-x-auto relative w-full scrollbar-thin"
+            >
               <table className="w-full text-left text-xs border-collapse">
-                <thead>
+                <thead className="sticky top-0 bg-slate-100 z-30">
                   <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                    <th className="py-2.5 px-3 w-12 text-center">Roll</th>
-                    <th className="py-2.5 px-3 w-28">Exam Reg No</th>
-                    <th className="py-2.5 px-3 w-24">Adm No</th>
-                    <th className="py-2.5 px-3">Student Name</th>
-                    <th className="py-2.5 px-3 text-center">Marks Obtained</th>
-                    <th className="py-2.5 px-3 text-center">Percentage</th>
-                    <th className="py-2.5 px-3 text-center">Attendance</th>
-                    <th className="py-2.5 px-3 text-center">Dense Rank</th>
-                    <th className="py-2.5 px-3 text-center">Result Status</th>
-                    <th className="py-2.5 px-3 text-right">Actions</th>
+                    <th className="py-2.5 px-3 w-12 text-center sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
+                    <th className="py-2.5 px-3 sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[180px] md:min-w-[220px]">Student Name</th>
+                    <th className="py-2.5 px-2 w-20 text-center font-mono">Reg No</th>
+                    <th className="py-2.5 px-2 w-20 text-center font-mono">Adm No</th>
+                    <th className="py-2.5 px-3 text-center whitespace-nowrap">Marks Obtained</th>
+                    <th className="py-2.5 px-3 text-center whitespace-nowrap">Percentage</th>
+                    <th className="py-2.5 px-3 text-center whitespace-nowrap">Attendance</th>
+                    <th className="py-2.5 px-3 text-center whitespace-nowrap">Dense Rank</th>
+                    <th className="py-2.5 px-3 text-center whitespace-nowrap">Result Status</th>
+                    <th className="py-2.5 px-3 text-right whitespace-nowrap">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
@@ -689,11 +693,11 @@ export const BulkReportsPrint: React.FC = () => {
                     const examRegNo = rep.examRegisterNo || s?.examRegisterNumbers?.[selectedExamId] || s?.rollNo || '—';
 
                     return (
-                      <tr key={s?.id || Math.random()} className="hover:bg-slate-50/80 transition">
-                        <td className="py-2.5 px-3 font-mono font-bold text-slate-700 text-center">{s?.rollNo}</td>
-                        <td className="py-2.5 px-3 font-mono font-bold text-emerald-950">{examRegNo}</td>
-                        <td className="py-2.5 px-3 font-mono font-medium text-slate-600">{s?.admissionNo}</td>
-                        <td className="py-2.5 px-3">
+                      <tr key={s?.id || Math.random()} className="hover:bg-slate-50/80 transition group">
+                        <td className="py-2.5 px-3 font-mono font-bold text-slate-700 text-center w-12 sticky left-0 bg-white group-hover:bg-slate-50 z-20 shadow-[1px_0_0_0_#e5e7eb]">
+                          {s?.rollNo}
+                        </td>
+                        <td className="py-2.5 px-3 sticky left-12 bg-white group-hover:bg-slate-50 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[180px] md:min-w-[220px]">
                           <span className="font-bold text-slate-900 block">{s?.nameEn}</span>
                           {s?.nameMl && (
                             <span className="text-[11px] text-slate-500 font-ml block leading-tight">
@@ -701,16 +705,22 @@ export const BulkReportsPrint: React.FC = () => {
                             </span>
                           )}
                         </td>
-                        <td className="py-2.5 px-3 text-center font-mono font-bold text-emerald-950">
+                        <td className="py-2.5 px-2 font-mono font-bold text-emerald-950 w-20 text-center">
+                          {examRegNo}
+                        </td>
+                        <td className="py-2.5 px-2 font-mono font-medium text-slate-600 w-20 text-center">
+                          {s?.admissionNo}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono font-bold text-emerald-950 whitespace-nowrap">
                           {metrics.displayGrandObtained} / {classTotalExpectedMax}
                         </td>
-                        <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-800">
+                        <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-800 whitespace-nowrap">
                           {metrics.percentageStr}%
                         </td>
-                        <td className="py-2.5 px-3 text-center font-mono text-slate-600">
+                        <td className="py-2.5 px-3 text-center font-mono text-slate-600 whitespace-nowrap">
                           {metrics.attendanceDays} / {metrics.attendanceTotal}
                         </td>
-                        <td className="py-2.5 px-3 text-center font-bold">
+                        <td className="py-2.5 px-3 text-center font-bold whitespace-nowrap">
                           {rankData?.isRankAwarded && rankData.rank !== null ? (
                             <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-50 text-emerald-900 border border-emerald-200 font-black">
                               Rank {rankData.rank}
@@ -723,12 +733,12 @@ export const BulkReportsPrint: React.FC = () => {
                             </span>
                           )}
                         </td>
-                        <td className="py-2.5 px-3 text-center">
+                        <td className="py-2.5 px-3 text-center whitespace-nowrap">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${metrics.resultBadgeColor}`}>
                             {metrics.displayResultStatus}
                           </span>
                         </td>
-                        <td className="py-2.5 px-3 text-right">
+                        <td className="py-2.5 px-3 text-right whitespace-nowrap">
                           <button
                             onClick={() => setActiveSingleReport(rep)}
                             className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 rounded-lg transition border border-emerald-300 cursor-pointer"

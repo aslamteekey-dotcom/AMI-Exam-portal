@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
 import { cleanForFirestore } from '../../services/firestoreSync';
+import { handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
 import { collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { logAuditEvent } from '../../services/auditLogger';
 import {
@@ -501,16 +502,19 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
 
       {/* Main Mark Entry Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
+        <div
+          onWheel={handleHorizontalWheel}
+          className="overflow-x-auto relative w-full scrollbar-thin"
+        >
           <table className="w-full text-left border-collapse text-sm">
-            <thead>
+            <thead className="sticky top-0 bg-slate-100 z-30">
               <tr className="bg-slate-100 text-slate-700 text-xs uppercase tracking-wider border-b border-slate-200">
-                <th className="py-3 px-3 w-14 text-center">Roll No</th>
-                <th className="py-3 px-3 w-28 text-center font-mono">Exam Reg No</th>
-                <th className="py-3 px-4 w-52">Student Name</th>
-                <th className="py-3 px-4 w-28 text-center">Status</th>
+                <th className="py-3 px-3 w-12 text-center sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
+                <th className="py-3 px-4 sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[180px] md:min-w-[220px]">Student Name</th>
+                <th className="py-3 px-2 w-20 text-center font-mono">Reg No</th>
+                <th className="py-3 px-3 w-24 text-center">Status</th>
                 {effectiveComponents.map(comp => (
-                  <th key={comp.componentKey} className="py-3 px-3 text-center min-w-[130px]">
+                  <th key={comp.componentKey} className="py-3 px-3 text-center min-w-[120px]">
                     <div>{comp.labelEn}</div>
                     <div className="text-[10px] text-emerald-800 font-bold lowercase">
                       (max {comp.maxMarks})
@@ -537,17 +541,26 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                 return (
                   <tr
                     key={student.id}
-                    className={`hover:bg-slate-50/80 transition ${
-                      isAbsent ? 'bg-amber-50/40' : idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'
+                    className={`transition group ${
+                      isAbsent
+                        ? 'bg-amber-50/70 hover:bg-amber-100/60'
+                        : idx % 2 === 0
+                        ? 'bg-white hover:bg-slate-50/80'
+                        : 'bg-slate-50/30 hover:bg-slate-50/80'
                     }`}
                   >
-                    <td className="py-3 px-3 text-center font-bold font-mono text-slate-600">
+                    <td
+                      className={`py-3 px-3 text-center font-bold font-mono text-slate-600 w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${
+                        isAbsent ? 'bg-amber-50 group-hover:bg-amber-100' : 'bg-white group-hover:bg-slate-50'
+                      }`}
+                    >
                       {student.rollNo}
                     </td>
-                    <td className="py-3 px-3 text-center font-mono font-bold text-emerald-950 bg-emerald-50/40">
-                      {regNo}
-                    </td>
-                    <td className="py-3 px-4">
+                    <td
+                      className={`py-3 px-4 sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[180px] md:min-w-[220px] ${
+                        isAbsent ? 'bg-amber-50 group-hover:bg-amber-100' : 'bg-white group-hover:bg-slate-50'
+                      }`}
+                    >
                       <div className="font-bold text-slate-900 whitespace-nowrap text-xs">
                         {student.nameEn}{' '}
                         <span className="font-mono text-[11px] font-normal text-slate-400">
@@ -559,6 +572,9 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                           {student.nameMl}
                         </div>
                       )}
+                    </td>
+                    <td className="py-3 px-2 text-center font-mono font-bold text-emerald-950 w-20 bg-emerald-50/30">
+                      {regNo}
                     </td>
 
                     {/* Present / Absent Toggle Button */}
@@ -681,8 +697,8 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
             <table className="w-full text-xs border border-slate-200 divide-y divide-slate-200">
               <thead className="bg-slate-100 font-bold">
                 <tr>
-                  <th className="p-2 text-center w-12">Roll</th>
-                  <th className="p-2 text-center font-mono w-24">Exam Reg No</th>
+                  <th className="p-2 text-center w-12 font-mono">Roll</th>
+                  <th className="p-2 text-center font-mono w-20">Reg No</th>
                   <th className="p-2 text-left">Student Name</th>
                   {components.map(c => (
                     <th key={c.componentKey} className="p-2 text-center">

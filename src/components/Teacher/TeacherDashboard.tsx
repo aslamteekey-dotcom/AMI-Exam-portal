@@ -8,16 +8,19 @@ import {
   MarkSheet,
   Student,
   sortStudentsBoysFirst,
+  recalculateClassRollsAndExamRegNos,
   TUITION_FEE_MONTHS,
   FeePayment,
   ClassAttendanceConfig,
   DailyAttendanceRecord,
   InstitutionHoliday,
+  AttendanceEditRequest,
   NewsItem,
   NotificationItem,
   DEFAULT_NEWS_ITEMS,
 } from '../../types';
 import { MarkEntryScreen } from './MarkEntryScreen';
+import { useHorizontalScroll, handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
 import {
   collection,
@@ -38,6 +41,8 @@ import {
   AlertCircle,
   AlertTriangle,
   Lock,
+  Unlock,
+  Key,
   Edit3,
   Shield,
   Layers,
@@ -87,6 +92,8 @@ export type TeacherPortalTab =
   | 'contact'
   | 'about';
 
+export const ACADEMIC_YEAR_START_DATE = '2026-06-01';
+
 export const formatLocalDate = (d: Date): string => {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -118,6 +125,7 @@ export const TeacherDashboard: React.FC = () => {
 
   // Tab State: 1. Home, 2. My Class, 3. Mark Entry, 4. Attendance, 5. Fees, 6. News, 7. Notification, 8. Contact, 9. About
   const [activeTab, setActiveTab] = useState<TeacherPortalTab>('home');
+  const { scrollProps: navScrollProps } = useHorizontalScroll();
 
   const [assignments, setAssignments] = useState<TeacherAssignment[]>(() => {
     const raw = (user as any)?.assignedSubjects || user?.assignments;
@@ -150,9 +158,10 @@ export const TeacherDashboard: React.FC = () => {
   });
   const [unlockedDates, setUnlockedDates] = useState<Record<string, boolean>>({});
   const [institutionHolidays, setInstitutionHolidays] = useState<Record<string, InstitutionHoliday>>({});
-  const [holidayModalDate, setHolidayModalDate] = useState<string | null>(null);
-  const [holidayReasonInput, setHolidayReasonInput] = useState<string>('');
-  const [isSavingHoliday, setIsSavingHoliday] = useState<boolean>(false);
+  const [attendanceEditRequests, setAttendanceEditRequests] = useState<Record<string, AttendanceEditRequest>>({});
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState<boolean>(false);
+  const [requestReasonInput, setRequestReasonInput] = useState<string>('');
+  const [isSubmittingRequest, setIsSubmittingRequest] = useState<boolean>(false);
   const [dailyStatusMap, setDailyStatusMap] = useState<Record<string, boolean>>({});
   const [weeklyStatusMap, setWeeklyStatusMap] = useState<Record<string, Record<string, boolean>>>({});
   const [classAttendanceConfig, setClassAttendanceConfig] = useState<ClassAttendanceConfig | null>(null);
@@ -161,11 +170,14 @@ export const TeacherDashboard: React.FC = () => {
   const [dailySaveSuccess, setDailySaveSuccess] = useState(false);
   const [isSavingWeekly, setIsSavingWeekly] = useState(false);
   const [weeklySaveSuccess, setWeeklySaveSuccess] = useState(false);
+  const [dailyViewLayout, setDailyViewLayout] = useState<'table' | 'cards'>('table');
 
-  // Strict Hard Restriction: Instantly clamp back if date or week is in the future
+  // Strict Hard Restriction: Instantly clamp to June 1 of academic year and cannot exceed today
   useEffect(() => {
     if (selectedAttendanceDate > todayStr) {
       setSelectedAttendanceDate(todayStr);
+    } else if (selectedAttendanceDate < ACADEMIC_YEAR_START_DATE) {
+      setSelectedAttendanceDate(ACADEMIC_YEAR_START_DATE);
     }
   }, [selectedAttendanceDate, todayStr]);
 
@@ -174,6 +186,8 @@ export const TeacherDashboard: React.FC = () => {
     const currentWeekMonday = getWeekMondayStr(todayStr);
     if (selectedWeekMonday > currentWeekMonday) {
       setSelectedWeekDate(todayStr);
+    } else if (selectedWeekMonday < ACADEMIC_YEAR_START_DATE) {
+      setSelectedWeekDate(ACADEMIC_YEAR_START_DATE);
     }
   }, [selectedWeekDate, todayStr]);
 
@@ -187,16 +201,17 @@ export const TeacherDashboard: React.FC = () => {
   // Mark Entry Sub-tab Segment: 'my_class' (Class In-charge) vs 'other_class' (All other classes)
   const [markEntrySegment, setMarkEntrySegment] = useState<'my_class' | 'other_class'>('my_class');
 
-  // Student Edit / Delete Modal State in "My Class"
+  // Student Edit Modal State in "My Class"
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [isSavingStudent, setIsSavingStudent] = useState(false);
-  const [isDeletingStudent, setIsDeletingStudent] = useState<string | null>(null);
   const [studentFormData, setStudentFormData] = useState({
     nameEn: '',
     nameMl: '',
     rollNo: '',
     admissionNo: '',
     gender: 'M' as 'M' | 'F',
+    dob: '',
+    schoolClass: '',
     parentNameEn: '',
     parentPhone: '',
   });
@@ -564,6 +579,23 @@ export const TeacherDashboard: React.FC = () => {
       );
       unsubs.push(unsubHolidays);
 
+      // Real-time Firestore Attendance Edit Requests listener
+      const unsubRequests = onSnapshot(
+        collection(db, 'attendanceEditRequests'),
+        snapshot => {
+          const reqMap: Record<string, AttendanceEditRequest> = {};
+          snapshot.docs.forEach(docSnap => {
+            const data = docSnap.data() as AttendanceEditRequest;
+            reqMap[data.date] = { ...data, id: docSnap.id };
+          });
+          setAttendanceEditRequests(reqMap);
+        },
+        error => {
+          console.warn('Firestore attendanceEditRequests onSnapshot error:', error);
+        }
+      );
+      unsubs.push(unsubRequests);
+
       // Real-time Firestore News listener
       const unsubNews = onSnapshot(
         collection(db, 'news'),
@@ -694,9 +726,17 @@ export const TeacherDashboard: React.FC = () => {
     return !!classAttendanceConfig?.dailyRecords?.[dateStr];
   };
 
-  // Check if a date is locked (already saved to Firestore and not explicitly unlocked this session)
+  // Check if a date is locked (already saved to Firestore and not explicitly unlocked by Principal)
   const isDateLocked = (dateStr: string): boolean => {
-    return isDateRecorded(dateStr) && !unlockedDates[dateStr];
+    if (isDateHoliday(dateStr)) return true;
+    if (dateStr > todayStr) return true;
+    const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
+    if (!rec) return false;
+    // If approved and unlocked by Principal in Firestore or locally marked editable
+    if (rec.unlocked === true || rec.editable === true || unlockedDates[dateStr]) {
+      return false;
+    }
+    return true;
   };
 
   // Check if date is designated as an Institution Holiday / Non-Working Day
@@ -706,7 +746,7 @@ export const TeacherDashboard: React.FC = () => {
     return false;
   };
 
-  // Get metadata for a holiday
+  // Get metadata for a holiday (strictly read-only in Teacher Portal)
   const getHolidayInfo = (dateStr: string): { date: string; reason: string; markedBy?: string } | null => {
     if (institutionHolidays[dateStr]) {
       return institutionHolidays[dateStr];
@@ -716,180 +756,66 @@ export const TeacherDashboard: React.FC = () => {
       return {
         date: dateStr,
         reason: rec.holidayReason || 'Official Holiday / Non-Working Day',
-        markedBy: rec.markedBy || 'Class Teacher',
+        markedBy: rec.markedBy || 'Principal',
       };
     }
     return null;
   };
 
-  // Open Holiday Designation Modal
-  const handleOpenMarkHoliday = (dateStr: string) => {
-    const existing = getHolidayInfo(dateStr);
-    const dayOfWeek = parseLocalDate(dateStr).getDay();
-    const defaultReason = existing?.reason || (dayOfWeek === 5 ? 'Friday Holiday' : 'Official Holiday');
-    setHolidayReasonInput(defaultReason);
-    setHolidayModalDate(dateStr);
-  };
-
-  // Confirm and persist holiday designation to Firestore 'institutionHolidays' & attendance config
-  const handleConfirmMarkHoliday = async (e: React.FormEvent) => {
+  // Submit Edit Access Request to Principal for approval
+  const handleSubmitEditRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!holidayModalDate) return;
-    setIsSavingHoliday(true);
-    try {
-      const reason = holidayReasonInput.trim() || 'Official Holiday / Non-Working Day';
-      const holidayData: InstitutionHoliday = {
-        id: holidayModalDate,
-        date: holidayModalDate,
-        reason,
-        markedBy: user?.name || 'Class Teacher',
-        markedAt: new Date().toISOString(),
-        academicYear: '2026-2027',
-        createdAt: new Date().toISOString(),
-      };
-
-      // 1. Direct write to Firestore 'institutionHolidays'
-      await setDoc(doc(db, 'institutionHolidays', holidayModalDate), cleanForFirestore(holidayData), { merge: true });
-
-      // 2. Update local state
-      setInstitutionHolidays(prev => ({
-        ...prev,
-        [holidayModalDate]: holidayData,
-      }));
-
-      // 3. Update classAttendanceConfig.dailyRecords with isHoliday
-      if (attendanceClassId) {
-        const updatedDailyRecords = {
-          ...(classAttendanceConfig?.dailyRecords || {}),
-          [holidayModalDate]: {
-            date: holidayModalDate,
-            presentStudentIds: [],
-            absentStudentIds: [],
-            statusMap: {},
-            isHoliday: true,
-            holidayReason: reason,
-            markedAt: new Date().toISOString(),
-            markedBy: user?.name || 'Class Teacher',
-          },
-        };
-
-        const totalHolidays = Object.keys(updatedDailyRecords).filter(
-          k => updatedDailyRecords[k]?.isHoliday || institutionHolidays[k] || k === holidayModalDate
-        ).length;
-        const totalWorking = Math.max(1, (attendanceTotalWorkingDays || 88) - totalHolidays);
-
-        const updatedConfig: ClassAttendanceConfig = {
-          classId: attendanceClassId,
-          totalWorkingDays: totalWorking,
-          studentDaysAttended: classAttendanceConfig?.studentDaysAttended || {},
-          dailyRecords: updatedDailyRecords,
-          updatedAt: new Date().toISOString(),
-        };
-
-        await setDoc(doc(db, 'attendance', attendanceClassId), cleanForFirestore(updatedConfig), { merge: true });
-        setClassAttendanceConfig(updatedConfig);
-
-        await fetchWithAuth(`/api/attendance/class/${attendanceClassId}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updatedConfig),
-        });
-      }
-
-      // 4. Update local API
-      await fetchWithAuth('/api/institution-holidays', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(holidayData),
-      });
-
-      setHolidayModalDate(null);
-
-      logAuditEvent({
-        action: 'HOLIDAY_MARKED',
-        details: `User ${user?.name || 'Teacher'} declared ${holidayModalDate} as Official Holiday / Non-Working Day ("${reason}").`,
-        currentUser: user,
-        recordType: 'institution_holiday',
-        recordId: holidayModalDate,
-      }).catch(e => console.warn('Audit log error:', e));
-
-      alert(`Date ${holidayModalDate} officially designated as Holiday ("${reason}"). Working days and student percentages are safeguarded without penalties.`);
-    } catch (err: any) {
-      console.error('Error marking holiday:', err);
-      alert('Failed to mark holiday: ' + (err.message || 'Unknown error'));
-    } finally {
-      setIsSavingHoliday(false);
-    }
-  };
-
-  // Remove holiday designation
-  const handleRemoveHoliday = async (dateStr: string) => {
-    const confirmed = window.confirm(
-      `Remove Holiday status for ${dateStr}?\n\nThis will restore this date as a regular working day for attendance.`
-    );
-    if (!confirmed) return;
-    try {
-      await deleteDoc(doc(db, 'institutionHolidays', dateStr));
-
-      setInstitutionHolidays(prev => {
-        const copy = { ...prev };
-        delete copy[dateStr];
-        return copy;
-      });
-
-      if (attendanceClassId && classAttendanceConfig?.dailyRecords?.[dateStr]) {
-        const updatedDailyRecords = { ...(classAttendanceConfig.dailyRecords) };
-        delete updatedDailyRecords[dateStr];
-
-        const totalHolidays = Object.keys(updatedDailyRecords).filter(
-          k => (updatedDailyRecords[k]?.isHoliday || institutionHolidays[k]) && k !== dateStr
-        ).length;
-        const totalWorking = Math.max(1, (attendanceTotalWorkingDays || 88) - totalHolidays);
-
-        const updatedConfig: ClassAttendanceConfig = {
-          ...classAttendanceConfig,
-          totalWorkingDays: totalWorking,
-          dailyRecords: updatedDailyRecords,
-          updatedAt: new Date().toISOString(),
-        };
-
-        await setDoc(doc(db, 'attendance', attendanceClassId), cleanForFirestore(updatedConfig), { merge: true });
-        setClassAttendanceConfig(updatedConfig);
-
-        await fetchWithAuth(`/api/attendance/class/${attendanceClassId}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updatedConfig),
-        });
-      }
-
-      await fetchWithAuth(`/api/institution-holidays/${dateStr}`, { method: 'DELETE' });
-      alert(`Holiday designation removed for ${dateStr}. Restored as regular working day.`);
-    } catch (err: any) {
-      console.error('Error removing holiday:', err);
-      alert('Failed to remove holiday: ' + (err.message || 'Unknown error'));
-    }
-  };
-
-  // Explicit Unlock Handler with user confirmation
-  const handleUnlockDate = (dateStr: string) => {
-    if (dateStr > todayStr) {
-      alert('Future dates cannot be unlocked or marked.');
+    if (!attendanceClassId || !selectedAttendanceDate) return;
+    const reason = requestReasonInput.trim();
+    if (!reason) {
+      alert('Please enter a reason for requesting edit access.');
       return;
     }
-    const dObj = parseLocalDate(dateStr);
-    const formatted = !isNaN(dObj.getTime())
-      ? dObj.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })
-      : dateStr;
+    setIsSubmittingRequest(true);
+    try {
+      const requestId = `${attendanceClassId}_${selectedAttendanceDate}`;
+      const className = classes.find(c => c.id === attendanceClassId)?.name || `Class ${attendanceClassId}`;
+      const reqData: AttendanceEditRequest = {
+        id: requestId,
+        classId: attendanceClassId,
+        className,
+        date: selectedAttendanceDate,
+        teacherId: user?.id || 'teacher',
+        teacherName: user?.name || 'Class Teacher',
+        reason,
+        requestedAt: new Date().toISOString(),
+        status: 'pending',
+      };
 
-    const confirmed = window.confirm(
-      `Edit / Unlock Attendance for ${formatted}?\n\nThis date is currently marked and locked to prevent accidental duplicate entries.\n\nAre you sure you want to unlock this record to make authorized corrections?`
-    );
-    if (confirmed) {
-      setUnlockedDates(prev => ({
+      await setDoc(doc(db, 'attendanceEditRequests', requestId), cleanForFirestore(reqData), { merge: true });
+
+      setAttendanceEditRequests(prev => ({
         ...prev,
-        [dateStr]: true,
+        [selectedAttendanceDate]: reqData,
       }));
+
+      await fetchWithAuth('/api/attendance-edit-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reqData),
+      });
+
+      logAuditEvent({
+        action: 'ATTENDANCE_EDIT_REQUESTED',
+        details: `Teacher ${user?.name || 'Teacher'} requested edit access for Class ${className} on ${selectedAttendanceDate}. Reason: "${reason}".`,
+        currentUser: user,
+        recordType: 'attendance_edit_request',
+        recordId: requestId,
+      }).catch(e => console.warn('Audit log error:', e));
+
+      setIsRequestModalOpen(false);
+      setRequestReasonInput('');
+      alert('Edit request successfully submitted to Principal ASLAM TK. The record will unlock automatically upon Principal approval.');
+    } catch (err: any) {
+      console.error('Error submitting edit request:', err);
+      alert('Failed to submit edit request: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsSubmittingRequest(false);
     }
   };
 
@@ -949,9 +875,12 @@ export const TeacherDashboard: React.FC = () => {
     setWeeklyStatusMap(newWeeklyMap);
   }, [selectedWeekDate, attendanceClassId, classAttendanceConfig, allStudents]);
 
-  // Quick navigation helpers for dates - STRICTLY CLAMPED TO <= TODAY
+  // Quick navigation helpers for dates - STRICTLY CLAMPED BETWEEN JUNE 1 & TODAY
   const stepDailyDate = (offsetDays: number) => {
     if (offsetDays > 0 && isDailyAtToday) {
+      return;
+    }
+    if (offsetDays < 0 && selectedAttendanceDate <= ACADEMIC_YEAR_START_DATE) {
       return;
     }
     const d = parseLocalDate(selectedAttendanceDate);
@@ -959,6 +888,8 @@ export const TeacherDashboard: React.FC = () => {
     const nextDateStr = formatLocalDate(d);
     if (nextDateStr > todayStr) {
       setSelectedAttendanceDate(todayStr);
+    } else if (nextDateStr < ACADEMIC_YEAR_START_DATE) {
+      setSelectedAttendanceDate(ACADEMIC_YEAR_START_DATE);
     } else {
       setSelectedAttendanceDate(nextDateStr);
     }
@@ -968,12 +899,18 @@ export const TeacherDashboard: React.FC = () => {
     if (offsetWeeks > 0 && isCurrentWeekOrFuture) {
       return;
     }
+    const currentMon = getWeekMondayStr(selectedWeekDate);
+    if (offsetWeeks < 0 && currentMon <= ACADEMIC_YEAR_START_DATE) {
+      return;
+    }
     const d = parseLocalDate(selectedWeekDate);
     d.setDate(d.getDate() + offsetWeeks * 7);
     const nextDateStr = formatLocalDate(d);
     const nextMonday = getWeekMondayStr(nextDateStr);
     if (nextMonday > currentWeekMondayStr) {
       setSelectedWeekDate(todayStr);
+    } else if (nextMonday < ACADEMIC_YEAR_START_DATE) {
+      setSelectedWeekDate(ACADEMIC_YEAR_START_DATE);
     } else {
       setSelectedWeekDate(nextDateStr);
     }
@@ -1094,6 +1031,8 @@ export const TeacherDashboard: React.FC = () => {
           markedAt: new Date().toISOString(),
           markedBy: user?.name || 'Class Teacher',
           isHoliday: false,
+          unlocked: false,
+          editable: false,
         },
       };
 
@@ -1157,6 +1096,24 @@ export const TeacherDashboard: React.FC = () => {
 
       // Re-lock the date immediately upon save
       setUnlockedDates(prev => ({ ...prev, [selectedAttendanceDate]: false }));
+
+      // Automatically resolve any edit request for this date
+      const reqId = `${attendanceClassId}_${selectedAttendanceDate}`;
+      try {
+        await setDoc(
+          doc(db, 'attendanceEditRequests', reqId),
+          {
+            status: 'resolved',
+            resolvedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+        await fetchWithAuth(`/api/attendance-edit-requests/${reqId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'resolved' }),
+        }).catch(() => {});
+      } catch {}
 
       logAuditEvent({
         action: 'ATTENDANCE_MARKED',
@@ -1344,7 +1301,7 @@ export const TeacherDashboard: React.FC = () => {
 
   const isTeacherAdmDuplicate = Boolean(teacherDuplicateConflict);
 
-  // Student Edit / Delete Handlers in "My Class"
+  // Student Edit Handlers in "My Class"
   const handleOpenEditStudent = (st: Student) => {
     setEditingStudent(st);
     setStudentFormData({
@@ -1353,6 +1310,8 @@ export const TeacherDashboard: React.FC = () => {
       rollNo: String(st.rollNo || ''),
       admissionNo: st.admissionNo || '',
       gender: (st.gender as 'M' | 'F') || 'M',
+      dob: st.dob || '',
+      schoolClass: st.schoolClass || '',
       parentNameEn: st.parentNameEn || '',
       parentPhone: st.parentPhone || '',
     });
@@ -1381,38 +1340,59 @@ export const TeacherDashboard: React.FC = () => {
         rollNo: Number(studentFormData.rollNo) || editingStudent.rollNo,
         admissionNo: trimmedAdm,
         gender: studentFormData.gender,
+        dob: studentFormData.dob.trim() || undefined,
+        schoolClass: studentFormData.schoolClass.trim() || undefined,
         parentNameEn: studentFormData.parentNameEn.trim(),
         parentPhone: studentFormData.parentPhone.trim(),
       };
 
-      // 1. Direct Firestore write
+      // 1. Direct Firestore write for edited student
       await setDoc(doc(db, 'students', editingStudent.id), cleanForFirestore(updateData), { merge: true });
       if (editingStudent.admissionNo && editingStudent.admissionNo !== editingStudent.id) {
         await setDoc(doc(db, 'students', editingStudent.admissionNo), cleanForFirestore(updateData), { merge: true }).catch(() => {});
       }
 
-      // 2. Local API sync
+      // 2. Auto-recalculate sequential roll numbers and exam register numbers for this class (Boys A-Z first, then Girls A-Z)
+      const targetClassId = editingStudent.classId;
+      const targetClassName = classes.find(c => c.id === targetClassId)?.name;
+      const updatedList = allStudents.map(s => {
+        if (s.id === editingStudent.id || (editingStudent.admissionNo && s.admissionNo === editingStudent.admissionNo)) {
+          return { ...s, ...updateData };
+        }
+        return s;
+      });
+
+      const classStudents = updatedList.filter(s => s.classId === targetClassId);
+      const resequencedClass = recalculateClassRollsAndExamRegNos(classStudents, targetClassName);
+
+      // Persist all resequenced students in this class to Firestore
+      for (const st of resequencedClass) {
+        try {
+          await setDoc(doc(db, 'students', st.id), cleanForFirestore(st), { merge: true });
+          if (st.admissionNo && st.admissionNo !== st.id) {
+            await setDoc(doc(db, 'students', st.admissionNo), cleanForFirestore(st), { merge: true }).catch(() => {});
+          }
+        } catch (e) {
+          console.warn('Firestore sync resequenced student error:', e);
+        }
+      }
+
+      const resequencedMap = new Map(resequencedClass.map(s => [s.id, s]));
+      const finalAllStudents = updatedList.map(s => resequencedMap.get(s.id) || s);
+
+      // 3. Local API sync
       await fetchWithAuth(`/api/students/${editingStudent.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updateData),
       });
 
-      // 3. React state update
-      setAllStudents(prev =>
-        sortStudentsBoysFirst(
-          prev.map(s => {
-            if (s.id === editingStudent.id || (editingStudent.admissionNo && s.admissionNo === editingStudent.admissionNo)) {
-              return { ...s, ...updateData };
-            }
-            return s;
-          })
-        )
-      );
+      // 4. React state update
+      setAllStudents(sortStudentsBoysFirst(finalAllStudents));
 
       logAuditEvent({
         action: 'STUDENT_UPDATED',
-        details: `Teacher ${user?.name || 'Class Teacher'} updated student profile for ${editingStudent.nameEn} (Adm: ${editingStudent.admissionNo}).`,
+        details: `Teacher ${user?.name || 'Class Teacher'} updated student profile for ${editingStudent.nameEn} (Adm: ${editingStudent.admissionNo}, Gender: ${studentFormData.gender}).`,
         currentUser: user,
         recordType: 'student',
         recordId: editingStudent.id,
@@ -1423,43 +1403,6 @@ export const TeacherDashboard: React.FC = () => {
       alert('Failed to update student: ' + (err.message || 'Unknown error'));
     } finally {
       setIsSavingStudent(false);
-    }
-  };
-
-  const handleDeleteStudent = async (st: Student) => {
-    const confirmed = window.confirm(
-      `Are you sure you want to remove student "${st.nameEn}" (${st.admissionNo}) from the class roster?`
-    );
-    if (!confirmed) return;
-    setIsDeletingStudent(st.id);
-    try {
-      // 1. Immediately delete from local state
-      setAllStudents(prev => prev.filter(s => s.id !== st.id && (!st.admissionNo || s.admissionNo !== st.admissionNo)));
-
-      // 2. Delete from Firestore directly
-      await deleteDoc(doc(db, 'students', st.id)).catch(() => {});
-      if (st.admissionNo && st.admissionNo !== st.id) {
-        await deleteDoc(doc(db, 'students', st.admissionNo)).catch(() => {});
-      }
-      await firestoreSync.deleteStudent(st.id, st.admissionNo);
-
-      // 3. Delete from API / local state
-      await fetchWithAuth(
-        `/api/students/${st.id}?admissionNo=${encodeURIComponent(st.admissionNo || '')}`,
-        { method: 'DELETE' }
-      );
-
-      logAuditEvent({
-        action: 'STUDENT_DELETED',
-        details: `Teacher ${user?.name || 'Class Teacher'} deleted student ${st.nameEn} (Adm: ${st.admissionNo}) from class roster.`,
-        currentUser: user,
-        recordType: 'student',
-        recordId: st.id,
-      }).catch(e => console.warn('Audit log error:', e));
-    } catch (err: any) {
-      alert('Failed to delete student: ' + (err.message || 'Unknown error'));
-    } finally {
-      setIsDeletingStudent(null);
     }
   };
 
@@ -1647,7 +1590,10 @@ export const TeacherDashboard: React.FC = () => {
       </div>
 
       {/* Primary Tabs in EXACT STRICT ORDER: 1. Home, 2. My Class, 3. Mark Entry, 4. Attendance, 5. Fees, 6. News, 7. Notification, 8. Contact, 9. About */}
-      <div className="flex border-b border-slate-200 gap-1.5 sm:gap-2 text-xs font-bold overflow-x-auto no-scrollbar pb-1">
+      <div
+        {...navScrollProps}
+        className="flex border-b border-slate-200 gap-1.5 sm:gap-2 text-xs font-bold overflow-x-auto no-scrollbar pb-1 cursor-grab active:cursor-grabbing select-none"
+      >
         {/* 1. Home */}
         <button
           type="button"
@@ -2171,19 +2117,10 @@ export const TeacherDashboard: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => handleOpenEditStudent(st)}
-                                  className="p-1.5 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
+                                  className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
                                   title={`Edit ${st.nameEn}`}
                                 >
                                   <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteStudent(st)}
-                                  disabled={isDeletingStudent === st.id}
-                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer disabled:opacity-50"
-                                  title={`Delete ${st.nameEn}`}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
                                 </button>
                               </div>
                             </div>
@@ -2216,6 +2153,18 @@ export const TeacherDashboard: React.FC = () => {
                                 <span>Class:</span>
                                 <span className="font-semibold text-emerald-800">{inChargeClass.name}</span>
                               </div>
+                              {st.schoolClass && (
+                                <div className="flex items-center justify-between text-slate-500">
+                                  <span>School Grade:</span>
+                                  <span className="font-semibold text-indigo-700">{st.schoolClass}</span>
+                                </div>
+                              )}
+                              {st.dob && (
+                                <div className="flex items-center justify-between text-slate-500">
+                                  <span>DOB:</span>
+                                  <span className="font-mono text-slate-700">{st.dob}</span>
+                                </div>
+                              )}
                               {regNo && (
                                 <div className="flex items-center justify-between text-slate-500">
                                   <span>Reg No:</span>
@@ -2233,15 +2182,9 @@ export const TeacherDashboard: React.FC = () => {
                             </div>
 
                             {isDuplicate && (
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteStudent(st)}
-                                className="w-full mt-2.5 py-1 px-2 text-[11px] font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg shadow-2xs transition flex items-center justify-center gap-1 cursor-pointer"
-                                title="Resolve duplicate: Permanently removes this redundant student record"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                                <span>Resolve / Delete</span>
-                              </button>
+                              <div className="w-full mt-2.5 py-1 px-2 text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg text-center">
+                                ⚠️ Contact Principal to resolve duplicate
+                              </div>
                             )}
                           </div>
                         </div>
@@ -2422,10 +2365,48 @@ export const TeacherDashboard: React.FC = () => {
                       <select
                         value={studentFormData.gender}
                         onChange={e => setStudentFormData({ ...studentFormData, gender: e.target.value as 'M' | 'F' })}
-                        className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                        className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none font-medium"
                       >
-                        <option value="M">Male / Boy</option>
-                        <option value="F">Female / Girl</option>
+                        <option value="M">👦 Male (Boy)</option>
+                        <option value="F">👧 Female (Girl)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Date of Birth & Regular School Class */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Date of Birth (DOB)</label>
+                      <input
+                        type="date"
+                        name="dob"
+                        value={studentFormData.dob}
+                        onChange={e => setStudentFormData({ ...studentFormData, dob: e.target.value })}
+                        className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none bg-white font-medium"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">School Class / Regular Grade</label>
+                      <select
+                        value={studentFormData.schoolClass}
+                        onChange={e => setStudentFormData({ ...studentFormData, schoolClass: e.target.value })}
+                        className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none bg-slate-50 font-medium"
+                      >
+                        <option value="">Select Regular Grade</option>
+                        <option value="Pre-Primary / KG">Pre-Primary / KG</option>
+                        <option value="Class 1">Class 1</option>
+                        <option value="Class 2">Class 2</option>
+                        <option value="Class 3">Class 3</option>
+                        <option value="Class 4">Class 4</option>
+                        <option value="Class 5">Class 5</option>
+                        <option value="Class 6">Class 6</option>
+                        <option value="Class 7">Class 7</option>
+                        <option value="Class 8">Class 8</option>
+                        <option value="Class 9">Class 9</option>
+                        <option value="Class 10">Class 10</option>
+                        <option value="Plus One (+1)">Plus One (+1)</option>
+                        <option value="Plus Two (+2)">Plus Two (+2)</option>
+                        <option value="College / Degree">College / Degree</option>
                       </select>
                     </div>
                   </div>
@@ -2991,12 +2972,13 @@ export const TeacherDashboard: React.FC = () => {
 
             {/* VIEW 1: DAILY ATTENDANCE MARKING */}
             {attendanceMode === 'daily' && (() => {
+              const dailyRecord = classAttendanceConfig?.dailyRecords?.[selectedAttendanceDate];
               const isDailyRecorded = isDateRecorded(selectedAttendanceDate);
-              const isDailyLocked = isDateLocked(selectedAttendanceDate);
-              const isDailyEditing = isDailyRecorded && unlockedDates[selectedAttendanceDate];
               const isDailyHoliday = isDateHoliday(selectedAttendanceDate);
               const dailyHolidayInfo = getHolidayInfo(selectedAttendanceDate);
-              const dailyRecord = classAttendanceConfig?.dailyRecords?.[selectedAttendanceDate];
+              const isDailyEditing = isDailyRecorded && (unlockedDates[selectedAttendanceDate] || dailyRecord?.unlocked === true || dailyRecord?.editable === true);
+              const isDailyLocked = isDailyRecorded && !isDailyEditing;
+              const reqForDate = attendanceEditRequests[selectedAttendanceDate];
 
               return (
                 <div className="space-y-4">
@@ -3008,8 +2990,13 @@ export const TeacherDashboard: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => stepDailyDate(-1)}
-                          className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer transition"
-                          title="Previous Day"
+                          disabled={selectedAttendanceDate <= ACADEMIC_YEAR_START_DATE}
+                          className={`p-2 rounded-xl border border-slate-200 transition ${
+                            selectedAttendanceDate <= ACADEMIC_YEAR_START_DATE
+                              ? 'bg-slate-100 text-slate-300 opacity-40 cursor-not-allowed pointer-events-none'
+                              : 'bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer'
+                          }`}
+                          title={selectedAttendanceDate <= ACADEMIC_YEAR_START_DATE ? "Cannot navigate prior to June 1 of the academic year" : "Previous Day"}
                         >
                           <ChevronLeft className="w-4 h-4" />
                         </button>
@@ -3018,6 +3005,7 @@ export const TeacherDashboard: React.FC = () => {
                           <Calendar className="w-4 h-4 text-slate-500" />
                           <input
                             type="date"
+                            min={ACADEMIC_YEAR_START_DATE}
                             max={todayStr}
                             value={selectedAttendanceDate}
                             onChange={e => {
@@ -3025,6 +3013,8 @@ export const TeacherDashboard: React.FC = () => {
                               if (!val) return;
                               if (val > todayStr) {
                                 setSelectedAttendanceDate(todayStr);
+                              } else if (val < ACADEMIC_YEAR_START_DATE) {
+                                setSelectedAttendanceDate(ACADEMIC_YEAR_START_DATE);
                               } else {
                                 setSelectedAttendanceDate(val);
                               }
@@ -3081,18 +3071,30 @@ export const TeacherDashboard: React.FC = () => {
                           </div>
                         ) : isDailyLocked ? (
                           <div className="flex items-center gap-1.5">
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
-                              <CheckCircle className="w-3.5 h-3.5 text-emerald-700" />
-                              ✓ Attendance Marked (Locked)
-                            </span>
+                            {reqForDate?.status === 'pending' ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+                                <Clock className="w-3.5 h-3.5 text-amber-700 animate-spin" />
+                                ⏳ Edit Request Pending Approval
+                              </span>
+                            ) : reqForDate?.status === 'rejected' ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-900 border border-rose-300 shadow-2xs">
+                                <X className="w-3.5 h-3.5 text-rose-700" />
+                                Edit Request Rejected by Principal
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
+                                <CheckCircle className="w-3.5 h-3.5 text-emerald-700" />
+                                ✓ Attendance Marked (Locked)
+                              </span>
+                            )}
                             <span className="text-[10px] text-slate-400 font-normal">
                               ({dailyRecord?.markedAt ? new Date(dailyRecord.markedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Morning Session'})
                             </span>
                           </div>
                         ) : isDailyEditing ? (
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                            <Edit3 className="w-3.5 h-3.5 text-amber-700" />
-                            Unlocked for Editing
+                            <Unlock className="w-3.5 h-3.5 text-amber-700" />
+                            Attendance Unlocked by Principal for Corrections
                           </span>
                         ) : (
                           <span className="text-[11px] text-slate-400 font-normal">
@@ -3105,29 +3107,6 @@ export const TeacherDashboard: React.FC = () => {
                     {/* Actions & Metrics Bar */}
                     <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
                       <div className="flex items-center gap-2 flex-wrap">
-                        {/* Holiday Toggle Button */}
-                        {isDailyHoliday ? (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveHoliday(selectedAttendanceDate)}
-                            className="px-3 py-1.5 text-xs font-bold rounded-xl border border-amber-300 bg-amber-100 hover:bg-amber-200 text-amber-950 transition flex items-center gap-1 cursor-pointer"
-                            title="Remove holiday status and restore as regular working day"
-                          >
-                            <span>🏖️</span>
-                            <span>Restore Working Day</span>
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleOpenMarkHoliday(selectedAttendanceDate)}
-                            className="px-3 py-1.5 text-xs font-bold rounded-xl border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-900 transition flex items-center gap-1 cursor-pointer"
-                            title="Designate selected date as Holiday / Non-Working Day"
-                          >
-                            <span>🏖️</span>
-                            <span>Mark as Holiday / Non-Working Day</span>
-                          </button>
-                        )}
-
                         {!isDailyHoliday && (
                           <>
                             <button
@@ -3163,7 +3142,7 @@ export const TeacherDashboard: React.FC = () => {
                         )}
                       </div>
 
-                      {/* Counter Badges & Save / Unlock Button */}
+                      {/* Counter Badges & Save / Unlock Request Button */}
                       <div className="flex items-center gap-3 flex-wrap">
                         {isDailyHoliday ? (
                           <div className="px-3 py-1.5 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 text-xs font-bold flex items-center gap-1.5">
@@ -3182,15 +3161,25 @@ export const TeacherDashboard: React.FC = () => {
                             </div>
 
                             {isDailyLocked ? (
-                              <button
-                                type="button"
-                                onClick={() => handleUnlockDate(selectedAttendanceDate)}
-                                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 rounded-xl transition border border-slate-300 shadow-2xs cursor-pointer hover:border-slate-400"
-                                title="Unlock this marked attendance record to make authorized corrections"
-                              >
-                                <Lock className="w-4 h-4 text-emerald-700" />
-                                <span>Edit / Unlock Attendance</span>
-                              </button>
+                              reqForDate?.status === 'pending' ? (
+                                <div className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-amber-900 bg-amber-50 rounded-xl border border-amber-300 shadow-2xs">
+                                  <Clock className="w-4 h-4 text-amber-600 animate-spin" />
+                                  <span>⏳ Edit Request Pending Approval</span>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setRequestReasonInput('');
+                                    setIsRequestModalOpen(true);
+                                  }}
+                                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-amber-50 rounded-xl transition border border-slate-300 hover:border-amber-400 shadow-2xs cursor-pointer"
+                                  title="Request Principal to Unlock this record for corrections"
+                                >
+                                  <Key className="w-4 h-4 text-amber-600" />
+                                  <span>Request Edit Access</span>
+                                </button>
+                              )
                             ) : (
                               <div className="flex items-center gap-2">
                                 {isDailyEditing && (
@@ -3199,7 +3188,7 @@ export const TeacherDashboard: React.FC = () => {
                                     onClick={() => handleRelockDate(selectedAttendanceDate)}
                                     className="px-3 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer"
                                   >
-                                    Cancel Edit
+                                    Cancel
                                   </button>
                                 )}
                                 <button
@@ -3209,7 +3198,15 @@ export const TeacherDashboard: React.FC = () => {
                                   className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs disabled:opacity-50 cursor-pointer"
                                 >
                                   <Save className="w-4 h-4" />
-                                  {isSavingDaily ? 'Saving...' : dailySaveSuccess ? 'Saved!' : isDailyEditing ? 'Save Corrections' : 'Save Attendance'}
+                                  <span>
+                                    {isSavingDaily
+                                      ? 'Saving...'
+                                      : dailySaveSuccess
+                                      ? 'Saved!'
+                                      : isDailyEditing
+                                      ? 'Save Corrections'
+                                      : 'Save Attendance'}
+                                  </span>
                                 </button>
                               </div>
                             )}
@@ -3219,7 +3216,7 @@ export const TeacherDashboard: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* PROMINENT HOLIDAY BANNER WHEN DESIGNATED */}
+                  {/* PROMINENT HOLIDAY BANNER (READ ONLY - NO REMOVE BUTTON FOR TEACHER) */}
                   {isDailyHoliday && (
                     <div className="bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 rounded-2xl border-2 border-amber-300 p-6 text-center space-y-3 shadow-xs">
                       <div className="w-12 h-12 rounded-full bg-amber-100 border border-amber-300 flex items-center justify-center text-2xl mx-auto shadow-2xs">
@@ -3238,38 +3235,213 @@ export const TeacherDashboard: React.FC = () => {
                         Student attendance is completely exempt and will not be marked absent.
                         Total working day counts automatically exclude this date, safeguarding student percentages against unexcused penalties.
                       </p>
-                      <div className="pt-2 flex items-center justify-center gap-3">
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveHoliday(selectedAttendanceDate)}
-                          className="px-4 py-2 text-xs font-bold text-amber-950 bg-white hover:bg-amber-100 border border-amber-300 rounded-xl transition cursor-pointer shadow-2xs"
-                        >
-                          Remove Holiday &amp; Set as Regular Working Day
-                        </button>
-                      </div>
                     </div>
                   )}
 
                   {/* Student Daily Marking List */}
                   <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3">
-                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                      <span className="text-xs font-bold text-slate-700">
-                        Enrolled Students ({classStudents.length})
-                      </span>
-                      <span className="text-[11px] text-slate-400">
-                        {isDailyHoliday
-                          ? '🏖️ Official Holiday: Attendance marking is disabled and exempt.'
-                          : isDailyLocked
-                          ? 'Attendance is locked. Click "Edit / Unlock Attendance" above to modify records.'
-                          : 'Tap checkbox or anywhere on the row to toggle Present / Absent'}
-                      </span>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
+                      <div>
+                        <span className="text-xs font-bold text-slate-700">
+                          Enrolled Students ({classStudents.length})
+                        </span>
+                        <span className="text-[11px] text-slate-400 block sm:inline sm:ml-2">
+                          {isDailyHoliday
+                            ? '🏖️ Official Holiday: Attendance marking is disabled and exempt.'
+                            : isDailyLocked
+                            ? 'Attendance is locked. Click "Edit / Unlock Attendance" above to modify records.'
+                            : 'Tap button to toggle status. Roll No and Student Name remain frozen while scrolling.'}
+                        </span>
+                      </div>
+
+                      {/* View Layout Switcher */}
+                      <div className="inline-flex p-0.5 bg-slate-100 rounded-lg border border-slate-200 text-xs font-semibold">
+                        <button
+                          type="button"
+                          onClick={() => setDailyViewLayout('table')}
+                          className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                            dailyViewLayout === 'table'
+                              ? 'bg-emerald-800 text-white shadow-2xs font-bold'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Roster Table
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDailyViewLayout('cards')}
+                          className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                            dailyViewLayout === 'cards'
+                              ? 'bg-emerald-800 text-white shadow-2xs font-bold'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Card Grid
+                        </button>
+                      </div>
                     </div>
 
                     {classStudents.length === 0 ? (
                       <div className="text-center py-10 text-slate-400 text-xs">
                         No active students found in this class.
                       </div>
+                    ) : dailyViewLayout === 'table' ? (
+                      /* Daily Table Roster with Frozen Columns */
+                      <div
+                        onWheel={handleHorizontalWheel}
+                        className="overflow-x-auto relative w-full scrollbar-thin rounded-xl border border-slate-200"
+                      >
+                        <table className="w-full text-left text-xs min-w-[660px] border-collapse">
+                          <thead className="sticky top-0 bg-slate-100 z-30">
+                            <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                              <th className="py-3 px-3 text-center w-12 font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">
+                                Roll
+                              </th>
+                              <th className="py-3 px-4 min-w-[180px] md:min-w-[220px] sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                Student Name
+                              </th>
+                              <th className="py-3 px-2 w-20 text-center font-mono">
+                                Adm No
+                              </th>
+                              <th className="py-3 px-2 w-16 text-center">
+                                Gender
+                              </th>
+                              <th className="py-3 px-4 text-center min-w-[150px]">
+                                Attendance Status
+                              </th>
+                              <th className="py-3 px-3 text-right">
+                                Action
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {classStudents.map(st => {
+                              const isPresent = dailyStatusMap[st.id] !== false;
+                              const isDupAdm =
+                                (teacherAdmCounts.get(String(st.admissionNo || '').trim().toLowerCase()) || 0) > 1;
+
+                              return (
+                                <tr
+                                  key={st.id}
+                                  className={`transition group ${
+                                    isDupAdm
+                                      ? 'bg-red-50/90 hover:bg-red-100/70'
+                                      : isDailyHoliday
+                                      ? 'bg-amber-50/30'
+                                      : isPresent
+                                      ? 'bg-white hover:bg-slate-50/80'
+                                      : 'bg-rose-50/30 hover:bg-rose-50/60'
+                                  }`}
+                                >
+                                  <td
+                                    className={`py-3 px-3 text-center font-mono font-bold text-slate-700 w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${
+                                      isDupAdm
+                                        ? 'bg-red-50 group-hover:bg-red-100'
+                                        : isDailyHoliday
+                                        ? 'bg-amber-50 group-hover:bg-amber-100'
+                                        : isPresent
+                                        ? 'bg-white group-hover:bg-slate-50'
+                                        : 'bg-rose-50/70 group-hover:bg-rose-100/70'
+                                    }`}
+                                  >
+                                    {st.rollNo}
+                                  </td>
+                                  <td
+                                    className={`py-3 px-4 whitespace-nowrap min-w-[180px] md:min-w-[220px] sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
+                                      isDupAdm
+                                        ? 'bg-red-50 group-hover:bg-red-100'
+                                        : isDailyHoliday
+                                        ? 'bg-amber-50 group-hover:bg-amber-100'
+                                        : isPresent
+                                        ? 'bg-white group-hover:bg-slate-50'
+                                        : 'bg-rose-50/70 group-hover:bg-rose-100/70'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="font-bold text-slate-900">{st.nameEn}</span>
+                                      {isDupAdm && (
+                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-red-100 text-red-700 border border-red-300 shadow-2xs">
+                                          ⚠️ Duplicate Adm No
+                                        </span>
+                                      )}
+                                    </div>
+                                    {st.nameMl && (
+                                      <div className="text-[11px] text-slate-500 font-ml leading-tight mt-0.5">
+                                        {st.nameMl}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="py-3 px-2 text-center font-mono font-bold text-slate-700 w-20">
+                                    <span
+                                      className={
+                                        isDupAdm
+                                          ? 'text-red-700 bg-red-100 px-1 py-0.5 rounded border border-red-200'
+                                          : ''
+                                      }
+                                    >
+                                      {st.admissionNo}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-2 text-center w-16">
+                                    <span
+                                      className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                                        st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                                      }`}
+                                    >
+                                      {st.gender || 'M'}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-4 text-center">
+                                    {isDailyHoliday ? (
+                                      <span className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-amber-100 text-amber-900 border border-amber-200 inline-block">
+                                        🏖️ Exempt (Holiday)
+                                      </span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        disabled={isDailyLocked}
+                                        onClick={() => toggleDailyStudent(st.id)}
+                                        className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition-all inline-flex items-center justify-center gap-1.5 min-w-[120px] ${
+                                          isDailyLocked
+                                            ? isPresent
+                                              ? 'bg-emerald-100 text-emerald-800 border-emerald-300 cursor-not-allowed opacity-90'
+                                              : 'bg-rose-100 text-rose-800 border-rose-300 cursor-not-allowed opacity-90'
+                                            : isPresent
+                                            ? 'bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-800 shadow-2xs cursor-pointer'
+                                            : 'bg-white hover:bg-rose-50 text-rose-600 border-rose-300 cursor-pointer'
+                                        }`}
+                                        aria-label={`Toggle attendance for ${st.nameEn}`}
+                                        title={isDailyLocked ? "Record is locked" : `Toggle ${st.nameEn}`}
+                                      >
+                                        {isPresent ? (
+                                          <>
+                                            <Check className="w-4 h-4 stroke-[3]" />
+                                            <span>Present</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <X className="w-4 h-4 stroke-[3]" />
+                                            <span>Absent</span>
+                                          </>
+                                        )}
+                                      </button>
+                                    )}
+                                  </td>
+                                  <td className="py-3 px-3 text-right">
+                                    {isDupAdm && (
+                                      <span className="text-[10px] font-bold text-red-700 bg-red-100 border border-red-200 px-1.5 py-0.5 rounded shadow-2xs" title="Duplicate admission number - contact Principal to resolve">
+                                        Duplicate Adm No
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     ) : (
+                      /* Card Grid Layout */
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                         {classStudents.map(st => {
                           const isPresent = dailyStatusMap[st.id] !== false;
@@ -3338,18 +3510,9 @@ export const TeacherDashboard: React.FC = () => {
 
                               <div className="flex items-center gap-2 shrink-0">
                                 {isDupAdm && (
-                                  <button
-                                    type="button"
-                                    onClick={e => {
-                                      e.stopPropagation();
-                                      handleDeleteStudent(st);
-                                    }}
-                                    className="px-2 py-1 text-[11px] font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg shadow-2xs transition flex items-center gap-1 cursor-pointer"
-                                    title="Resolve duplicate student by removing this record"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                    <span>Resolve / Delete</span>
-                                  </button>
+                                  <span className="text-[10px] font-bold text-red-700 bg-red-100 border border-red-200 px-1.5 py-0.5 rounded shadow-2xs" title="Duplicate admission number - contact Principal to resolve">
+                                    Duplicate Adm No
+                                  </span>
                                 )}
                                 {isDailyHoliday ? (
                                   <span className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-amber-100 text-amber-900 border border-amber-200">
@@ -3416,8 +3579,13 @@ export const TeacherDashboard: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => stepWeeklyDate(-1)}
-                        className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer transition"
-                        title="Previous Week"
+                        disabled={selectedWeekMondayStr <= ACADEMIC_YEAR_START_DATE}
+                        className={`p-2 rounded-xl border border-slate-200 transition ${
+                          selectedWeekMondayStr <= ACADEMIC_YEAR_START_DATE
+                            ? 'bg-slate-100 text-slate-300 opacity-40 cursor-not-allowed pointer-events-none'
+                            : 'bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer'
+                        }`}
+                        title={selectedWeekMondayStr <= ACADEMIC_YEAR_START_DATE ? "Cannot navigate prior to June 1 of the academic year" : "Previous Week"}
                       >
                         <ChevronLeft className="w-4 h-4" />
                       </button>
@@ -3457,16 +3625,6 @@ export const TeacherDashboard: React.FC = () => {
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => handleOpenMarkHoliday(selectedAttendanceDate || todayStr)}
-                        className="px-3 py-2 text-xs font-bold rounded-xl bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100 transition cursor-pointer flex items-center gap-1.5"
-                        title="Designate date as Official Holiday / Non-Working Day"
-                      >
-                        <span>🏖️</span>
-                        <span>Mark Holiday</span>
-                      </button>
-
-                      <button
-                        type="button"
                         onClick={markAllWeeklyPresent}
                         className="px-3 py-2 text-xs font-bold rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer flex items-center gap-1"
                         title="Mark open past/current days as present"
@@ -3500,12 +3658,15 @@ export const TeacherDashboard: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto w-full scrollbar-thin">
-                    <table className="w-full text-left text-xs min-w-[780px]">
-                      <thead>
+                  <div
+                    onWheel={handleHorizontalWheel}
+                    className="overflow-x-auto w-full scrollbar-thin relative"
+                  >
+                    <table className="w-full text-left text-xs min-w-[780px] border-collapse">
+                      <thead className="sticky top-0 bg-slate-100 z-30">
                         <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                          <th className="py-3 px-3 text-center w-12 font-mono">Roll</th>
-                          <th className="py-3 px-4 min-w-[160px]">Student Name</th>
+                          <th className="py-3 px-3 text-center w-12 font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
+                          <th className="py-3 px-4 min-w-[180px] md:min-w-[220px] sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Student Name</th>
                           {weekDays.map(d => {
                             const isFuture = d.dateStr > todayStr;
                             const isDayHoliday = isDateHoliday(d.dateStr);
@@ -3548,14 +3709,6 @@ export const TeacherDashboard: React.FC = () => {
                                       <span className="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 truncate max-w-[74px]" title={holInfo?.reason}>
                                         {holInfo?.reason ? (holInfo.reason.length > 10 ? holInfo.reason.slice(0, 9) + '…' : holInfo.reason) : 'Holiday'}
                                       </span>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleRemoveHoliday(d.dateStr)}
-                                        className="text-[9px] text-amber-950 hover:underline font-bold cursor-pointer block mx-auto"
-                                        title={`Restore ${d.dayName} as regular working day`}
-                                      >
-                                        Restore
-                                      </button>
                                     </div>
                                   ) : isFuture ? (
                                     <span className="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200/80 text-slate-500 uppercase tracking-wider">
@@ -3563,27 +3716,30 @@ export const TeacherDashboard: React.FC = () => {
                                     </span>
                                   ) : isDayLocked ? (
                                     <div className="space-y-0.5">
-                                      <div className="flex items-center justify-center gap-1">
-                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                                          ✓ Locked
+                                      {attendanceEditRequests[d.dateStr]?.status === 'pending' ? (
+                                        <span className="inline-flex items-center gap-0.5 text-[8.5px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs" title="Edit request pending Principal approval">
+                                          ⏳ Pending
                                         </span>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleUnlockDate(d.dateStr)}
-                                          className="text-[9px] text-blue-700 hover:text-blue-900 underline font-bold cursor-pointer"
-                                          title={`Unlock ${d.dayName} to edit`}
-                                        >
-                                          Edit
-                                        </button>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleOpenMarkHoliday(d.dateStr)}
-                                        className="text-[9px] text-amber-800 hover:text-amber-950 underline font-medium cursor-pointer block mx-auto"
-                                        title={`Mark ${d.dayName} as holiday`}
-                                      >
-                                        🏖️ Holiday
-                                      </button>
+                                      ) : (
+                                        <div className="flex items-center justify-center gap-1">
+                                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                                            ✓ Locked
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setSelectedAttendanceDate(d.dateStr);
+                                              setRequestReasonInput('');
+                                              setIsRequestModalOpen(true);
+                                            }}
+                                            className="text-[9px] text-amber-800 hover:text-amber-950 underline font-bold cursor-pointer flex items-center gap-0.5"
+                                            title={`Request Principal to unlock ${d.dayName} for corrections`}
+                                          >
+                                            <Key className="w-2.5 h-2.5 text-amber-600" />
+                                            <span>Unlock</span>
+                                          </button>
+                                        </div>
+                                      )}
                                     </div>
                                   ) : isDayEditing ? (
                                     <div className="flex items-center justify-center gap-1">
@@ -3594,6 +3750,7 @@ export const TeacherDashboard: React.FC = () => {
                                         type="button"
                                         onClick={() => handleRelockDate(d.dateStr)}
                                         className="text-[9px] text-slate-500 hover:text-slate-700 underline cursor-pointer"
+                                        title="Cancel editing and lock"
                                       >
                                         Re-lock
                                       </button>
@@ -3603,14 +3760,6 @@ export const TeacherDashboard: React.FC = () => {
                                       <span className="inline-block text-[9px] font-medium px-1.5 py-0.5 rounded bg-slate-200/60 text-slate-600">
                                         Open
                                       </span>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleOpenMarkHoliday(d.dateStr)}
-                                        className="text-[9px] text-amber-800 hover:text-amber-950 underline font-medium cursor-pointer block mx-auto"
-                                        title={`Mark ${d.dayName} as holiday`}
-                                      >
-                                        🏖️ Holiday
-                                      </button>
                                     </div>
                                   )}
                                 </div>
@@ -3634,16 +3783,24 @@ export const TeacherDashboard: React.FC = () => {
                           return (
                             <tr
                               key={st.id}
-                              className={
+                              className={`transition group ${
                                 isDupAdm
-                                  ? 'bg-red-50/90 border-l-4 border-red-500 hover:bg-red-100/70 transition'
-                                  : 'hover:bg-slate-50/80 transition'
-                              }
+                                  ? 'bg-red-50/90 hover:bg-red-100/70'
+                                  : 'hover:bg-slate-50/80 bg-white'
+                              }`}
                             >
-                              <td className="py-3 px-3 text-center font-mono font-bold text-slate-600">
+                              <td
+                                className={`py-3 px-3 text-center font-mono font-bold text-slate-600 w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${
+                                  isDupAdm ? 'bg-red-50 group-hover:bg-red-100' : 'bg-white group-hover:bg-slate-50'
+                                }`}
+                              >
                                 {st.rollNo}
                               </td>
-                              <td className="py-3 px-4 whitespace-nowrap">
+                              <td
+                                className={`py-3 px-4 whitespace-nowrap min-w-[180px] md:min-w-[220px] sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
+                                  isDupAdm ? 'bg-red-50 group-hover:bg-red-100' : 'bg-white group-hover:bg-slate-50'
+                                }`}
+                              >
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <span className="font-bold text-slate-900">{st.nameEn}</span>
                                   {isDupAdm && (
@@ -3664,14 +3821,12 @@ export const TeacherDashboard: React.FC = () => {
                                     {st.admissionNo}
                                   </span>
                                   {isDupAdm && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteStudent(st)}
-                                      className="ml-2 px-1.5 py-0.5 text-[9px] font-bold text-white bg-red-600 hover:bg-red-700 rounded shadow-2xs transition cursor-pointer"
-                                      title="Resolve duplicate entry"
+                                    <span
+                                      className="ml-1.5 px-1.5 py-0.2 rounded text-[9px] font-bold text-red-700 bg-red-100 border border-red-200"
+                                      title="Duplicate admission number - contact Principal to resolve"
                                     >
-                                      Resolve / Delete
-                                    </button>
+                                      Duplicate
+                                    </span>
                                   )}
                                 </div>
                               </td>
@@ -3805,13 +3960,16 @@ export const TeacherDashboard: React.FC = () => {
                 </div>
               </div>
 
-              <div className="overflow-x-auto w-full scrollbar-thin px-4 pb-4">
+              <div
+                onWheel={handleHorizontalWheel}
+                className="overflow-x-auto w-full scrollbar-thin px-4 pb-4 relative"
+              >
                 <table className="w-full text-left text-xs min-w-[850px] border-collapse">
-                  <thead>
+                  <thead className="sticky top-0 bg-slate-100 z-30">
                     <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                      <th className="py-2.5 px-3 text-center w-12 font-mono">Roll</th>
-                      <th className="py-2.5 px-3 font-mono text-center w-24">Adm No</th>
-                      <th className="py-2.5 px-4 min-w-[170px]">Student Name</th>
+                      <th className="py-2.5 px-3 text-center w-12 font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
+                      <th className="py-2.5 px-4 min-w-[180px] md:min-w-[220px] sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Student Name</th>
+                      <th className="py-2.5 px-2 font-mono text-center w-20">Adm No</th>
                       {academicMonths.map(m => (
                         <th key={m.key} className="py-2.5 px-3 text-center min-w-[90px]">
                           <div>{m.monthEn.replace(' 2026', '')}</div>
@@ -3828,18 +3986,18 @@ export const TeacherDashboard: React.FC = () => {
                       const breakdown = getStudentMonthlyBreakdown(st);
 
                       return (
-                        <tr key={st.id} className="hover:bg-slate-50 transition">
-                          <td className="py-3 px-3 text-center font-mono font-bold text-slate-600">
+                        <tr key={st.id} className="hover:bg-slate-50 transition group">
+                          <td className="py-3 px-3 text-center font-mono font-bold text-slate-600 w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] bg-white group-hover:bg-slate-50">
                             {st.rollNo}
                           </td>
-                          <td className="py-3 px-3 text-center font-mono font-bold text-slate-700">
-                            {st.admissionNo}
-                          </td>
-                          <td className="py-3 px-4 whitespace-nowrap">
+                          <td className="py-3 px-4 whitespace-nowrap min-w-[180px] md:min-w-[220px] sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] bg-white group-hover:bg-slate-50">
                             <div className="font-bold text-slate-900">{st.nameEn}</div>
                             {st.nameMl && (
                               <div className="text-[10px] text-slate-500 font-ml">{st.nameMl}</div>
                             )}
+                          </td>
+                          <td className="py-3 px-2 text-center font-mono font-bold text-slate-700 w-20">
+                            {st.admissionNo}
                           </td>
 
                           {breakdown.months.map(m => (
@@ -3899,112 +4057,6 @@ export const TeacherDashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Holiday Designation Modal */}
-            {holidayModalDate && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-                <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                    <div className="flex items-center gap-2">
-                      <span className="text-2xl">🏖️</span>
-                      <div>
-                        <h3 className="text-base font-bold text-slate-900">
-                          Mark as Holiday / Non-Working Day
-                        </h3>
-                        <p className="text-xs text-slate-500 font-mono">
-                          Date: {holidayModalDate}
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setHolidayModalDate(null)}
-                      className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-                  </div>
-
-                  <form onSubmit={handleConfirmMarkHoliday} className="mt-4 space-y-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Holiday Title / Reason (Optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={holidayReasonInput}
-                        onChange={e => setHolidayReasonInput(e.target.value)}
-                        placeholder="e.g. Friday Holiday, Eid Festival, Milad-un-Nabi, Study Leave"
-                        className="w-full px-3.5 py-2.5 text-xs border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 bg-slate-50 focus:bg-white transition"
-                        autoFocus
-                      />
-                    </div>
-
-                    {/* Quick Suggestion Pills */}
-                    <div>
-                      <span className="block text-[11px] font-semibold text-slate-500 mb-1.5">
-                        Quick Suggestions:
-                      </span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {[
-                          'Friday Holiday',
-                          'Eid al-Fitr',
-                          'Eid al-Adha',
-                          'Milad-un-Nabi',
-                          'Study Leave',
-                          'Madrasa Sports Day',
-                          'Public Holiday',
-                          'Special Madrasa Holiday',
-                        ].map(pill => (
-                          <button
-                            type="button"
-                            key={pill}
-                            onClick={() => setHolidayReasonInput(pill)}
-                            className={`text-[10px] font-bold px-2 py-1 rounded-lg border transition cursor-pointer ${
-                              holidayReasonInput === pill
-                                ? 'bg-amber-100 text-amber-900 border-amber-300'
-                                : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
-                            }`}
-                          >
-                            {pill}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Safeguard Notice */}
-                    <div className="p-3.5 bg-emerald-50 rounded-xl border border-emerald-200 text-[11px] text-emerald-950 space-y-1">
-                      <div className="font-bold flex items-center gap-1.5 text-emerald-900">
-                        <CheckCircle className="w-3.5 h-3.5 text-emerald-700" />
-                        <span>Safeguard Protection Active</span>
-                      </div>
-                      <p className="text-emerald-800 leading-relaxed">
-                        Students are completely exempt on holidays and will NOT be penalized with unexcused absences.
-                        Working days count will automatically adjust to preserve authentic attendance percentages.
-                      </p>
-                    </div>
-
-                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-                      <button
-                        type="button"
-                        onClick={() => setHolidayModalDate(null)}
-                        disabled={isSavingHoliday}
-                        className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={isSavingHoliday}
-                        className="px-5 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition cursor-pointer shadow-xs disabled:opacity-50 flex items-center gap-1.5"
-                      >
-                        <span>🏖️</span>
-                        <span>{isSavingHoliday ? 'Designating...' : 'Confirm Holiday'}</span>
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              </div>
-            )}
           </div>
         );
       })()}
@@ -4068,14 +4120,17 @@ export const TeacherDashboard: React.FC = () => {
                 No students enrolled in {activeFeeClass?.name || 'this class'}.
               </div>
             ) : (
-              <div className="border border-slate-200 rounded-xl overflow-x-auto w-full text-xs scrollbar-thin">
-                <table className="w-full min-w-[750px] text-left">
-                  <thead className="bg-slate-100 text-slate-700 font-bold border-b">
+              <div
+                onWheel={handleHorizontalWheel}
+                className="border border-slate-200 rounded-xl overflow-x-auto relative w-full text-xs scrollbar-thin"
+              >
+                <table className="w-full min-w-[750px] text-left border-collapse">
+                  <thead className="sticky top-0 bg-slate-100 text-slate-700 font-bold border-b z-30">
                     <tr>
-                      <th className="p-2.5 w-12 text-center font-mono">Roll</th>
-                      <th className="p-2.5 font-mono text-center w-24">Exam Reg No</th>
-                      <th className="p-2.5 font-mono w-24">Adm No</th>
-                      <th className="p-2.5 min-w-[150px]">Student Name</th>
+                      <th className="p-2.5 w-12 text-center font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
+                      <th className="p-2.5 min-w-[180px] md:min-w-[220px] sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Student Name</th>
+                      <th className="p-2.5 font-mono text-center w-20">Reg No</th>
+                      <th className="p-2.5 font-mono text-center w-20">Adm No</th>
                       {TUITION_FEE_MONTHS.map(m => (
                         <th key={m} className="p-2 text-center font-mono text-[10px] w-12">
                           {m.split(' ')[0].substring(0, 3)}
@@ -4100,18 +4155,21 @@ export const TeacherDashboard: React.FC = () => {
                         '—';
 
                       return (
-                        <tr key={st.id} className="hover:bg-slate-50 transition">
-                          <td className="p-2 text-center font-mono font-bold text-slate-600">
+                        <tr key={st.id} className="hover:bg-slate-50 transition group">
+                          <td className="p-2 text-center font-mono font-bold text-slate-600 w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] bg-white group-hover:bg-slate-50">
                             {st.rollNo}
                           </td>
-                          <td className="p-2 text-center font-mono font-bold text-emerald-950 bg-emerald-50/40">
+                          <td className="p-2 min-w-[180px] md:min-w-[220px] sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] bg-white group-hover:bg-slate-50">
+                            <span className="font-bold text-slate-900 block">{st.nameEn}</span>
+                            {st.nameMl && (
+                              <span className="text-[10px] text-slate-500 font-ml block leading-tight">{st.nameMl}</span>
+                            )}
+                          </td>
+                          <td className="p-2 text-center font-mono font-bold text-emerald-950 bg-emerald-50/40 w-20">
                             {regNo}
                           </td>
-                          <td className="p-2 font-mono font-semibold text-slate-700">
+                          <td className="p-2 font-mono font-semibold text-slate-700 text-center w-20">
                             {st.admissionNo}
-                          </td>
-                          <td className="p-2 font-bold text-slate-900">
-                            {st.nameEn}
                           </td>
                           {TUITION_FEE_MONTHS.map(m => {
                             const isPaid = paidMonths.has(m);

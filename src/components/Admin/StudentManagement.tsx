@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Student, ClassItem, sortStudentsBoysFirst, assignClassSequentialRollNumbers } from '../../types';
+import { Student, ClassItem, sortStudentsBoysFirst, assignClassSequentialRollNumbers, recalculateClassRollsAndExamRegNos } from '../../types';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
+import { handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { logAuditEvent } from '../../services/auditLogger';
 import {
@@ -19,6 +20,8 @@ import {
   FileSpreadsheet,
   Loader2,
   Hash,
+  Calendar,
+  GraduationCap,
 } from 'lucide-react';
 
 export const StudentManagement: React.FC = () => {
@@ -41,6 +44,8 @@ export const StudentManagement: React.FC = () => {
     parentNameEn: '',
     parentPhone: '',
     gender: 'M' as 'M' | 'F',
+    dob: '',
+    schoolClass: '',
   });
 
   // CSV Import Modal
@@ -172,6 +177,8 @@ export const StudentManagement: React.FC = () => {
       parentNameEn: '',
       parentPhone: '',
       gender: 'M',
+      dob: '',
+      schoolClass: '',
     });
     setShowAddModal(true);
   };
@@ -186,7 +193,9 @@ export const StudentManagement: React.FC = () => {
       classId: student.classId,
       parentNameEn: student.parentNameEn || '',
       parentPhone: student.parentPhone || '',
-      gender: student.gender || 'M',
+      gender: (student.gender as 'M' | 'F') || 'M',
+      dob: student.dob || '',
+      schoolClass: student.schoolClass || '',
     });
     setShowAddModal(true);
   };
@@ -216,16 +225,18 @@ export const StudentManagement: React.FC = () => {
       if (editingStudent) {
         const updateData: Partial<Student> = {
           admissionNo: trimmedAdmission,
-          rollNo: Number(formData.rollNo),
+          rollNo: Number(formData.rollNo) || editingStudent.rollNo,
           nameEn: formData.nameEn.trim(),
           nameMl: formData.nameMl.trim() || formData.nameEn.trim(),
           classId: formData.classId,
           parentNameEn: formData.parentNameEn.trim(),
           parentPhone: formData.parentPhone.trim(),
           gender: formData.gender,
+          dob: formData.dob.trim() || undefined,
+          schoolClass: formData.schoolClass.trim() || undefined,
         };
 
-        // 1. Persistent Firestore write
+        // 1. Persistent Firestore write for edited student
         try {
           await setDoc(doc(db, 'students', editingStudent.id), cleanForFirestore(updateData), { merge: true });
           if (editingStudent.admissionNo && editingStudent.admissionNo !== editingStudent.id) {
@@ -238,9 +249,35 @@ export const StudentManagement: React.FC = () => {
           return;
         }
 
+        // 2. Auto-recalculate sequential roll numbers and exam register numbers for this class (Boys A-Z first, then Girls A-Z)
+        const targetClassId = formData.classId;
+        const clsName = classes.find(c => c.id === targetClassId)?.name;
+        const currentClassStudents = students
+          .filter(s => s.classId === targetClassId && s.id !== editingStudent.id && s.admissionNo !== editingStudent.admissionNo)
+          .concat([{ ...editingStudent, ...updateData } as Student]);
+
+        const resequencedClass = recalculateClassRollsAndExamRegNos(currentClassStudents, clsName);
+
+        // Update all resequenced students in Firestore
+        for (const st of resequencedClass) {
+          try {
+            await setDoc(doc(db, 'students', st.id), cleanForFirestore(st), { merge: true });
+            if (st.admissionNo && st.admissionNo !== st.id) {
+              await setDoc(doc(db, 'students', st.admissionNo), cleanForFirestore(st), { merge: true }).catch(() => {});
+            }
+          } catch (e) {
+            console.warn('Firestore resequencing sync error:', e);
+          }
+        }
+
+        const resequencedMap = new Map(resequencedClass.map(s => [s.id, s]));
+
         // Immediately update React state
         setStudents(prev =>
           prev.map(s => {
+            if (resequencedMap.has(s.id)) {
+              return resequencedMap.get(s.id)!;
+            }
             if (s.id === editingStudent.id || (editingStudent.admissionNo && s.admissionNo === editingStudent.admissionNo)) {
               return { ...s, ...updateData };
             }
@@ -260,7 +297,7 @@ export const StudentManagement: React.FC = () => {
 
         logAuditEvent({
           action: 'STUDENT_UPDATED',
-          details: `User ${user?.name || 'Administrator'} updated student ${editingStudent.nameEn} (Adm: ${editingStudent.admissionNo}).`,
+          details: `User ${user?.name || 'Administrator'} updated student ${editingStudent.nameEn} (Adm: ${editingStudent.admissionNo}, Gender: ${formData.gender}, Class: ${formData.classId}).`,
           currentUser: user,
           recordType: 'student',
           recordId: editingStudent.id,
@@ -280,6 +317,8 @@ export const StudentManagement: React.FC = () => {
           parentPhone: formData.parentPhone.trim(),
           status: 'active',
           gender: formData.gender || 'M',
+          dob: formData.dob.trim() || undefined,
+          schoolClass: formData.schoolClass.trim() || undefined,
         };
 
         // 1. Persistent Firestore write
@@ -290,6 +329,26 @@ export const StudentManagement: React.FC = () => {
           handleFirestoreError(firestoreErr, OperationType.WRITE, `students/${studentId}`);
           alert(`Firestore error: ${firestoreErr.message || 'Failed to save student to cloud database'}`);
           return;
+        }
+
+        // 2. Auto-recalculate sequential roll numbers and exam register numbers for this class (Boys A-Z first, then Girls A-Z)
+        const targetClassId = formData.classId;
+        const clsName = classes.find(c => c.id === targetClassId)?.name;
+        const currentClassStudents = students
+          .filter(s => s.classId === targetClassId)
+          .concat([newStudentData]);
+
+        const resequencedClass = recalculateClassRollsAndExamRegNos(currentClassStudents, clsName);
+
+        for (const st of resequencedClass) {
+          try {
+            await setDoc(doc(db, 'students', st.id), cleanForFirestore(st), { merge: true });
+            if (st.admissionNo && st.admissionNo !== st.id) {
+              await setDoc(doc(db, 'students', st.admissionNo), cleanForFirestore(st), { merge: true }).catch(() => {});
+            }
+          } catch (e) {
+            console.warn('Firestore resequencing sync error:', e);
+          }
         }
 
         const res = await fetchWithAuth('/api/students', {
@@ -304,7 +363,7 @@ export const StudentManagement: React.FC = () => {
 
         logAuditEvent({
           action: 'STUDENT_CREATED',
-          details: `User ${user?.name || 'Administrator'} registered new student ${newStudentData.nameEn} (Adm: ${newStudentData.admissionNo}, Class: ${formData.classId}).`,
+          details: `User ${user?.name || 'Administrator'} registered new student ${newStudentData.nameEn} (Adm: ${newStudentData.admissionNo}, Gender: ${newStudentData.gender}, Class: ${formData.classId}).`,
           currentUser: user,
           recordType: 'student',
           recordId: studentId,
@@ -896,13 +955,16 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
 
       {/* Students Table strictly aligned with CSV: Admission No | Name | Class | Gender | Parent Name | Phone | Actions */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden w-full">
-        <div className="overflow-x-auto w-full scrollbar-thin">
-          <table className="w-full min-w-[760px] text-xs text-left">
-            <thead className="bg-slate-100 text-slate-700 font-bold border-b">
+        <div
+          onWheel={handleHorizontalWheel}
+          className="overflow-x-auto w-full scrollbar-thin relative"
+        >
+          <table className="w-full min-w-[760px] text-xs text-left border-collapse">
+            <thead className="sticky top-0 bg-slate-100 text-slate-700 font-bold border-b z-30">
               <tr>
-                <th className="p-3 text-center w-14 font-mono whitespace-nowrap">Roll No</th>
-                <th className="p-3 font-mono whitespace-nowrap">Admission No</th>
-                <th className="p-3 whitespace-nowrap">Name</th>
+                <th className="p-3 text-center w-12 font-mono whitespace-nowrap sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll No</th>
+                <th className="p-3 whitespace-nowrap sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[180px] md:min-w-[220px]">Name</th>
+                <th className="p-3 font-mono text-center w-20 whitespace-nowrap">Adm No</th>
                 <th className="p-3 whitespace-nowrap">Class</th>
                 <th className="p-3 text-center whitespace-nowrap">Gender</th>
                 <th className="p-3 whitespace-nowrap">Parent Name</th>
@@ -928,27 +990,34 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                       key={student.id}
                       className={
                         isDuplicate
-                          ? 'bg-red-50/90 border-l-4 border-red-500 hover:bg-red-100/70 transition'
-                          : 'hover:bg-slate-50 transition'
+                          ? 'bg-red-50/90 border-l-4 border-red-500 hover:bg-red-100/70 transition group'
+                          : 'hover:bg-slate-50 transition group'
                       }
                     >
-                      <td className="p-3 text-center font-mono font-bold text-slate-700 whitespace-nowrap">
+                      <td
+                        className={`p-3 text-center font-mono font-bold text-slate-700 whitespace-nowrap w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${
+                          isDuplicate ? 'bg-red-50 group-hover:bg-red-100' : 'bg-white group-hover:bg-slate-50'
+                        }`}
+                      >
                         {student.rollNo}
                       </td>
-                      <td className="p-3 font-mono font-semibold whitespace-nowrap">
-                        <span
-                          className={
-                            isDuplicate
-                              ? 'px-2 py-0.5 rounded-md bg-red-100 text-red-800 font-bold border border-red-300 inline-block shadow-2xs'
-                              : 'text-slate-700'
-                          }
-                        >
-                          {student.admissionNo}
-                        </span>
-                      </td>
-                      <td className="p-3 min-w-[140px] whitespace-nowrap">
+                      <td
+                        className={`p-3 min-w-[180px] md:min-w-[220px] whitespace-nowrap sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
+                          isDuplicate ? 'bg-red-50 group-hover:bg-red-100' : 'bg-white group-hover:bg-slate-50'
+                        }`}
+                      >
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-bold text-slate-900">{student.nameEn}</span>
+                          {student.schoolClass && (
+                            <span className="px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200" title="Regular School Grade">
+                              {student.schoolClass}
+                            </span>
+                          )}
+                          {student.dob && (
+                            <span className="text-[10px] text-slate-500 font-mono" title="Date of Birth">
+                              🎂 {student.dob}
+                            </span>
+                          )}
                           {isDuplicate && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-300 shadow-2xs">
                               ⚠️ Duplicate Adm No
@@ -960,6 +1029,17 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                             {student.nameMl}
                           </span>
                         )}
+                      </td>
+                      <td className="p-3 font-mono font-semibold whitespace-nowrap w-20 text-center">
+                        <span
+                          className={
+                            isDuplicate
+                              ? 'px-2 py-0.5 rounded-md bg-red-100 text-red-800 font-bold border border-red-300 inline-block shadow-2xs'
+                              : 'text-slate-700'
+                          }
+                        >
+                          {student.admissionNo}
+                        </span>
                       </td>
                       <td className="p-3 whitespace-nowrap">
                         <span
@@ -1098,20 +1178,95 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                 />
               </div>
 
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">{t.class} *</label>
-                <select
-                  value={formData.classId}
-                  onChange={e => setFormData({ ...formData, classId: e.target.value })}
-                  className="w-full p-2 border border-slate-300 rounded-lg bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-                  required
-                >
-                  {classes.map(c => (
-                    <option key={c.id} value={c.id}>
-                      {isMl ? c.nameMl : c.name}
-                    </option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">{t.class} (Madrasa) *</label>
+                  <select
+                    value={formData.classId}
+                    onChange={e => setFormData({ ...formData, classId: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-lg bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-700 font-medium"
+                    required
+                  >
+                    {classes.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {isMl ? c.nameMl : c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Gender *</label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <label className={`flex items-center justify-center gap-1.5 p-2 rounded-lg border text-xs cursor-pointer transition select-none ${
+                      formData.gender === 'M'
+                        ? 'border-emerald-600 bg-emerald-50 text-emerald-950 font-bold shadow-2xs'
+                        : 'border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="gender"
+                        value="M"
+                        checked={formData.gender === 'M'}
+                        onChange={() => setFormData({ ...formData, gender: 'M' })}
+                        className="text-emerald-700 focus:ring-emerald-700"
+                      />
+                      <span>👦 Male (Boy)</span>
+                    </label>
+                    <label className={`flex items-center justify-center gap-1.5 p-2 rounded-lg border text-xs cursor-pointer transition select-none ${
+                      formData.gender === 'F'
+                        ? 'border-emerald-600 bg-emerald-50 text-emerald-950 font-bold shadow-2xs'
+                        : 'border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="gender"
+                        value="F"
+                        checked={formData.gender === 'F'}
+                        onChange={() => setFormData({ ...formData, gender: 'F' })}
+                        className="text-emerald-700 focus:ring-emerald-700"
+                      />
+                      <span>👧 Female (Girl)</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Date of Birth & Regular School Class */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Date of Birth (DOB)</label>
+                  <input
+                    type="date"
+                    name="dob"
+                    value={formData.dob}
+                    onChange={e => setFormData({ ...formData, dob: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700 bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">School Class / Regular Grade</label>
+                  <select
+                    value={formData.schoolClass}
+                    onChange={e => setFormData({ ...formData, schoolClass: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-lg bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-700 font-medium"
+                  >
+                    <option value="">Select Regular School Grade</option>
+                    <option value="Pre-Primary / KG">Pre-Primary / KG</option>
+                    <option value="Class 1">Class 1</option>
+                    <option value="Class 2">Class 2</option>
+                    <option value="Class 3">Class 3</option>
+                    <option value="Class 4">Class 4</option>
+                    <option value="Class 5">Class 5</option>
+                    <option value="Class 6">Class 6</option>
+                    <option value="Class 7">Class 7</option>
+                    <option value="Class 8">Class 8</option>
+                    <option value="Class 9">Class 9</option>
+                    <option value="Class 10">Class 10</option>
+                    <option value="Plus One (+1)">Plus One (+1)</option>
+                    <option value="Plus Two (+2)">Plus Two (+2)</option>
+                    <option value="College / Degree">College / Degree</option>
+                  </select>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1255,7 +1410,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                     <thead className="bg-slate-100 font-bold sticky top-0">
                       <tr>
                         <th className="p-2 whitespace-nowrap">Row</th>
-                        <th className="p-2 whitespace-nowrap">Admission No</th>
+                        <th className="p-2 whitespace-nowrap text-center">Adm No</th>
                         <th className="p-2 whitespace-nowrap">Name</th>
                         <th className="p-2 whitespace-nowrap">Class</th>
                         <th className="p-2 whitespace-nowrap">Gender</th>

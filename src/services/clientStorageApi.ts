@@ -15,10 +15,12 @@ import {
   SubjectAssessmentRule,
   sortStudentsBoysFirst,
   assignClassSequentialRollNumbers,
+  recalculateClassRollsAndExamRegNos,
   isBoyStudent,
   FeePayment,
   ClassAttendanceConfig,
   InstitutionHoliday,
+  AttendanceEditRequest,
   DEFAULT_ADMIN_PERMISSIONS,
 } from '../types';
 import { firestoreSync } from './firestoreSync';
@@ -37,6 +39,7 @@ export interface MadrasaDatabase {
   feePayments: FeePayment[];
   attendanceConfigs: ClassAttendanceConfig[];
   institutionHolidays?: InstitutionHoliday[];
+  attendanceEditRequests?: AttendanceEditRequest[];
 }
 
 const STORAGE_KEY = 'madrasa_db_storage_v2';
@@ -786,9 +789,13 @@ export class ClientStorageApi {
 
     classIds.forEach(cId => {
       const classStudents = this.db.students.filter(s => s.classId === cId && s.status !== 'inactive');
-      const sorted = sortStudentsBoysFirst(classStudents);
-      sorted.forEach((student, index) => {
-        student.rollNo = index + 1;
+      const clsName = this.db.classes.find(c => c.id === cId)?.name;
+      const resequenced = recalculateClassRollsAndExamRegNos(classStudents, clsName);
+      resequenced.forEach(updatedStudent => {
+        const idx = this.db.students.findIndex(s => s.id === updatedStudent.id);
+        if (idx !== -1) {
+          this.db.students[idx] = updatedStudent;
+        }
       });
     });
   }
@@ -1083,6 +1090,7 @@ export class ClientStorageApi {
           parsed.settings = parsed.settings || {};
           parsed.feePayments = Array.isArray(parsed.feePayments) ? parsed.feePayments : [];
           parsed.attendanceConfigs = Array.isArray(parsed.attendanceConfigs) ? parsed.attendanceConfigs : [];
+          parsed.attendanceEditRequests = Array.isArray(parsed.attendanceEditRequests) ? parsed.attendanceEditRequests : [];
 
           // Ensure admin user exists
           if (!parsed.users.some((u: any) => u.role === 'admin' || u.username === 'principal')) {
@@ -2305,6 +2313,7 @@ export class ClientStorageApi {
           status: 'active',
           dob: bodyData.dob,
           gender: bodyData.gender,
+          schoolClass: bodyData.schoolClass,
         };
 
         // Auto create/update parent account
@@ -3790,6 +3799,53 @@ export class ClientStorageApi {
         }
         firestoreSync.deleteHoliday(hDate).catch(e => console.warn('Firestore deleteHoliday error:', e));
         return this.jsonResponse({ success: true, date: hDate });
+      }
+
+      // Attendance Edit Requests endpoints
+      if (path === '/api/attendance-edit-requests' && method === 'GET') {
+        return this.jsonResponse(this.db.attendanceEditRequests || []);
+      }
+
+      if (path === '/api/attendance-edit-requests' && method === 'POST') {
+        if (!this.db.attendanceEditRequests) this.db.attendanceEditRequests = [];
+        const reqItem: AttendanceEditRequest = {
+          id: bodyData.id || `${bodyData.classId}_${bodyData.date}`,
+          classId: bodyData.classId,
+          className: bodyData.className,
+          date: bodyData.date,
+          teacherId: bodyData.teacherId,
+          teacherName: bodyData.teacherName,
+          reason: bodyData.reason,
+          requestedAt: bodyData.requestedAt || new Date().toISOString(),
+          status: bodyData.status || 'pending',
+          resolvedAt: bodyData.resolvedAt,
+          resolvedBy: bodyData.resolvedBy,
+          resolutionNote: bodyData.resolutionNote,
+        };
+        const existingIdx = this.db.attendanceEditRequests.findIndex(r => r.id === reqItem.id);
+        if (existingIdx >= 0) {
+          this.db.attendanceEditRequests[existingIdx] = reqItem;
+        } else {
+          this.db.attendanceEditRequests.unshift(reqItem);
+        }
+        this.saveDB();
+        return this.jsonResponse(reqItem);
+      }
+
+      const reqPatchMatch = path.match(/^\/api\/attendance-edit-requests\/([^/]+)$/);
+      if (reqPatchMatch && (method === 'PATCH' || method === 'PUT')) {
+        const rId = reqPatchMatch[1];
+        if (!this.db.attendanceEditRequests) this.db.attendanceEditRequests = [];
+        const idx = this.db.attendanceEditRequests.findIndex(r => r.id === rId);
+        if (idx >= 0) {
+          this.db.attendanceEditRequests[idx] = {
+            ...this.db.attendanceEditRequests[idx],
+            ...bodyData,
+          };
+          this.saveDB();
+          return this.jsonResponse(this.db.attendanceEditRequests[idx]);
+        }
+        return this.jsonResponse({ error: 'Request not found' }, 404);
       }
 
       // Parent Removal (Class-wise & Bulk)
