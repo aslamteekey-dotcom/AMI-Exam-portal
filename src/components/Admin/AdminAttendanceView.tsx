@@ -238,36 +238,69 @@ export const AdminAttendanceView: React.FC = () => {
     };
   }, []);
 
-  // Listen to attendanceEditRequests from Firestore in real-time
+  // Listen to attendanceUnlockRequests from Firestore in real-time
   useEffect(() => {
-    let unsub: (() => void) | undefined;
+    const unsubs: (() => void)[] = [];
+    const requestsMap = new Map<string, AttendanceEditRequest>();
+
+    const updateCombinedList = () => {
+      const list = Array.from(requestsMap.values());
+      // Sort pending first, then by createdAt / requestedAt desc
+      list.sort((a, b) => {
+        if (a.status === 'pending' && b.status !== 'pending') return -1;
+        if (a.status !== 'pending' && b.status === 'pending') return 1;
+        const timeA = new Date(a.createdAt || a.requestedAt || 0).getTime();
+        const timeB = new Date(b.createdAt || b.requestedAt || 0).getTime();
+        return timeB - timeA;
+      });
+      setEditRequests(list);
+    };
+
     try {
-      unsub = onSnapshot(
-        collection(db, 'attendanceEditRequests'),
+      // Primary Unified Collection: attendanceUnlockRequests
+      const unsubUnlock = onSnapshot(
+        collection(db, 'attendanceUnlockRequests'),
         snapshot => {
-          const list: AttendanceEditRequest[] = [];
           snapshot.docs.forEach(docSnap => {
             const data = docSnap.data() as AttendanceEditRequest;
-            list.push({
+            requestsMap.set(docSnap.id, {
               ...data,
               id: docSnap.id,
+              createdAt: data.createdAt || data.requestedAt,
+              requestedAt: data.requestedAt || data.createdAt,
             });
           });
-          // Sort pending first, then by requestedAt desc
-          list.sort((a, b) => {
-            if (a.status === 'pending' && b.status !== 'pending') return -1;
-            if (a.status !== 'pending' && b.status === 'pending') return 1;
-            return new Date(b.requestedAt || 0).getTime() - new Date(a.requestedAt || 0).getTime();
-          });
-          setEditRequests(list);
+          updateCombinedList();
         },
-        err => console.warn('attendanceEditRequests listener error:', err)
+        err => console.warn('attendanceUnlockRequests listener error:', err)
       );
+      unsubs.push(unsubUnlock);
+
+      // Secondary fallback listener for legacy attendanceEditRequests
+      const unsubLegacy = onSnapshot(
+        collection(db, 'attendanceEditRequests'),
+        snapshot => {
+          snapshot.docs.forEach(docSnap => {
+            if (!requestsMap.has(docSnap.id)) {
+              const data = docSnap.data() as AttendanceEditRequest;
+              requestsMap.set(docSnap.id, {
+                ...data,
+                id: docSnap.id,
+                createdAt: data.createdAt || data.requestedAt,
+                requestedAt: data.requestedAt || data.createdAt,
+              });
+            }
+          });
+          updateCombinedList();
+        },
+        err => console.warn('attendanceEditRequests legacy listener error:', err)
+      );
+      unsubs.push(unsubLegacy);
     } catch (e) {
-      console.warn('Could not subscribe to attendanceEditRequests:', e);
+      console.warn('Could not subscribe to attendanceUnlockRequests:', e);
     }
     return () => {
-      if (unsub) unsub();
+      unsubs.forEach(u => u());
     };
   }, []);
 
@@ -464,7 +497,7 @@ export const AdminAttendanceView: React.FC = () => {
     const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
     if (!rec) return false;
     // If record exists and marked unlocked by admin/principal approval
-    if (rec.unlocked === true || rec.editable === true) return false;
+    if (rec.isLocked === false || rec.unlocked === true || rec.editable === true) return false;
     return true;
   };
 
@@ -695,6 +728,36 @@ export const AdminAttendanceView: React.FC = () => {
       label: `${startFmt} – ${endFmt}`,
     };
   }, [rangeStartDate, rangeEndDate]);
+
+  const calcModalRangeSummary = useMemo(() => {
+    if (!holidayModalDate || !modalRangeEndDate || holidayModalDate > modalRangeEndDate) {
+      return { totalCalendarDays: 0, workingDaysToExclude: 0, sundaysSkipped: 0, label: '' };
+    }
+    const cur = parseLocalDate(holidayModalDate);
+    const end = parseLocalDate(modalRangeEndDate);
+    let totalCalendar = 0;
+    let working = 0;
+    let sundays = 0;
+
+    while (cur <= end) {
+      totalCalendar++;
+      if (cur.getDay() === 0) {
+        sundays++;
+      } else {
+        working++;
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    const startFmt = parseLocalDate(holidayModalDate).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+    const endFmt = parseLocalDate(modalRangeEndDate).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+    return {
+      totalCalendarDays: totalCalendar,
+      workingDaysToExclude: working,
+      sundaysSkipped: sundays,
+      label: `${startFmt} – ${endFmt}`,
+    };
+  }, [holidayModalDate, modalRangeEndDate]);
 
   const handleDeclareHolidayRange = async (
     startDate: string,
@@ -1110,7 +1173,7 @@ export const AdminAttendanceView: React.FC = () => {
   };
 
   // -------------------------------------------------------------
-  // Attendance Edit Request Approvals (Principal Unlock Workflow)
+  // Attendance Unlock Request Approvals (Principal Unlock Workflow)
   // -------------------------------------------------------------
   const handleApproveUnlockRequest = async (req: AttendanceEditRequest) => {
     setIsProcessingRequest(req.id);
@@ -1118,24 +1181,49 @@ export const AdminAttendanceView: React.FC = () => {
       const nowIso = new Date().toISOString();
       const approverName = user?.name || 'Principal ASLAM TK';
 
-      // 1. Update attendanceEditRequests in Firestore
-      await setDoc(
-        doc(db, 'attendanceEditRequests', req.id),
-        {
+      // 1. Update request status to 'approved' in attendanceUnlockRequests
+      try {
+        await updateDoc(doc(db, 'attendanceUnlockRequests', req.id), {
           status: 'approved',
+          approvedAt: nowIso,
           resolvedAt: nowIso,
           resolvedBy: approverName,
-        },
-        { merge: true }
-      );
+        });
+      } catch {
+        await setDoc(
+          doc(db, 'attendanceUnlockRequests', req.id),
+          {
+            status: 'approved',
+            approvedAt: nowIso,
+            resolvedAt: nowIso,
+            resolvedBy: approverName,
+          },
+          { merge: true }
+        );
+      }
 
-      // 2. Unlock the attendance daily record for that class and date in Firestore
+      // Backward compatibility update to attendanceEditRequests if exists
+      try {
+        await setDoc(
+          doc(db, 'attendanceEditRequests', req.id),
+          {
+            status: 'approved',
+            approvedAt: nowIso,
+            resolvedAt: nowIso,
+            resolvedBy: approverName,
+          },
+          { merge: true }
+        );
+      } catch {}
+
+      // 2. Unlock the corresponding attendance record for that date & class in attendance collection: isLocked: false, status: 'unlocked'
       const classRef = doc(db, 'attendance', req.classId);
       await setDoc(
         classRef,
         {
           dailyRecords: {
             [req.date]: {
+              isLocked: false,
               unlocked: true,
               editable: true,
               unlockedAt: nowIso,
@@ -1153,17 +1241,18 @@ export const AdminAttendanceView: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           status: 'approved',
+          approvedAt: nowIso,
           resolvedAt: nowIso,
           resolvedBy: approverName,
         }),
-      });
+      }).catch(() => {});
 
       // 4. Audit Log
       logAuditEvent({
         action: 'ATTENDANCE_UNLOCKED',
-        details: `Principal approved attendance edit request for Class ${req.className || req.classId} on ${req.date}. Requested by ${req.teacherName}. Reason: "${req.reason}".`,
+        details: `Principal approved attendance unlock request for Class ${req.className || req.classId} on ${req.date}. Requested by ${req.teacherName}. Reason: "${req.reason}".`,
         currentUser: user,
-        recordType: 'attendance_edit_request',
+        recordType: 'attendance_unlock_request',
         recordId: req.id,
       }).catch(e => console.warn('Audit log error:', e));
 
@@ -1172,7 +1261,7 @@ export const AdminAttendanceView: React.FC = () => {
         setUnlockedDates(prev => ({ ...prev, [req.date]: true }));
       }
 
-      alert(`Attendance edit request APPROVED & UNLOCKED for ${req.className || req.classId} on ${req.date}. Teacher ${req.teacherName} can now make corrections.`);
+      alert(`Attendance unlock request APPROVED for ${req.className || req.classId} on ${req.date}. Teacher ${req.teacherName} can now edit and save attendance.`);
     } catch (err: any) {
       alert('Failed to approve unlock request: ' + (err.message || 'Unknown error'));
     } finally {
@@ -1187,16 +1276,41 @@ export const AdminAttendanceView: React.FC = () => {
       const nowIso = new Date().toISOString();
       const approverName = user?.name || 'Principal ASLAM TK';
 
-      await setDoc(
-        doc(db, 'attendanceEditRequests', req.id),
-        {
+      try {
+        await updateDoc(doc(db, 'attendanceUnlockRequests', req.id), {
           status: 'rejected',
+          rejectedAt: nowIso,
           resolvedAt: nowIso,
           resolvedBy: approverName,
           resolutionNote: reason,
-        },
-        { merge: true }
-      );
+        });
+      } catch {
+        await setDoc(
+          doc(db, 'attendanceUnlockRequests', req.id),
+          {
+            status: 'rejected',
+            rejectedAt: nowIso,
+            resolvedAt: nowIso,
+            resolvedBy: approverName,
+            resolutionNote: reason,
+          },
+          { merge: true }
+        );
+      }
+
+      try {
+        await setDoc(
+          doc(db, 'attendanceEditRequests', req.id),
+          {
+            status: 'rejected',
+            rejectedAt: nowIso,
+            resolvedAt: nowIso,
+            resolvedBy: approverName,
+            resolutionNote: reason,
+          },
+          { merge: true }
+        );
+      } catch {}
 
       await fetchWithAuth(`/api/attendance-edit-requests/${req.id}`, {
         method: 'PATCH',
@@ -1207,13 +1321,13 @@ export const AdminAttendanceView: React.FC = () => {
           resolvedBy: approverName,
           resolutionNote: reason,
         }),
-      });
+      }).catch(() => {});
 
       logAuditEvent({
         action: 'ATTENDANCE_UNLOCK_REJECTED',
-        details: `Principal rejected attendance edit request for Class ${req.className || req.classId} on ${req.date}. Requested by ${req.teacherName}. Note: "${reason}".`,
+        details: `Principal rejected attendance unlock request for Class ${req.className || req.classId} on ${req.date}. Requested by ${req.teacherName}. Note: "${reason}".`,
         currentUser: user,
-        recordType: 'attendance_edit_request',
+        recordType: 'attendance_unlock_request',
         recordId: req.id,
       }).catch(e => console.warn('Audit log error:', e));
 
@@ -1540,14 +1654,26 @@ export const AdminAttendanceView: React.FC = () => {
       }
 
       // 3. Declared Holidays: official special/institution holidays declared in that month for the selected class (excluding Sundays to avoid double deduction)
-      const declaredHolidaysInMonth = Object.values(institutionHolidays).filter(h => {
-        if (!h.date || !h.date.startsWith(m.key)) return false;
-        if (!isClassMatch(h.targetClasses, selectedClassId)) return false;
-        const d = parseLocalDate(h.date);
-        if (d.getDay() === 0) return false; // Exclude Sundays
-        return true;
+      const holidayDateSet = new Set<string>();
+      Object.values(institutionHolidays).forEach(h => {
+        if (h.date && h.date.startsWith(m.key) && isClassMatch(h.targetClasses, selectedClassId)) {
+          const d = parseLocalDate(h.date);
+          if (d.getDay() !== 0) {
+            holidayDateSet.add(h.date);
+          }
+        }
       });
-      const declaredHolidaysCount = declaredHolidaysInMonth.length;
+      if (classAttendanceConfig?.dailyRecords) {
+        Object.entries(classAttendanceConfig.dailyRecords).forEach(([dKey, rec]) => {
+          if (dKey.startsWith(m.key) && rec?.isHoliday) {
+            const d = parseLocalDate(dKey);
+            if (d.getDay() !== 0) {
+              holidayDateSet.add(dKey);
+            }
+          }
+        });
+      }
+      const declaredHolidaysCount = holidayDateSet.size;
 
       // 4. Any Principal Unlocked Working Sundays in this month for selected class
       const unlockedSundaysInMonth = Object.values(specialWorkingDays).filter(sw => {
@@ -1572,7 +1698,7 @@ export const AdminAttendanceView: React.FC = () => {
         markedDays,
       };
     });
-  }, [institutionHolidays, specialWorkingDays, markedDailyRecords, selectedClassId]);
+  }, [institutionHolidays, specialWorkingDays, markedDailyRecords, selectedClassId, classAttendanceConfig]);
 
   // Daily status computation for selectedDate
   const isDailyHoliday = isDateHoliday(selectedDate);
@@ -1600,6 +1726,75 @@ export const AdminAttendanceView: React.FC = () => {
   const allHolidaysList = Object.values(institutionHolidays).sort(
     (a, b) => b.date.localeCompare(a.date)
   );
+
+  const groupedHolidayList = useMemo(() => {
+    const groups: {
+      id: string;
+      isRange: boolean;
+      date: string;
+      rangeStart?: string;
+      rangeEnd?: string;
+      rangeDates: string[];
+      totalDays: number;
+      reason: string;
+      targetClasses: string[];
+      markedBy: string;
+      badgeText: string;
+    }[] = [];
+
+    const processedDates = new Set<string>();
+
+    // 1. Group date range entries
+    Object.values(institutionHolidays).forEach(h => {
+      if (processedDates.has(h.date)) return;
+
+      if (h.rangeStart && h.rangeEnd && h.rangeStart !== h.rangeEnd) {
+        const gId = h.rangeGroupId || `${h.rangeStart}_${h.rangeEnd}_${h.reason}`;
+        const related = Object.values(institutionHolidays).filter(
+          item =>
+            item.rangeGroupId === gId ||
+            (item.rangeStart === h.rangeStart && item.rangeEnd === h.rangeEnd && item.reason === h.reason)
+        );
+
+        const dates = related.map(r => r.date).sort();
+        dates.forEach(d => processedDates.add(d));
+
+        const s = parseLocalDate(h.rangeStart);
+        const e = parseLocalDate(h.rangeEnd);
+        const diffDays = Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        const totalDays = h.totalRangeDays || Math.max(diffDays, dates.length);
+
+        groups.push({
+          id: gId,
+          isRange: true,
+          date: h.rangeStart,
+          rangeStart: h.rangeStart,
+          rangeEnd: h.rangeEnd,
+          rangeDates: dates,
+          totalDays,
+          reason: h.reason,
+          targetClasses: h.targetClasses || ['all'],
+          markedBy: h.markedBy || h.createdBy || 'Principal',
+          badgeText: formatDateRangeBadge(h.rangeStart, h.rangeEnd, totalDays),
+        });
+      } else {
+        processedDates.add(h.date);
+        groups.push({
+          id: h.id || h.date,
+          isRange: false,
+          date: h.date,
+          rangeDates: [h.date],
+          totalDays: 1,
+          reason: h.reason,
+          targetClasses: h.targetClasses || ['all'],
+          markedBy: h.markedBy || h.createdBy || 'Principal',
+          badgeText: h.date,
+        });
+      }
+    });
+
+    return groups.sort((a, b) => b.date.localeCompare(a.date));
+  }, [institutionHolidays]);
 
   return (
     <div className="space-y-6">
@@ -1725,10 +1920,10 @@ export const AdminAttendanceView: React.FC = () => {
             }`}
           >
             <Unlock className="w-4 h-4" />
-            <span>Edit Requests</span>
+            <span>Unlock Requests</span>
             {pendingRequestsCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500 text-white">
-                {pendingRequestsCount}
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white animate-pulse shadow-2xs">
+                {pendingRequestsCount} Pending
               </span>
             )}
           </button>
@@ -2170,6 +2365,9 @@ export const AdminAttendanceView: React.FC = () => {
                     type="button"
                     onClick={() => {
                       setHolidayModalDate(selectedDate);
+                      setHolidayModalMode('single');
+                      setModalRangeEndDate(selectedDate);
+                      setModalTargetClasses(['all']);
                       setHolidayReasonInput('');
                     }}
                     className="px-3.5 py-2 text-xs font-bold rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-950 transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
@@ -2783,39 +2981,133 @@ export const AdminAttendanceView: React.FC = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700">Select Date:</label>
-                <input
-                  type="date"
-                  value={newHolidayDate}
-                  min={ACADEMIC_YEAR_START_DATE}
-                  onChange={e => setNewHolidayDate(e.target.value)}
-                  className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-bold bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
-                />
-              </div>
+            {/* Mode Switcher: Single Day vs Date Range / Long Leave */}
+            <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl border border-slate-200 w-fit">
+              <button
+                type="button"
+                onClick={() => setHolidayMode('single')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  holidayMode === 'single'
+                    ? 'bg-amber-300 text-amber-950 shadow-2xs border border-amber-400'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span>📅</span>
+                <span>Single Day Holiday</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setHolidayMode('range')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  holidayMode === 'range'
+                    ? 'bg-amber-300 text-amber-950 shadow-2xs border border-amber-400'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span>🗓️</span>
+                <span>Date Range / Long Leave (e.g. Ramadan, Eid)</span>
+              </button>
+            </div>
 
-              <div className="md:col-span-2 space-y-1.5">
-                <label className="text-xs font-bold text-slate-700">Holiday Title / Reason:</label>
-                <div className="flex gap-2">
+            {holidayMode === 'single' ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700">Select Date:</label>
                   <input
-                    type="text"
-                    value={newHolidayReason}
-                    onChange={e => setNewHolidayReason(e.target.value)}
-                    placeholder="e.g. Public Holiday, Special Madrasa Holiday, Rain Holiday, Study Leave, Eid / Milad"
-                    className="flex-1 p-2.5 border border-slate-300 rounded-xl text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    type="date"
+                    value={newHolidayDate}
+                    min={ACADEMIC_YEAR_START_DATE}
+                    onChange={e => setNewHolidayDate(e.target.value)}
+                    className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-bold bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
-                  <button
-                    type="button"
-                    onClick={() => handleDeclareHoliday(newHolidayDate, newHolidayReason, newHolidayTargetClasses)}
-                    disabled={isSavingHoliday || !newHolidayDate}
-                    className="px-5 py-2.5 text-xs font-bold text-amber-950 bg-amber-300 hover:bg-amber-400 border border-amber-400 rounded-xl transition shadow-xs cursor-pointer whitespace-nowrap disabled:opacity-50"
-                  >
-                    {isSavingHoliday ? 'Designating...' : 'Declare Holiday'}
-                  </button>
+                </div>
+
+                <div className="md:col-span-2 space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700">Holiday Title / Reason:</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newHolidayReason}
+                      onChange={e => setNewHolidayReason(e.target.value)}
+                      placeholder="e.g. Public Holiday, Special Madrasa Holiday, Rain Holiday, Study Leave, Eid / Milad"
+                      className="flex-1 p-2.5 border border-slate-300 rounded-xl text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleDeclareHoliday(newHolidayDate, newHolidayReason, newHolidayTargetClasses)}
+                      disabled={isSavingHoliday || !newHolidayDate}
+                      className="px-5 py-2.5 text-xs font-bold text-amber-950 bg-amber-300 hover:bg-amber-400 border border-amber-400 rounded-xl transition shadow-xs cursor-pointer whitespace-nowrap disabled:opacity-50"
+                    >
+                      {isSavingHoliday ? 'Designating...' : 'Declare Holiday'}
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="space-y-3 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700">Starting Date:</label>
+                    <input
+                      type="date"
+                      value={rangeStartDate}
+                      min={ACADEMIC_YEAR_START_DATE}
+                      onChange={e => setRangeStartDate(e.target.value)}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-bold bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700">Ending Date:</label>
+                    <input
+                      type="date"
+                      value={rangeEndDate}
+                      min={rangeStartDate || ACADEMIC_YEAR_START_DATE}
+                      onChange={e => setRangeEndDate(e.target.value)}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-bold bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700">Leave Reason / Title:</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newHolidayReason}
+                        onChange={e => setNewHolidayReason(e.target.value)}
+                        placeholder="e.g. Ramadan Vacation, Eid Holidays, Mid-term Break, Study Leave"
+                        className="flex-1 p-2.5 border border-slate-300 rounded-xl text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleDeclareHolidayRange(rangeStartDate, rangeEndDate, newHolidayReason, newHolidayTargetClasses)}
+                        disabled={isSavingHoliday || !rangeStartDate || !rangeEndDate}
+                        className="px-5 py-2.5 text-xs font-bold text-amber-950 bg-amber-300 hover:bg-amber-400 border border-amber-400 rounded-xl transition shadow-xs cursor-pointer whitespace-nowrap disabled:opacity-50"
+                      >
+                        {isSavingHoliday ? 'Designating...' : `Declare Long Leave (${calcRangeSummary.workingDaysToExclude} Days)`}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Live Range Preview Banner */}
+                {calcRangeSummary.totalCalendarDays > 0 && (
+                  <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl text-xs flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="px-2.5 py-0.5 rounded-md bg-amber-200 text-amber-950 font-mono font-bold text-xs border border-amber-300">
+                        🗓️ {calcRangeSummary.label} ({calcRangeSummary.totalCalendarDays} Days)
+                      </span>
+                      <span className="text-amber-900 font-semibold">
+                        {calcRangeSummary.workingDaysToExclude} working days will be deducted from working count
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-slate-500 font-mono">
+                      ({calcRangeSummary.sundaysSkipped} Sundays automatically preserved as weekly off)
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Target Classes Selector */}
             <div className="space-y-1.5 pt-1">
@@ -3002,29 +3294,75 @@ export const AdminAttendanceView: React.FC = () => {
             </div>
 
             <div className="divide-y divide-slate-100 text-xs">
-              {allHolidaysList.length === 0 ? (
+              {groupedHolidayList.length === 0 ? (
                 <div className="p-8 text-center text-slate-400">
                   No institution holidays currently declared. Use the form above to add one.
                 </div>
               ) : (
-                allHolidaysList.map(h => {
-                  const isAll = !h.targetClasses || h.targetClasses.includes('all');
+                groupedHolidayList.map(item => {
+                  const isAll = !item.targetClasses || item.targetClasses.includes('all');
                   const targetLabel = isAll
                     ? 'All Classes'
-                    : (h.targetClasses || []).map(cId => classes.find(c => c.id === cId)?.name || cId.replace(/^(cls_|class_)/i, 'Class ')).join(', ');
+                    : (item.targetClasses || []).map(cId => classes.find(c => c.id === cId)?.name || cId.replace(/^(cls_|class_)/i, 'Class ')).join(', ');
+
+                  if (item.isRange) {
+                    return (
+                      <div key={item.id} className="p-4 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50 transition bg-amber-50/20">
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-xl bg-amber-200 text-amber-950 border border-amber-300 font-mono font-bold text-xs flex flex-col items-center justify-center shrink-0 shadow-2xs">
+                            <span className="text-base">🗓️</span>
+                            <span className="text-[9px] uppercase font-bold">{item.totalDays}D</span>
+                          </div>
+                          <div>
+                            <div className="font-bold text-slate-900 text-sm flex items-center gap-2 flex-wrap">
+                              <span>{item.reason}</span>
+                              <span className="text-xs font-mono px-2.5 py-0.5 rounded-lg bg-amber-100 text-amber-950 font-bold border border-amber-300">
+                                🗓️ {item.badgeText}
+                              </span>
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                  isAll
+                                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                    : 'bg-amber-100 text-amber-950 border-amber-300'
+                                }`}
+                              >
+                                Target: {targetLabel}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-600 mt-1 flex items-center gap-2 flex-wrap">
+                              <span>
+                                Long Leave ({item.totalDays} calendar days) · <strong className="text-amber-950 font-mono">{item.rangeDates.length} working days excluded</strong> · Sundays auto-preserved
+                              </span>
+                              <span className="text-slate-400">·</span>
+                              <span>Designated by: <strong className="text-slate-700">{item.markedBy}</strong></span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveHolidayRange(item.rangeDates, item.rangeStart!, item.rangeEnd!)}
+                          className="px-3.5 py-2 text-xs font-bold text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-xl transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Restore Regular Working Days</span>
+                        </button>
+                      </div>
+                    );
+                  }
 
                   return (
-                    <div key={h.id || h.date} className="p-4 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50 transition">
+                    <div key={item.id} className="p-4 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50 transition">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-900 border border-amber-200 font-mono font-bold text-xs flex flex-col items-center justify-center shrink-0">
-                          <span>{h.date.split('-')[2]}</span>
-                          <span className="text-[9px] uppercase">{new Date(h.date).toLocaleDateString([], { month: 'short' })}</span>
+                          <span>{item.date.split('-')[2]}</span>
+                          <span className="text-[9px] uppercase">{new Date(item.date).toLocaleDateString([], { month: 'short' })}</span>
                         </div>
                         <div>
                           <div className="font-bold text-slate-900 text-sm flex items-center gap-2 flex-wrap">
-                            <span>{h.reason}</span>
+                            <span>{item.reason}</span>
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-bold">
-                              {h.date}
+                              {item.date}
                             </span>
                             <span
                               className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
@@ -3037,14 +3375,14 @@ export const AdminAttendanceView: React.FC = () => {
                             </span>
                           </div>
                           <div className="text-[11px] text-slate-500 mt-0.5">
-                            Designated by: <span className="font-bold text-slate-700">{h.markedBy || h.createdBy || 'Principal'}</span>
+                            Designated by: <span className="font-bold text-slate-700">{item.markedBy}</span>
                           </div>
                         </div>
                       </div>
 
                       <button
                         type="button"
-                        onClick={() => handleRemoveHoliday(h.id || h.date, h.date)}
+                        onClick={() => handleRemoveHoliday(item.id, item.date)}
                         className="px-3.5 py-1.5 text-xs font-bold text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-xl transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -3152,7 +3490,7 @@ export const AdminAttendanceView: React.FC = () => {
                         </div>
 
                         <div className="text-xs text-slate-600 mt-1">
-                          Teacher: <span className="font-bold text-slate-800">{req.teacherName}</span> · Submitted: <span className="font-mono text-slate-500">{new Date(req.requestedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                          Teacher: <span className="font-bold text-slate-800">{req.teacherName}</span> · Submitted: <span className="font-mono text-slate-500">{(req.createdAt || req.requestedAt) ? new Date(req.createdAt || req.requestedAt || '').toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Recently'}</span>
                         </div>
                       </div>
 
@@ -3163,18 +3501,19 @@ export const AdminAttendanceView: React.FC = () => {
                             type="button"
                             onClick={() => handleRejectUnlockRequest(req)}
                             disabled={isProcessingRequest === req.id}
-                            className="px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded-xl transition cursor-pointer disabled:opacity-50"
+                            className="px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded-xl transition cursor-pointer disabled:opacity-50 flex items-center gap-1 shadow-2xs"
                           >
-                            Reject
+                            <X className="w-3.5 h-3.5 stroke-[2.5]" />
+                            <span>Reject</span>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleApproveUnlockRequest(req)}
                             disabled={isProcessingRequest === req.id}
-                            className="px-4 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 border border-emerald-800 rounded-xl transition shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                            className="px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 border border-emerald-900 rounded-xl transition shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                           >
-                            <Unlock className="w-3.5 h-3.5" />
-                            <span>Approve &amp; Unlock</span>
+                            <Check className="w-3.5 h-3.5 stroke-[3]" />
+                            <span>Approve / Unlock</span>
                           </button>
                         </div>
                       )}
@@ -3226,13 +3565,93 @@ export const AdminAttendanceView: React.FC = () => {
               </button>
             </div>
 
+            {/* Modal Mode Switcher */}
+            <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl border border-slate-200 w-fit">
+              <button
+                type="button"
+                onClick={() => setHolidayModalMode('single')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  holidayModalMode === 'single'
+                    ? 'bg-amber-300 text-amber-950 shadow-2xs border border-amber-400'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span>📅</span>
+                <span>Single Day</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setHolidayModalMode('range')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  holidayModalMode === 'range'
+                    ? 'bg-amber-300 text-amber-950 shadow-2xs border border-amber-400'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span>🗓️</span>
+                <span>Date Range / Long Leave</span>
+              </button>
+            </div>
+
             <form
-              onSubmit={e => {
+              onSubmit={async e => {
                 e.preventDefault();
-                handleDeclareHoliday(holidayModalDate, holidayReasonInput);
+                if (holidayModalMode === 'single') {
+                  await handleDeclareHoliday(holidayModalDate, holidayReasonInput, modalTargetClasses);
+                } else {
+                  await handleDeclareHolidayRange(holidayModalDate, modalRangeEndDate, holidayReasonInput, modalTargetClasses);
+                }
+                setHolidayModalDate(null);
               }}
               className="space-y-4"
             >
+              {holidayModalMode === 'single' ? (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700">Selected Date:</label>
+                  <input
+                    type="date"
+                    value={holidayModalDate}
+                    disabled
+                    className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-bold bg-slate-100 text-slate-700"
+                  />
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700">Starting Date:</label>
+                      <input
+                        type="date"
+                        value={holidayModalDate}
+                        disabled
+                        className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-bold bg-slate-100 text-slate-700"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700">Ending Date:</label>
+                      <input
+                        type="date"
+                        value={modalRangeEndDate}
+                        min={holidayModalDate}
+                        onChange={e => setModalRangeEndDate(e.target.value)}
+                        className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-bold bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  {calcModalRangeSummary.totalCalendarDays > 0 && (
+                    <div className="p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-xs">
+                      <div className="font-bold text-amber-950 font-mono">
+                        🗓️ {calcModalRangeSummary.label} ({calcModalRangeSummary.totalCalendarDays} Days)
+                      </div>
+                      <div className="text-[11px] text-amber-900 mt-0.5">
+                        {calcModalRangeSummary.workingDaysToExclude} non-Sunday working days excluded · {calcModalRangeSummary.sundaysSkipped} Sundays auto-preserved
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700">
                   Holiday Reason / Title
@@ -3241,23 +3660,74 @@ export const AdminAttendanceView: React.FC = () => {
                   type="text"
                   value={holidayReasonInput}
                   onChange={e => setHolidayReasonInput(e.target.value)}
-                  placeholder="e.g. Friday Holiday, Eid, Milad-un-Nabi, Study Leave"
+                  placeholder="e.g. Public Holiday, Special Madrasa Holiday, Rain Holiday, Study Leave, Eid / Milad"
                   className="w-full p-2.5 border border-slate-300 rounded-xl text-xs bg-slate-50/50 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
 
-              {/* Quick Preset Suggestion Buttons */}
+              {/* Target Classes Selector in Modal */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700">Target Classes:</label>
+                  <span className="text-[10px] text-slate-500 font-medium">
+                    {modalTargetClasses.includes('all') ? 'All Classes (1–9)' : `${modalTargetClasses.length} selected`}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1 items-center">
+                  <button
+                    type="button"
+                    onClick={() => setModalTargetClasses(['all'])}
+                    className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border transition cursor-pointer ${
+                      modalTargetClasses.includes('all')
+                        ? 'bg-emerald-800 text-white border-emerald-900 shadow-2xs'
+                        : 'bg-slate-100 text-slate-700 border-slate-200'
+                    }`}
+                  >
+                    All Classes
+                  </button>
+                  {classes.map(c => {
+                    const isSelected = !modalTargetClasses.includes('all') && modalTargetClasses.includes(c.id);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          if (modalTargetClasses.includes('all')) {
+                            setModalTargetClasses([c.id]);
+                          } else {
+                            if (isSelected) {
+                              const rem = modalTargetClasses.filter(id => id !== c.id);
+                              setModalTargetClasses(rem.length === 0 ? ['all'] : rem);
+                            } else {
+                              setModalTargetClasses([...modalTargetClasses, c.id]);
+                            }
+                          }
+                        }}
+                        className={`px-2 py-0.5 text-[11px] font-semibold rounded-md border transition cursor-pointer ${
+                          isSelected
+                            ? 'bg-amber-300 text-amber-950 border-amber-400 font-bold'
+                            : 'bg-white text-slate-600 border-slate-200'
+                        }`}
+                      >
+                        {c.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Quick Preset Suggestion Buttons (Strictly WITHOUT Friday Holiday) */}
               <div className="space-y-1.5">
                 <span className="text-[11px] font-bold text-slate-500">Quick Suggestions:</span>
                 <div className="flex flex-wrap gap-1.5">
                   {[
-                    'Friday Holiday',
-                    'Eid Holiday',
-                    'Milad-un-Nabi',
-                    'Study Leave',
-                    'Ramadan Break',
                     'Public Holiday',
-                    'Monsoon Leave',
+                    'Special Madrasa Holiday',
+                    'Rain Holiday',
+                    'Study Leave',
+                    'Eid / Milad',
+                    'Ramadan Break',
+                    'Board Exam Preparation',
                   ].map(preset => (
                     <button
                       key={preset}
@@ -3282,7 +3752,7 @@ export const AdminAttendanceView: React.FC = () => {
                   <span>Attendance Safeguard Active</span>
                 </div>
                 <p className="text-[11px] text-amber-900 leading-relaxed">
-                  Marking this date will subtract 1 day from the class working days count. Students are NOT penalized as absent.
+                  Designated holiday dates subtract from official class working days. Student attendance percentages remain safeguarded.
                 </p>
               </div>
 
@@ -3299,7 +3769,11 @@ export const AdminAttendanceView: React.FC = () => {
                   disabled={isSavingHoliday}
                   className="px-5 py-2 text-xs font-bold text-amber-950 bg-amber-300 hover:bg-amber-400 border border-amber-400 rounded-xl transition shadow-xs cursor-pointer disabled:opacity-50"
                 >
-                  {isSavingHoliday ? 'Designating...' : 'Confirm Holiday'}
+                  {isSavingHoliday
+                    ? 'Designating...'
+                    : holidayModalMode === 'range'
+                    ? `Confirm Long Leave (${calcModalRangeSummary.workingDaysToExclude} Days)`
+                    : 'Confirm Holiday'}
                 </button>
               </div>
             </form>

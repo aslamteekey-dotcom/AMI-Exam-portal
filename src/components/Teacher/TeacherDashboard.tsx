@@ -32,6 +32,8 @@ import {
   getDocs,
   setDoc,
   deleteDoc,
+  addDoc,
+  updateDoc,
 } from 'firebase/firestore';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { logAuditEvent } from '../../services/auditLogger';
@@ -165,6 +167,7 @@ export const TeacherDashboard: React.FC = () => {
   const [isRequestModalOpen, setIsRequestModalOpen] = useState<boolean>(false);
   const [requestReasonInput, setRequestReasonInput] = useState<string>('');
   const [isSubmittingRequest, setIsSubmittingRequest] = useState<boolean>(false);
+  const [showRequestSentToast, setShowRequestSentToast] = useState<boolean>(false);
   const [dailyStatusMap, setDailyStatusMap] = useState<Record<string, boolean>>({});
   const [weeklyStatusMap, setWeeklyStatusMap] = useState<Record<string, Record<string, boolean>>>({});
   const [classAttendanceConfig, setClassAttendanceConfig] = useState<ClassAttendanceConfig | null>(null);
@@ -596,22 +599,59 @@ export const TeacherDashboard: React.FC = () => {
       );
       unsubs.push(unsubSpecialWorking);
 
-      // Real-time Firestore Attendance Edit Requests listener
-      const unsubRequests = onSnapshot(
-        collection(db, 'attendanceEditRequests'),
+      // Real-time Firestore Attendance Unlock Requests listener (Primary)
+      const unsubUnlockRequests = onSnapshot(
+        collection(db, 'attendanceUnlockRequests'),
         snapshot => {
-          const reqMap: Record<string, AttendanceEditRequest> = {};
-          snapshot.docs.forEach(docSnap => {
-            const data = docSnap.data() as AttendanceEditRequest;
-            reqMap[data.date] = { ...data, id: docSnap.id };
+          setAttendanceEditRequests(prev => {
+            const next = { ...prev };
+            snapshot.docs.forEach(docSnap => {
+              const data = docSnap.data() as AttendanceEditRequest;
+              const item: AttendanceEditRequest = {
+                ...data,
+                id: docSnap.id,
+                createdAt: data.createdAt || data.requestedAt,
+                requestedAt: data.requestedAt || data.createdAt,
+              };
+              if (item.date) next[item.date] = item;
+              if (item.classId && item.date) next[`${item.classId}_${item.date}`] = item;
+            });
+            return next;
           });
-          setAttendanceEditRequests(reqMap);
         },
         error => {
-          console.warn('Firestore attendanceEditRequests onSnapshot error:', error);
+          console.warn('Firestore attendanceUnlockRequests onSnapshot error:', error);
         }
       );
-      unsubs.push(unsubRequests);
+      unsubs.push(unsubUnlockRequests);
+
+      // Legacy fallback listener for attendanceEditRequests
+      const unsubLegacyRequests = onSnapshot(
+        collection(db, 'attendanceEditRequests'),
+        snapshot => {
+          setAttendanceEditRequests(prev => {
+            const next = { ...prev };
+            snapshot.docs.forEach(docSnap => {
+              const data = docSnap.data() as AttendanceEditRequest;
+              const item: AttendanceEditRequest = {
+                ...data,
+                id: docSnap.id,
+                createdAt: data.createdAt || data.requestedAt,
+                requestedAt: data.requestedAt || data.createdAt,
+              };
+              if (item.date && !next[item.date]) next[item.date] = item;
+              if (item.classId && item.date && !next[`${item.classId}_${item.date}`]) {
+                next[`${item.classId}_${item.date}`] = item;
+              }
+            });
+            return next;
+          });
+        },
+        error => {
+          console.warn('Firestore attendanceEditRequests legacy onSnapshot error:', error);
+        }
+      );
+      unsubs.push(unsubLegacyRequests);
 
       // Real-time Firestore News listener
       const unsubNews = onSnapshot(
@@ -766,6 +806,12 @@ export const TeacherDashboard: React.FC = () => {
     return days;
   };
 
+  // Helper to fetch request for date & class
+  const getRequestForDate = (dateStr: string, classId?: string): AttendanceEditRequest | undefined => {
+    const targetClass = classId || attendanceClassId;
+    return attendanceEditRequests[`${targetClass}_${dateStr}`] || attendanceEditRequests[dateStr];
+  };
+
   // Check if attendance has already been saved to Firestore for a given date
   const isDateRecorded = (dateStr: string): boolean => {
     return !!classAttendanceConfig?.dailyRecords?.[dateStr];
@@ -777,8 +823,13 @@ export const TeacherDashboard: React.FC = () => {
     if (dateStr > todayStr) return true;
     const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
     if (!rec) return false;
+    // Check if Principal approved the unlock request in real time
+    const req = getRequestForDate(dateStr, attendanceClassId);
+    if (req?.status === 'approved') {
+      return false;
+    }
     // If approved and unlocked by Principal in Firestore or locally marked editable
-    if (rec.unlocked === true || rec.editable === true || unlockedDates[dateStr]) {
+    if (rec.isLocked === false || rec.unlocked === true || rec.editable === true || unlockedDates[dateStr]) {
       return false;
     }
     return true;
@@ -846,58 +897,80 @@ export const TeacherDashboard: React.FC = () => {
     return null;
   };
 
-  // Submit Edit Access Request to Principal for approval
+  // Submit Attendance Unlock Request to Principal for approval
   const handleSubmitEditRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!attendanceClassId || !selectedAttendanceDate) return;
     const reason = requestReasonInput.trim();
     if (!reason) {
-      alert('Please enter a reason for requesting edit access.');
+      alert('Please enter a reason for requesting attendance unlock.');
       return;
     }
     setIsSubmittingRequest(true);
     try {
-      const requestId = `${attendanceClassId}_${selectedAttendanceDate}`;
       const className = classes.find(c => c.id === attendanceClassId)?.name || `Class ${attendanceClassId}`;
+      const teacherName = (user as any)?.nameEn || user?.name || 'Class Teacher';
+      const teacherId = user?.id || 'teacher';
+      const nowIso = new Date().toISOString();
+
+      // 1. Standardized Unified Firestore Collection: attendanceUnlockRequests
+      const docRef = await addDoc(collection(db, 'attendanceUnlockRequests'), {
+        date: selectedAttendanceDate,
+        classId: attendanceClassId,
+        className,
+        teacherId,
+        teacherName,
+        reason,
+        status: 'pending',
+        createdAt: nowIso,
+        requestedAt: nowIso,
+      });
+
       const reqData: AttendanceEditRequest = {
-        id: requestId,
+        id: docRef.id,
         classId: attendanceClassId,
         className,
         date: selectedAttendanceDate,
-        teacherId: user?.id || 'teacher',
-        teacherName: user?.name || 'Class Teacher',
+        teacherId,
+        teacherName,
         reason,
-        requestedAt: new Date().toISOString(),
         status: 'pending',
+        createdAt: nowIso,
+        requestedAt: nowIso,
       };
-
-      await setDoc(doc(db, 'attendanceEditRequests', requestId), cleanForFirestore(reqData), { merge: true });
 
       setAttendanceEditRequests(prev => ({
         ...prev,
         [selectedAttendanceDate]: reqData,
+        [`${attendanceClassId}_${selectedAttendanceDate}`]: reqData,
       }));
+
+      // Backward compatibility write to attendanceEditRequests
+      try {
+        await setDoc(doc(db, 'attendanceEditRequests', `${attendanceClassId}_${selectedAttendanceDate}`), cleanForFirestore(reqData), { merge: true });
+      } catch {}
 
       await fetchWithAuth('/api/attendance-edit-requests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(reqData),
-      });
+      }).catch(() => {});
 
       logAuditEvent({
-        action: 'ATTENDANCE_EDIT_REQUESTED',
-        details: `Teacher ${user?.name || 'Teacher'} requested edit access for Class ${className} on ${selectedAttendanceDate}. Reason: "${reason}".`,
+        action: 'ATTENDANCE_UNLOCK_REQUESTED',
+        details: `Teacher ${teacherName} requested attendance unlock for Class ${className} on ${selectedAttendanceDate}. Reason: "${reason}".`,
         currentUser: user,
-        recordType: 'attendance_edit_request',
-        recordId: requestId,
+        recordType: 'attendance_unlock_request',
+        recordId: docRef.id,
       }).catch(e => console.warn('Audit log error:', e));
 
       setIsRequestModalOpen(false);
       setRequestReasonInput('');
-      alert('Edit request successfully submitted to Principal ASLAM TK. The record will unlock automatically upon Principal approval.');
+      setShowRequestSentToast(true);
+      setTimeout(() => setShowRequestSentToast(false), 5000);
     } catch (err: any) {
-      console.error('Error submitting edit request:', err);
-      alert('Failed to submit edit request: ' + (err.message || 'Unknown error'));
+      console.error('Error submitting unlock request:', err);
+      alert('Failed to submit unlock request: ' + (err.message || 'Unknown error'));
     } finally {
       setIsSubmittingRequest(false);
     }
@@ -1115,6 +1188,7 @@ export const TeacherDashboard: React.FC = () => {
           markedAt: new Date().toISOString(),
           markedBy: user?.name || 'Class Teacher',
           isHoliday: false,
+          isLocked: true,
           unlocked: false,
           editable: false,
         },
@@ -1184,7 +1258,27 @@ export const TeacherDashboard: React.FC = () => {
       // Re-lock the date immediately upon save
       setUnlockedDates(prev => ({ ...prev, [selectedAttendanceDate]: false }));
 
-      // Automatically resolve any edit request for this date
+      // Automatically complete any unlock request for this date in attendanceUnlockRequests
+      const activeReq = getRequestForDate(selectedAttendanceDate, attendanceClassId);
+      if (activeReq?.id) {
+        try {
+          await updateDoc(doc(db, 'attendanceUnlockRequests', activeReq.id), {
+            status: 'completed',
+            completedAt: new Date().toISOString(),
+          });
+        } catch {
+          await setDoc(
+            doc(db, 'attendanceUnlockRequests', activeReq.id),
+            {
+              status: 'completed',
+              completedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        }
+      }
+
+      // Backward compatibility update to attendanceEditRequests
       const reqId = `${attendanceClassId}_${selectedAttendanceDate}`;
       try {
         await setDoc(
@@ -3057,6 +3151,14 @@ export const TeacherDashboard: React.FC = () => {
                     <span>Saved &amp; Synced with Parent Portal in Real-time!</span>
                   </div>
                 )}
+
+                {/* Request Sent Toast in Teacher Portal */}
+                {showRequestSentToast && (
+                  <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-amber-100 text-amber-950 border border-amber-300 animate-fade-in shadow-2xs">
+                    <Clock className="w-4 h-4 text-amber-700 animate-spin" />
+                    <span>⏳ Request Sent - Pending Approval</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -3066,12 +3168,38 @@ export const TeacherDashboard: React.FC = () => {
               const isDailyRecorded = isDateRecorded(selectedAttendanceDate);
               const isDailyHoliday = isDateHoliday(selectedAttendanceDate);
               const dailyHolidayInfo = getHolidayInfo(selectedAttendanceDate);
-              const isDailyEditing = isDailyRecorded && (unlockedDates[selectedAttendanceDate] || dailyRecord?.unlocked === true || dailyRecord?.editable === true);
+              const reqForDate = getRequestForDate(selectedAttendanceDate, attendanceClassId);
+              const isApprovedByPrincipal = reqForDate?.status === 'approved' || (dailyRecord && (dailyRecord.isLocked === false || dailyRecord.unlocked === true || dailyRecord.editable === true));
+              const isDailyEditing = isDailyRecorded && (unlockedDates[selectedAttendanceDate] || isApprovedByPrincipal);
               const isDailyLocked = isDailyRecorded && !isDailyEditing;
-              const reqForDate = attendanceEditRequests[selectedAttendanceDate];
 
               return (
                 <div className="space-y-4">
+                  {/* Green Alert Banner when Unlocked by Principal */}
+                  {isDailyEditing && !isDailyHoliday && (
+                    <div className="bg-emerald-50 border-2 border-emerald-400 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs animate-fade-in">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-200 text-emerald-950 flex items-center justify-center text-xl shrink-0 shadow-2xs">
+                          🔓
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-emerald-950 flex items-center gap-2">
+                            <span>🔓 Unlocked by Principal - You can now edit and save attendance.</span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-200 text-emerald-900 border border-emerald-300">
+                              Editing Active
+                            </span>
+                          </h4>
+                          <p className="text-xs text-emerald-800 mt-0.5">
+                            Principal ASLAM TK has authorized attendance modifications for {selectedAttendanceDate}. Toggle student statuses and click &quot;Save Corrections&quot; or &quot;Save Attendance&quot; to save and lock again.
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[11px] font-mono font-bold text-emerald-900 bg-white px-3 py-1.5 rounded-xl border border-emerald-200 shadow-2xs">
+                        Class: {classes.find(c => c.id === attendanceClassId)?.name || 'Class'}
+                      </span>
+                    </div>
+                  )}
+
                   {/* Date Controls & Quick Actions Banner */}
                   <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -3162,14 +3290,14 @@ export const TeacherDashboard: React.FC = () => {
                         ) : isDailyLocked ? (
                           <div className="flex items-center gap-1.5">
                             {reqForDate?.status === 'pending' ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-950 border border-amber-300 shadow-2xs">
                                 <Clock className="w-3.5 h-3.5 text-amber-700 animate-spin" />
-                                ⏳ Edit Request Pending Approval
+                                ⏳ Request Sent - Pending Approval
                               </span>
                             ) : reqForDate?.status === 'rejected' ? (
                               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-900 border border-rose-300 shadow-2xs">
                                 <X className="w-3.5 h-3.5 text-rose-700" />
-                                Edit Request Rejected by Principal
+                                Unlock Request Rejected by Principal
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
@@ -3182,9 +3310,9 @@ export const TeacherDashboard: React.FC = () => {
                             </span>
                           </div>
                         ) : isDailyEditing ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                            <Unlock className="w-3.5 h-3.5 text-amber-700" />
-                            Attendance Unlocked by Principal for Corrections
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                            <Unlock className="w-3.5 h-3.5 text-emerald-700" />
+                            🔓 Unlocked by Principal - You can now edit and save attendance.
                           </span>
                         ) : (
                           <span className="text-[11px] text-slate-400 font-normal">
@@ -3252,9 +3380,9 @@ export const TeacherDashboard: React.FC = () => {
 
                             {isDailyLocked ? (
                               reqForDate?.status === 'pending' ? (
-                                <div className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-amber-900 bg-amber-50 rounded-xl border border-amber-300 shadow-2xs">
-                                  <Clock className="w-4 h-4 text-amber-600 animate-spin" />
-                                  <span>⏳ Edit Request Pending Approval</span>
+                                <div className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-amber-950 bg-amber-100 rounded-xl border border-amber-300 shadow-2xs">
+                                  <Clock className="w-4 h-4 text-amber-700 animate-spin" />
+                                  <span>⏳ Request Sent - Pending Approval</span>
                                 </div>
                               ) : (
                                 <button
@@ -3266,8 +3394,8 @@ export const TeacherDashboard: React.FC = () => {
                                   className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-amber-50 rounded-xl transition border border-slate-300 hover:border-amber-400 shadow-2xs cursor-pointer"
                                   title="Request Principal to Unlock this record for corrections"
                                 >
-                                  <Key className="w-4 h-4 text-amber-600" />
-                                  <span>Request Edit Access</span>
+                                  <Unlock className="w-4 h-4 text-amber-600" />
+                                  <span>Request Unlock</span>
                                 </button>
                               )
                             ) : (
@@ -3806,8 +3934,8 @@ export const TeacherDashboard: React.FC = () => {
                                     </span>
                                   ) : isDayLocked ? (
                                     <div className="space-y-0.5">
-                                      {attendanceEditRequests[d.dateStr]?.status === 'pending' ? (
-                                        <span className="inline-flex items-center gap-0.5 text-[8.5px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs" title="Edit request pending Principal approval">
+                                      {getRequestForDate(d.dateStr, attendanceClassId)?.status === 'pending' ? (
+                                        <span className="inline-flex items-center gap-0.5 text-[8.5px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-950 border border-amber-300 shadow-2xs" title="Unlock request pending Principal approval">
                                           ⏳ Pending
                                         </span>
                                       ) : (
@@ -4150,6 +4278,110 @@ export const TeacherDashboard: React.FC = () => {
           </div>
         );
       })()}
+
+      {/* ATTENDANCE UNLOCK / EDIT REQUEST MODAL */}
+      {isRequestModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-scale-in">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-lg text-amber-900 shadow-2xs">
+                  <Unlock className="w-5 h-5 text-amber-700" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Request Attendance Unlock
+                  </h3>
+                  <p className="text-xs text-slate-500 font-mono">
+                    {classes.find(c => c.id === attendanceClassId)?.name || 'Class'} · {selectedAttendanceDate}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRequestModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitEditRequest} className="space-y-4">
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 leading-relaxed">
+                <p>
+                  Attendance for <strong>{selectedAttendanceDate}</strong> is currently locked. Submitting this request sends an alert directly to <strong>Principal ASLAM TK</strong>. Once approved, the toggles will automatically unlock for you to make corrections and save.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700">
+                  Target Date to Unlock:
+                </label>
+                <input
+                  type="date"
+                  value={selectedAttendanceDate}
+                  disabled
+                  className="w-full p-2.5 border border-slate-200 rounded-xl text-xs font-bold bg-slate-100 text-slate-600 font-mono"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700">
+                  Reason for Unlock / Correction: <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={requestReasonInput}
+                  onChange={e => setRequestReasonInput(e.target.value)}
+                  placeholder="e.g. Correct mistaken absence marking for Roll No 4, late admission updated, etc."
+                  className="w-full p-2.5 border border-slate-300 rounded-xl text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* Quick Reason Suggestions */}
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold text-slate-500">Quick Reasons:</span>
+                <div className="flex flex-wrap gap-1">
+                  {[
+                    'Correct mistaken absence marking',
+                    'Student arrived late with valid excuse',
+                    'Clerical error during morning roll call',
+                    'Medical leave slip submitted today',
+                  ].map(preset => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setRequestReasonInput(preset)}
+                      className="px-2 py-0.5 text-[10px] rounded-md bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-950 border border-slate-200 transition cursor-pointer"
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsRequestModalOpen(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingRequest || !requestReasonInput.trim()}
+                  className="px-5 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 rounded-xl transition shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  <span>{isSubmittingRequest ? 'Sending...' : 'Submit Unlock Request'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* =========================================================================
           TAB 5: NEW "FEES" TAB (Moved exact payment progress & fee ledger from My Class)

@@ -352,26 +352,33 @@ export interface DailyAttendanceRecord {
   markedBy?: string;
   isHoliday?: boolean;
   holidayReason?: string;
+  isLocked?: boolean;
   unlocked?: boolean;
   editable?: boolean;
   unlockedAt?: string;
   unlockedBy?: string;
 }
 
-export interface AttendanceEditRequest {
-  id: string; // e.g. `${classId}_${date}`
+export interface AttendanceUnlockRequest {
+  id: string; // Firestore document ID
   classId: string;
   className?: string;
   date: string; // "YYYY-MM-DD"
   teacherId: string;
   teacherName: string;
   reason: string;
-  requestedAt: string;
-  status: 'pending' | 'approved' | 'rejected' | 'resolved';
+  status: 'pending' | 'approved' | 'rejected' | 'completed' | 'resolved';
+  createdAt?: string;
+  requestedAt?: string;
+  approvedAt?: string;
+  completedAt?: string;
+  rejectedAt?: string;
   resolvedAt?: string;
   resolvedBy?: string;
   resolutionNote?: string;
 }
+
+export type AttendanceEditRequest = AttendanceUnlockRequest;
 
 export interface MonthlyAttendanceStat {
   month: string; // e.g., "June 2026", "July 2026"
