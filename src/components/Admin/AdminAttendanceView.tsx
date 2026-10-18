@@ -244,16 +244,30 @@ export const AdminAttendanceView: React.FC = () => {
     const requestsMap = new Map<string, AttendanceEditRequest>();
 
     const updateCombinedList = () => {
-      const list = Array.from(requestsMap.values());
+      const rawList = Array.from(requestsMap.values());
       // Sort pending first, then by createdAt / requestedAt desc
-      list.sort((a, b) => {
+      rawList.sort((a, b) => {
         if (a.status === 'pending' && b.status !== 'pending') return -1;
         if (a.status !== 'pending' && b.status === 'pending') return 1;
         const timeA = new Date(a.createdAt || a.requestedAt || 0).getTime();
         const timeB = new Date(b.createdAt || b.requestedAt || 0).getTime();
         return timeB - timeA;
       });
-      setEditRequests(list);
+
+      // Filter out duplicate entries that have identical classId and date/label and status
+      const seen = new Set<string>();
+      const dedupedList: AttendanceEditRequest[] = [];
+      for (const item of rawList) {
+        const dateKey = item.displayDateLabel || item.date || (item.startDate && item.endDate ? `${item.startDate} to ${item.endDate}` : item.startDate || 'unknown_date');
+        const timeMinute = (item.createdAt || item.requestedAt || '').slice(0, 16);
+        const uniqueKey = `${item.classId}_${dateKey}_${item.status}_${timeMinute}`;
+        if (!seen.has(uniqueKey)) {
+          seen.add(uniqueKey);
+          dedupedList.push(item);
+        }
+      }
+
+      setEditRequests(dedupedList);
     };
 
     try {
@@ -261,6 +275,13 @@ export const AdminAttendanceView: React.FC = () => {
       const unsubUnlock = onSnapshot(
         collection(db, 'attendanceUnlockRequests'),
         snapshot => {
+          const currentIds = new Set(snapshot.docs.map(d => d.id));
+          // Remove deleted docs
+          for (const [id] of requestsMap.entries()) {
+            if (!currentIds.has(id) && !id.includes('_')) {
+              requestsMap.delete(id);
+            }
+          }
           snapshot.docs.forEach(docSnap => {
             const data = docSnap.data() as AttendanceEditRequest;
             requestsMap.set(docSnap.id, {
@@ -276,13 +297,20 @@ export const AdminAttendanceView: React.FC = () => {
       );
       unsubs.push(unsubUnlock);
 
-      // Secondary fallback listener for legacy attendanceEditRequests
+      // Secondary fallback listener for legacy attendanceEditRequests (only if not already in primary)
       const unsubLegacy = onSnapshot(
         collection(db, 'attendanceEditRequests'),
         snapshot => {
           snapshot.docs.forEach(docSnap => {
-            if (!requestsMap.has(docSnap.id)) {
-              const data = docSnap.data() as AttendanceEditRequest;
+            const data = docSnap.data() as AttendanceEditRequest;
+            const existingWithSameKey = Array.from(requestsMap.values()).some(
+              r => r.classId === data.classId && (
+                r.id === docSnap.id ||
+                (r.date && data.date && r.date === data.date) ||
+                (r.displayDateLabel && data.displayDateLabel && r.displayDateLabel === data.displayDateLabel)
+              )
+            );
+            if (!requestsMap.has(docSnap.id) && !existingWithSameKey) {
               requestsMap.set(docSnap.id, {
                 ...data,
                 id: docSnap.id,
@@ -1216,20 +1244,42 @@ export const AdminAttendanceView: React.FC = () => {
         );
       } catch {}
 
-      // 2. Unlock the corresponding attendance record for that date & class in attendance collection: isLocked: false, status: 'unlocked'
+      // 2. Unlock the corresponding attendance record(s) for that date / date range & class in attendance collection: isLocked: false, status: 'unlocked'
+      const isRange = req.mode === 'range' || (!!req.startDate && !!req.endDate);
+      const targetDates: string[] = [];
+
+      if (isRange && req.startDate && req.endDate) {
+        let curr = parseLocalDate(req.startDate);
+        const end = parseLocalDate(req.endDate);
+        while (curr <= end) {
+          targetDates.push(formatLocalDate(curr));
+          curr.setDate(curr.getDate() + 1);
+        }
+      } else if (req.date) {
+        targetDates.push(req.date);
+      } else if (req.startDate) {
+        targetDates.push(req.startDate);
+      }
+
       const classRef = doc(db, 'attendance', req.classId);
+      const recordsToUpdate: Record<string, any> = {};
+      const newUnlockedLocal: Record<string, boolean> = {};
+
+      targetDates.forEach(dStr => {
+        recordsToUpdate[dStr] = {
+          isLocked: false,
+          unlocked: true,
+          editable: true,
+          unlockedAt: nowIso,
+          unlockedBy: approverName,
+        };
+        newUnlockedLocal[dStr] = true;
+      });
+
       await setDoc(
         classRef,
         {
-          dailyRecords: {
-            [req.date]: {
-              isLocked: false,
-              unlocked: true,
-              editable: true,
-              unlockedAt: nowIso,
-              unlockedBy: approverName,
-            },
-          },
+          dailyRecords: recordsToUpdate,
           updatedAt: nowIso,
         },
         { merge: true }
@@ -1247,10 +1297,12 @@ export const AdminAttendanceView: React.FC = () => {
         }),
       }).catch(() => {});
 
+      const dateDisplay = req.displayDateLabel || (isRange && req.startDate && req.endDate ? `${req.startDate} to ${req.endDate}` : (req.date || ''));
+
       // 4. Audit Log
       logAuditEvent({
         action: 'ATTENDANCE_UNLOCKED',
-        details: `Principal approved attendance unlock request for Class ${req.className || req.classId} on ${req.date}. Requested by ${req.teacherName}. Reason: "${req.reason}".`,
+        details: `Principal approved attendance unlock request for Class ${req.className || req.classId} (${dateDisplay}). Requested by ${req.teacherName}. Reason: "${req.reason}".`,
         currentUser: user,
         recordType: 'attendance_unlock_request',
         recordId: req.id,
@@ -1258,10 +1310,10 @@ export const AdminAttendanceView: React.FC = () => {
 
       // Update local state if currently viewing this class
       if (req.classId === selectedClassId) {
-        setUnlockedDates(prev => ({ ...prev, [req.date]: true }));
+        setUnlockedDates(prev => ({ ...prev, ...newUnlockedLocal }));
       }
 
-      alert(`Attendance unlock request APPROVED for ${req.className || req.classId} on ${req.date}. Teacher ${req.teacherName} can now edit and save attendance.`);
+      alert(`Attendance unlock request APPROVED for ${req.className || req.classId} (${dateDisplay}). Teacher ${req.teacherName} can now edit and save attendance.`);
     } catch (err: any) {
       alert('Failed to approve unlock request: ' + (err.message || 'Unknown error'));
     } finally {
@@ -1323,17 +1375,64 @@ export const AdminAttendanceView: React.FC = () => {
         }),
       }).catch(() => {});
 
+      const isRange = req.mode === 'range' || (!!req.startDate && !!req.endDate);
+      const dateDisplay = req.displayDateLabel || (isRange && req.startDate && req.endDate ? `${req.startDate} to ${req.endDate}` : (req.date || ''));
+
       logAuditEvent({
         action: 'ATTENDANCE_UNLOCK_REJECTED',
-        details: `Principal rejected attendance unlock request for Class ${req.className || req.classId} on ${req.date}. Requested by ${req.teacherName}. Note: "${reason}".`,
+        details: `Principal rejected attendance unlock request for Class ${req.className || req.classId} (${dateDisplay}). Requested by ${req.teacherName}. Note: "${reason}".`,
         currentUser: user,
         recordType: 'attendance_unlock_request',
         recordId: req.id,
       }).catch(e => console.warn('Audit log error:', e));
 
-      alert(`Unlock request rejected.`);
+      alert(`Unlock request for ${dateDisplay} rejected.`);
     } catch (err: any) {
       alert('Failed to reject unlock request: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsProcessingRequest(null);
+    }
+  };
+
+  const handleDeleteUnlockRequest = async (req: AttendanceEditRequest) => {
+    const isRange = req.mode === 'range' || (!!req.startDate && !!req.endDate);
+    const dateDisplay = req.displayDateLabel || req.date || (isRange && req.startDate && req.endDate ? `${req.startDate} to ${req.endDate}` : req.startDate || 'N/A');
+    if (!window.confirm(`Are you sure you want to permanently delete this unlock request for ${req.className || req.classId} (${dateDisplay})?`)) {
+      return;
+    }
+    setIsProcessingRequest(req.id);
+    try {
+      // 1. Delete from primary collection
+      try {
+        await deleteDoc(doc(db, 'attendanceUnlockRequests', req.id));
+      } catch (err) {
+        console.warn('Error deleting from attendanceUnlockRequests:', err);
+      }
+
+      // 2. Delete from legacy collection if exists
+      try {
+        await deleteDoc(doc(db, 'attendanceEditRequests', req.id));
+      } catch {}
+
+      // 3. Delete from mock API
+      await fetchWithAuth(`/api/attendance-edit-requests/${req.id}`, {
+        method: 'DELETE',
+      }).catch(() => {});
+
+      // 4. Update local state
+      setEditRequests(prev => prev.filter(r => r.id !== req.id));
+
+      logAuditEvent({
+        action: 'ATTENDANCE_UNLOCK_REQUEST_DELETED',
+        details: `Principal deleted attendance unlock request for Class ${req.className || req.classId} (${dateDisplay}).`,
+        currentUser: user,
+        recordType: 'attendance_unlock_request',
+        recordId: req.id,
+      }).catch(e => console.warn('Audit log error:', e));
+
+      alert('Unlock request removed successfully.');
+    } catch (err: any) {
+      alert('Failed to delete unlock request: ' + (err.message || 'Unknown error'));
     } finally {
       setIsProcessingRequest(null);
     }
@@ -3466,9 +3565,21 @@ export const AdminAttendanceView: React.FC = () => {
                           <span className="font-bold text-slate-900 text-sm">
                             {req.className || `Class ${req.classId}`}
                           </span>
-                          <span className="font-mono text-xs font-bold px-2.5 py-0.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200">
-                            Date: {req.date}
-                          </span>
+                          {req.mode === 'range' || (req.startDate && req.endDate) ? (
+                            <span className="font-mono text-xs font-bold px-2.5 py-0.5 rounded-lg bg-indigo-50 text-indigo-800 border border-indigo-200 flex items-center gap-1.5 shadow-2xs">
+                              <CalendarDays className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>
+                                Date: {req.displayDateLabel || req.date || (req.startDate && req.endDate ? `${req.startDate} to ${req.endDate}` : req.startDate || 'N/A')}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="font-mono text-xs font-bold px-2.5 py-0.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 flex items-center gap-1.5 shadow-2xs">
+                              <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                              <span>
+                                Date: {req.displayDateLabel || req.date || (req.startDate && req.endDate ? `${req.startDate} to ${req.endDate}` : req.startDate || 'N/A')}
+                              </span>
+                            </span>
+                          )}
                           {isPending && (
                             <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-950 border border-amber-300">
                               <Clock className="w-3 h-3 text-amber-700 animate-spin" />
@@ -3494,29 +3605,40 @@ export const AdminAttendanceView: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Action buttons for pending requests */}
-                      {isPending && (
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleRejectUnlockRequest(req)}
-                            disabled={isProcessingRequest === req.id}
-                            className="px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded-xl transition cursor-pointer disabled:opacity-50 flex items-center gap-1 shadow-2xs"
-                          >
-                            <X className="w-3.5 h-3.5 stroke-[2.5]" />
-                            <span>Reject</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleApproveUnlockRequest(req)}
-                            disabled={isProcessingRequest === req.id}
-                            className="px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 border border-emerald-900 rounded-xl transition shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                          >
-                            <Check className="w-3.5 h-3.5 stroke-[3]" />
-                            <span>Approve / Unlock</span>
-                          </button>
-                        </div>
-                      )}
+                      {/* Action & Dismiss buttons */}
+                      <div className="flex items-center gap-2">
+                        {isPending && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleRejectUnlockRequest(req)}
+                              disabled={isProcessingRequest === req.id}
+                              className="px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded-xl transition cursor-pointer disabled:opacity-50 flex items-center gap-1 shadow-2xs"
+                            >
+                              <X className="w-3.5 h-3.5 stroke-[2.5]" />
+                              <span>Reject</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveUnlockRequest(req)}
+                              disabled={isProcessingRequest === req.id}
+                              className="px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 border border-emerald-900 rounded-xl transition shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                              <span>Approve / Unlock</span>
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteUnlockRequest(req)}
+                          disabled={isProcessingRequest === req.id}
+                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl border border-transparent hover:border-rose-200 transition cursor-pointer disabled:opacity-50 flex items-center justify-center"
+                          title="Delete / Dismiss this request"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
 
                     {/* Reason text */}

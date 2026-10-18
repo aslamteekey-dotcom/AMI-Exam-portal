@@ -361,9 +361,13 @@ export interface DailyAttendanceRecord {
 
 export interface AttendanceUnlockRequest {
   id: string; // Firestore document ID
+  mode?: 'single' | 'range';
+  date?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  displayDateLabel?: string;
   classId: string;
   className?: string;
-  date: string; // "YYYY-MM-DD"
   teacherId: string;
   teacherName: string;
   reason: string;

@@ -166,8 +166,22 @@ export const TeacherDashboard: React.FC = () => {
   const [attendanceEditRequests, setAttendanceEditRequests] = useState<Record<string, AttendanceEditRequest>>({});
   const [isRequestModalOpen, setIsRequestModalOpen] = useState<boolean>(false);
   const [requestReasonInput, setRequestReasonInput] = useState<string>('');
+  const [unlockMode, setUnlockMode] = useState<'single' | 'range'>('single');
+  const [singleUnlockDate, setSingleUnlockDate] = useState<string>(() => formatLocalDate(new Date()));
+  const [rangeStartDate, setRangeStartDate] = useState<string>(() => formatLocalDate(new Date()));
+  const [rangeEndDate, setRangeEndDate] = useState<string>(() => formatLocalDate(new Date()));
   const [isSubmittingRequest, setIsSubmittingRequest] = useState<boolean>(false);
   const [showRequestSentToast, setShowRequestSentToast] = useState<boolean>(false);
+
+  const handleOpenUnlockModal = (initialDate?: string) => {
+    const target = initialDate || selectedAttendanceDate || todayStr;
+    setUnlockMode('single');
+    setSingleUnlockDate(target);
+    setRangeStartDate(target);
+    setRangeEndDate(target);
+    setRequestReasonInput('');
+    setIsRequestModalOpen(true);
+  };
   const [dailyStatusMap, setDailyStatusMap] = useState<Record<string, boolean>>({});
   const [weeklyStatusMap, setWeeklyStatusMap] = useState<Record<string, Record<string, boolean>>>({});
   const [classAttendanceConfig, setClassAttendanceConfig] = useState<ClassAttendanceConfig | null>(null);
@@ -613,8 +627,19 @@ export const TeacherDashboard: React.FC = () => {
                 createdAt: data.createdAt || data.requestedAt,
                 requestedAt: data.requestedAt || data.createdAt,
               };
-              if (item.date) next[item.date] = item;
-              if (item.classId && item.date) next[`${item.classId}_${item.date}`] = item;
+              if ((item.mode === 'range' || (item.startDate && item.endDate)) && item.startDate && item.endDate) {
+                let curr = parseLocalDate(item.startDate);
+                const end = parseLocalDate(item.endDate);
+                while (curr <= end) {
+                  const dStr = formatLocalDate(curr);
+                  next[dStr] = item;
+                  if (item.classId) next[`${item.classId}_${dStr}`] = item;
+                  curr.setDate(curr.getDate() + 1);
+                }
+              } else if (item.date) {
+                next[item.date] = item;
+                if (item.classId) next[`${item.classId}_${item.date}`] = item;
+              }
             });
             return next;
           });
@@ -809,7 +834,16 @@ export const TeacherDashboard: React.FC = () => {
   // Helper to fetch request for date & class
   const getRequestForDate = (dateStr: string, classId?: string): AttendanceEditRequest | undefined => {
     const targetClass = classId || attendanceClassId;
-    return attendanceEditRequests[`${targetClass}_${dateStr}`] || attendanceEditRequests[dateStr];
+    const direct = attendanceEditRequests[`${targetClass}_${dateStr}`] || attendanceEditRequests[dateStr];
+    if (direct) return direct;
+    const allReqs = Object.values(attendanceEditRequests);
+    return allReqs.find(r => {
+      if (r.classId && targetClass && r.classId !== targetClass) return false;
+      if ((r.mode === 'range' || (r.startDate && r.endDate)) && r.startDate && r.endDate) {
+        return dateStr >= r.startDate && dateStr <= r.endDate;
+      }
+      return false;
+    });
   };
 
   // Check if attendance has already been saved to Firestore for a given date
@@ -900,27 +934,60 @@ export const TeacherDashboard: React.FC = () => {
   // Submit Attendance Unlock Request to Principal for approval
   const handleSubmitEditRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!attendanceClassId || !selectedAttendanceDate) return;
-    const reason = requestReasonInput.trim();
-    if (!reason) {
+    if (isSubmittingRequest) return;
+    if (!attendanceClassId) return;
+
+    const isMultiDate = unlockMode === 'range';
+    const singleDate = singleUnlockDate;
+    const startDate = rangeStartDate;
+    const endDate = rangeEndDate;
+
+    if (isMultiDate) {
+      if (!startDate || !endDate) {
+        alert('Please select both starting date and ending date.');
+        return;
+      }
+      if (endDate < startDate) {
+        alert('Ending date cannot be before starting date.');
+        return;
+      }
+    } else {
+      if (!singleDate) {
+        alert('Please select a target date to unlock.');
+        return;
+      }
+    }
+
+    const requestReason = requestReasonInput.trim();
+    if (!requestReason) {
       alert('Please enter a reason for requesting attendance unlock.');
       return;
     }
     setIsSubmittingRequest(true);
     try {
-      const className = classes.find(c => c.id === attendanceClassId)?.name || `Class ${attendanceClassId}`;
-      const teacherName = (user as any)?.nameEn || user?.name || 'Class Teacher';
-      const teacherId = user?.id || 'teacher';
+      const teacherClassId = attendanceClassId;
+      const teacherClassName = classes.find(c => c.id === attendanceClassId)?.name || `Class ${attendanceClassId}`;
+      const currentTeacher = {
+        id: user?.id || 'teacher',
+        name: user?.name || 'Class Teacher',
+        nameEn: (user as any)?.nameEn || user?.name || 'Class Teacher',
+      };
       const nowIso = new Date().toISOString();
+      const displayDateLabel = isMultiDate ? `${startDate} to ${endDate}` : singleDate;
+      const finalDate = isMultiDate ? `${startDate} to ${endDate}` : singleDate;
 
       // 1. Standardized Unified Firestore Collection: attendanceUnlockRequests
       const docRef = await addDoc(collection(db, 'attendanceUnlockRequests'), {
-        date: selectedAttendanceDate,
-        classId: attendanceClassId,
-        className,
-        teacherId,
-        teacherName,
-        reason,
+        mode: isMultiDate ? 'range' : 'single',
+        date: finalDate,
+        startDate: isMultiDate ? startDate : null,
+        endDate: isMultiDate ? endDate : null,
+        displayDateLabel: displayDateLabel,
+        classId: teacherClassId,
+        className: teacherClassName,
+        teacherId: currentTeacher.id,
+        teacherName: currentTeacher.nameEn || currentTeacher.name,
+        reason: requestReason,
         status: 'pending',
         createdAt: nowIso,
         requestedAt: nowIso,
@@ -928,28 +995,40 @@ export const TeacherDashboard: React.FC = () => {
 
       const reqData: AttendanceEditRequest = {
         id: docRef.id,
-        classId: attendanceClassId,
-        className,
-        date: selectedAttendanceDate,
-        teacherId,
-        teacherName,
-        reason,
+        mode: isMultiDate ? 'range' : 'single',
+        date: finalDate,
+        startDate: isMultiDate ? startDate : null,
+        endDate: isMultiDate ? endDate : null,
+        displayDateLabel,
+        classId: teacherClassId,
+        className: teacherClassName,
+        teacherId: currentTeacher.id,
+        teacherName: currentTeacher.nameEn || currentTeacher.name,
+        reason: requestReason,
         status: 'pending',
         createdAt: nowIso,
         requestedAt: nowIso,
       };
 
-      setAttendanceEditRequests(prev => ({
-        ...prev,
-        [selectedAttendanceDate]: reqData,
-        [`${attendanceClassId}_${selectedAttendanceDate}`]: reqData,
-      }));
+      setAttendanceEditRequests(prev => {
+        const next = { ...prev };
+        if (isMultiDate && startDate && endDate) {
+          let curr = parseLocalDate(startDate);
+          const end = parseLocalDate(endDate);
+          while (curr <= end) {
+            const dStr = formatLocalDate(curr);
+            next[dStr] = reqData;
+            next[`${teacherClassId}_${dStr}`] = reqData;
+            curr.setDate(curr.getDate() + 1);
+          }
+        } else if (singleDate) {
+          next[singleDate] = reqData;
+          next[`${teacherClassId}_${singleDate}`] = reqData;
+        }
+        return next;
+      });
 
-      // Backward compatibility write to attendanceEditRequests
-      try {
-        await setDoc(doc(db, 'attendanceEditRequests', `${attendanceClassId}_${selectedAttendanceDate}`), cleanForFirestore(reqData), { merge: true });
-      } catch {}
-
+      // Synchronize with local API storage without duplicate Firestore writes
       await fetchWithAuth('/api/attendance-edit-requests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -958,7 +1037,7 @@ export const TeacherDashboard: React.FC = () => {
 
       logAuditEvent({
         action: 'ATTENDANCE_UNLOCK_REQUESTED',
-        details: `Teacher ${teacherName} requested attendance unlock for Class ${className} on ${selectedAttendanceDate}. Reason: "${reason}".`,
+        details: `Teacher ${currentTeacher.nameEn || currentTeacher.name} requested attendance unlock for Class ${teacherClassName} (${displayDateLabel}). Reason: "${requestReason}".`,
         currentUser: user,
         recordType: 'attendance_unlock_request',
         recordId: docRef.id,
@@ -3387,10 +3466,7 @@ export const TeacherDashboard: React.FC = () => {
                               ) : (
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    setRequestReasonInput('');
-                                    setIsRequestModalOpen(true);
-                                  }}
+                                  onClick={() => handleOpenUnlockModal(selectedAttendanceDate)}
                                   className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-amber-50 rounded-xl transition border border-slate-300 hover:border-amber-400 shadow-2xs cursor-pointer"
                                   title="Request Principal to Unlock this record for corrections"
                                 >
@@ -3947,8 +4023,7 @@ export const TeacherDashboard: React.FC = () => {
                                             type="button"
                                             onClick={() => {
                                               setSelectedAttendanceDate(d.dateStr);
-                                              setRequestReasonInput('');
-                                              setIsRequestModalOpen(true);
+                                              handleOpenUnlockModal(d.dateStr);
                                             }}
                                             className="text-[9px] text-amber-800 hover:text-amber-950 underline font-bold cursor-pointer flex items-center gap-0.5"
                                             title={`Request Principal to unlock ${d.dayName} for corrections`}
@@ -4293,7 +4368,7 @@ export const TeacherDashboard: React.FC = () => {
                     Request Attendance Unlock
                   </h3>
                   <p className="text-xs text-slate-500 font-mono">
-                    {classes.find(c => c.id === attendanceClassId)?.name || 'Class'} · {selectedAttendanceDate}
+                    {classes.find(c => c.id === attendanceClassId)?.name || 'Class'} · {unlockMode === 'range' ? `${rangeStartDate} to ${rangeEndDate}` : singleUnlockDate}
                   </p>
                 </div>
               </div>
@@ -4309,21 +4384,82 @@ export const TeacherDashboard: React.FC = () => {
             <form onSubmit={handleSubmitEditRequest} className="space-y-4">
               <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 leading-relaxed">
                 <p>
-                  Attendance for <strong>{selectedAttendanceDate}</strong> is currently locked. Submitting this request sends an alert directly to <strong>Principal ASLAM TK</strong>. Once approved, the toggles will automatically unlock for you to make corrections and save.
+                  Attendance for <strong>{unlockMode === 'range' ? `${rangeStartDate} to ${rangeEndDate}` : singleUnlockDate}</strong> is currently locked. Submitting this request sends an alert directly to <strong>Principal ASLAM TK</strong>. Once approved, the toggles will automatically unlock for you to make corrections and save.
                 </p>
               </div>
 
+              {/* Unlock Selection Mode Dropdown */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700">
-                  Target Date to Unlock:
+                  Unlock Selection Mode
                 </label>
-                <input
-                  type="date"
-                  value={selectedAttendanceDate}
-                  disabled
-                  className="w-full p-2.5 border border-slate-200 rounded-xl text-xs font-bold bg-slate-100 text-slate-600 font-mono"
-                />
+                <select
+                  value={unlockMode}
+                  onChange={e => setUnlockMode(e.target.value as 'single' | 'range')}
+                  className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-bold bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                >
+                  <option value="single">Single Date</option>
+                  <option value="range">Multi-Date / Date Range (e.g. for multiple days or full week)</option>
+                </select>
               </div>
+
+              {/* Dynamic Date Inputs based on Selection Mode */}
+              {unlockMode === 'single' ? (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700">
+                    Target Date to Unlock:
+                  </label>
+                  <input
+                    type="date"
+                    name="targetDate"
+                    value={singleUnlockDate}
+                    min="2026-06-01"
+                    max={new Date().toISOString().split('T')[0]}
+                    onChange={e => setSingleUnlockDate(e.target.value)}
+                    className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-bold bg-white text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    required
+                  />
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700">
+                      Starting Date:
+                    </label>
+                    <input
+                      type="date"
+                      name="startDate"
+                      value={rangeStartDate}
+                      min="2026-06-01"
+                      max={new Date().toISOString().split('T')[0]}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setRangeStartDate(val);
+                        if (rangeEndDate && val > rangeEndDate) {
+                          setRangeEndDate(val);
+                        }
+                      }}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-bold bg-white text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700">
+                      Ending Date:
+                    </label>
+                    <input
+                      type="date"
+                      name="endDate"
+                      value={rangeEndDate}
+                      min={rangeStartDate || "2026-06-01"}
+                      max={new Date().toISOString().split('T')[0]}
+                      onChange={e => setRangeEndDate(e.target.value)}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-bold bg-white text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      required
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700">
@@ -4375,7 +4511,7 @@ export const TeacherDashboard: React.FC = () => {
                   className="px-5 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 rounded-xl transition shadow-xs cursor-pointer flex items-center gap-1.5"
                 >
                   <Unlock className="w-3.5 h-3.5" />
-                  <span>{isSubmittingRequest ? 'Sending...' : 'Submit Unlock Request'}</span>
+                  <span>{isSubmittingRequest ? 'Submitting...' : 'Submit Unlock Request'}</span>
                 </button>
               </div>
             </form>

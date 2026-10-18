@@ -3981,14 +3981,19 @@ export class ClientStorageApi {
       if (path === '/api/attendance-edit-requests' && method === 'POST') {
         if (!this.db.attendanceEditRequests) this.db.attendanceEditRequests = [];
         const reqItem: AttendanceEditRequest = {
-          id: bodyData.id || `${bodyData.classId}_${bodyData.date}`,
+          id: bodyData.id || `${bodyData.classId}_${bodyData.date || bodyData.startDate}`,
+          mode: bodyData.mode || 'single',
+          startDate: bodyData.startDate || null,
+          endDate: bodyData.endDate || null,
+          displayDateLabel: bodyData.displayDateLabel || bodyData.date,
           classId: bodyData.classId,
           className: bodyData.className,
-          date: bodyData.date,
+          date: bodyData.date || null,
           teacherId: bodyData.teacherId,
           teacherName: bodyData.teacherName,
           reason: bodyData.reason,
-          requestedAt: bodyData.requestedAt || new Date().toISOString(),
+          createdAt: bodyData.createdAt || bodyData.requestedAt || new Date().toISOString(),
+          requestedAt: bodyData.requestedAt || bodyData.createdAt || new Date().toISOString(),
           status: bodyData.status || 'pending',
           resolvedAt: bodyData.resolvedAt,
           resolvedBy: bodyData.resolvedBy,
@@ -4018,6 +4023,15 @@ export class ClientStorageApi {
           return this.jsonResponse(this.db.attendanceEditRequests[idx]);
         }
         return this.jsonResponse({ error: 'Request not found' }, 404);
+      }
+
+      if (reqPatchMatch && method === 'DELETE') {
+        const rId = reqPatchMatch[1];
+        if (this.db.attendanceEditRequests) {
+          this.db.attendanceEditRequests = this.db.attendanceEditRequests.filter(r => r.id !== rId);
+          this.saveDB();
+        }
+        return this.jsonResponse({ success: true });
       }
 
       // Parent Removal (Class-wise & Bulk)
