@@ -20,10 +20,20 @@ import {
   NewsItem,
   NotificationItem,
   DEFAULT_NEWS_ITEMS,
+  ALL_STANDARD_CLASSES,
+  mergeClassesWithStandard,
 } from '../../types';
 import { MarkEntryScreen } from './MarkEntryScreen';
 import { useHorizontalScroll, handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
-import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import {
+  db,
+  handleFirestoreError,
+  OperationType,
+  safeOnSnapshot,
+  isFirestoreQuotaExhausted,
+  markFirestoreQuotaExhausted,
+  isQuotaError,
+} from '../../services/firebase';
 import {
   collection,
   onSnapshot,
@@ -135,13 +145,27 @@ export const TeacherDashboard: React.FC = () => {
     const raw = (user as any)?.assignedSubjects || user?.assignments;
     return Array.isArray(raw) ? raw : [];
   });
-  const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [classes, setClasses] = useState<ClassItem[]>(ALL_STANDARD_CLASSES);
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [examinations, setExaminations] = useState<Examination[]>([]);
   const [selectedExamId, setSelectedExamId] = useState<string>('');
   const [markSheets, setMarkSheets] = useState<MarkSheet[]>([]);
   const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [currentTeacherInChargeClassId, setCurrentTeacherInChargeClassId] = useState<string | undefined>(user?.inChargeClassId);
+
+  // In-charge class information
+  const inChargeClassId =
+    currentTeacherInChargeClassId !== undefined
+      ? currentTeacherInChargeClassId
+      : (user?.inChargeClassId || (user as any)?.classInCharge);
+  const inChargeClass = inChargeClassId
+    ? (classes.find(
+        c =>
+          c.id === inChargeClassId ||
+          c.name.toLowerCase() === String(inChargeClassId).toLowerCase() ||
+          String(c.numericGrade) === String(inChargeClassId).replace(/\D/g, '')
+      ) || null)
+    : null;
 
   // In-charge Class Attendance & Fee Tracking
   const [attendanceTotalWorkingDays, setAttendanceTotalWorkingDays] = useState<number>(88);
@@ -162,6 +186,7 @@ export const TeacherDashboard: React.FC = () => {
   });
   const [unlockedDates, setUnlockedDates] = useState<Record<string, boolean>>({});
   const [institutionHolidays, setInstitutionHolidays] = useState<Record<string, InstitutionHoliday>>({});
+  const [activeHolidays, setActiveHolidays] = useState<InstitutionHoliday[]>([]);
   const [specialWorkingDays, setSpecialWorkingDays] = useState<Record<string, SpecialWorkingDay>>({});
   const [attendanceEditRequests, setAttendanceEditRequests] = useState<Record<string, AttendanceEditRequest>>({});
   const [isRequestModalOpen, setIsRequestModalOpen] = useState<boolean>(false);
@@ -376,7 +401,7 @@ export const TeacherDashboard: React.FC = () => {
       }
 
       setAssignments(currentAssignments);
-      setClasses(clsData);
+      setClasses(mergeClassesWithStandard(clsData));
       setSubjects(subData);
       setExaminations(examData);
       setAllStudents(sortStudentsBoysFirst(stuData));
@@ -417,6 +442,35 @@ export const TeacherDashboard: React.FC = () => {
           setMarkSheets(sheetsData);
         }
       }
+
+      // Initial direct fetch for institutionHolidays
+      try {
+        const holSnap = await getDocs(collection(db, 'institutionHolidays'));
+        const holidays = holSnap.docs.map(docSnap => ({
+          ...docSnap.data(),
+          id: docSnap.id,
+          date: docSnap.data().date || docSnap.id,
+        } as InstitutionHoliday));
+        setActiveHolidays(holidays);
+        const holMap: Record<string, InstitutionHoliday> = {};
+        holidays.forEach(h => {
+          const key = h.date || h.id;
+          if (key) holMap[key] = h;
+          const rStart = h.rangeStart || (h as any).startDate;
+          const rEnd = h.rangeEnd || (h as any).endDate;
+          if (rStart && rEnd) {
+            let curr = parseLocalDate(rStart);
+            const end = parseLocalDate(rEnd);
+            while (curr <= end) {
+              holMap[formatLocalDate(curr)] = h;
+              curr.setDate(curr.getDate() + 1);
+            }
+          }
+        });
+        setInstitutionHolidays(holMap);
+      } catch (fErr) {
+        console.warn('Initial Firestore institutionHolidays fetch error:', fErr);
+      }
     } catch (err) {
       console.error('Error loading teacher data:', err);
     } finally {
@@ -425,13 +479,18 @@ export const TeacherDashboard: React.FC = () => {
   };
 
   useEffect(() => {
+    firestoreSync.cleanupRestoredHolidays().catch(() => {});
     loadData();
+
+    if (isFirestoreQuotaExhausted()) {
+      return;
+    }
 
     // Real-time onSnapshot listeners for subjects, classes, students, teachers, attendance, and news
     const unsubs: (() => void)[] = [];
 
     try {
-      const unsubSubs = onSnapshot(
+      const unsubSubs = safeOnSnapshot(
         collection(db, 'subjects'),
         snapshot => {
           if (!snapshot.empty) {
@@ -446,13 +505,12 @@ export const TeacherDashboard: React.FC = () => {
       );
       unsubs.push(unsubSubs);
 
-      const unsubCls = onSnapshot(
+      const unsubCls = safeOnSnapshot(
         collection(db, 'classes'),
         snapshot => {
           if (!snapshot.empty) {
             const remoteCls = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as ClassItem));
-            remoteCls.sort((a, b) => a.numericGrade - b.numericGrade);
-            setClasses(remoteCls);
+            setClasses(mergeClassesWithStandard(remoteCls));
           }
         },
         error => {
@@ -462,7 +520,7 @@ export const TeacherDashboard: React.FC = () => {
       );
       unsubs.push(unsubCls);
 
-      const unsubStu = onSnapshot(
+      const unsubStu = safeOnSnapshot(
         collection(db, 'students'),
         snapshot => {
           if (!snapshot.empty) {
@@ -507,7 +565,7 @@ export const TeacherDashboard: React.FC = () => {
       unsubs.push(() => window.removeEventListener('madrasa_students_updated', handleStudentsUpdated));
 
       // Real-time teacher assignments listener
-      const unsubTeachers = onSnapshot(
+      const unsubTeachers = safeOnSnapshot(
         collection(db, 'teachers'),
         snapshot => {
           if (!snapshot.empty && (user?.id || user?.username)) {
@@ -540,7 +598,7 @@ export const TeacherDashboard: React.FC = () => {
 
       // Direct document listener on specific teacher profile
       if (user?.id) {
-        const unsubDoc = onSnapshot(
+        const unsubDoc = safeOnSnapshot(
           doc(db, 'teachers', user.id),
           docSnap => {
             if (docSnap.exists()) {
@@ -569,7 +627,7 @@ export const TeacherDashboard: React.FC = () => {
       }
 
       // Real-time Firestore Attendance listener
-      const unsubAttendance = onSnapshot(
+      const unsubAttendance = safeOnSnapshot(
         collection(db, 'attendance'),
         snapshot => {
           if (!snapshot.empty) {
@@ -584,12 +642,31 @@ export const TeacherDashboard: React.FC = () => {
       unsubs.push(unsubAttendance);
 
       // Real-time Firestore Institution Holidays listener
-      const unsubHolidays = onSnapshot(
+      const unsubHolidays = safeOnSnapshot(
         collection(db, 'institutionHolidays'),
         snapshot => {
+          const holidays: InstitutionHoliday[] = snapshot.docs.map(docSnap => ({
+            ...docSnap.data(),
+            id: docSnap.id,
+            date: docSnap.data().date || docSnap.id,
+          } as InstitutionHoliday));
+
+          setActiveHolidays(holidays);
+
           const holMap: Record<string, InstitutionHoliday> = {};
-          snapshot.docs.forEach(docSnap => {
-            holMap[docSnap.id] = { ...docSnap.data(), id: docSnap.id } as InstitutionHoliday;
+          holidays.forEach(h => {
+            const key = h.date || h.id;
+            if (key) holMap[key] = h;
+            const rStart = h.rangeStart || (h as any).startDate;
+            const rEnd = h.rangeEnd || (h as any).endDate;
+            if (rStart && rEnd) {
+              let curr = parseLocalDate(rStart);
+              const end = parseLocalDate(rEnd);
+              while (curr <= end) {
+                holMap[formatLocalDate(curr)] = h;
+                curr.setDate(curr.getDate() + 1);
+              }
+            }
           });
           setInstitutionHolidays(holMap);
         },
@@ -597,8 +674,42 @@ export const TeacherDashboard: React.FC = () => {
           console.warn('Firestore institutionHolidays onSnapshot error:', error);
         }
       );
+      unsubs.push(unsubHolidays);
+
+      const handleHolidaysUpdated = () => {
+        if (isFirestoreQuotaExhausted()) return;
+        getDocs(collection(db, 'institutionHolidays')).then(snapshot => {
+          const holidays: InstitutionHoliday[] = snapshot.docs.map(docSnap => ({
+            ...docSnap.data(),
+            id: docSnap.id,
+            date: docSnap.data().date || docSnap.id,
+          } as InstitutionHoliday));
+
+          setActiveHolidays(holidays);
+
+          const holMap: Record<string, InstitutionHoliday> = {};
+          holidays.forEach(h => {
+            const key = h.date || h.id;
+            if (key) holMap[key] = h;
+            const rStart = h.rangeStart || (h as any).startDate;
+            const rEnd = h.rangeEnd || (h as any).endDate;
+            if (rStart && rEnd) {
+              let curr = parseLocalDate(rStart);
+              const end = parseLocalDate(rEnd);
+              while (curr <= end) {
+                holMap[formatLocalDate(curr)] = h;
+                curr.setDate(curr.getDate() + 1);
+              }
+            }
+          });
+          setInstitutionHolidays(holMap);
+        }).catch(() => {});
+      };
+      window.addEventListener('madrasa_holidays_updated', handleHolidaysUpdated);
+      unsubs.push(() => window.removeEventListener('madrasa_holidays_updated', handleHolidaysUpdated));
+
       // Real-time Firestore Special Working Days (Principal Sunday Unlock) listener
-      const unsubSpecialWorking = onSnapshot(
+      const unsubSpecialWorking = safeOnSnapshot(
         collection(db, 'specialWorkingDays'),
         snapshot => {
           const swMap: Record<string, SpecialWorkingDay> = {};
@@ -614,7 +725,7 @@ export const TeacherDashboard: React.FC = () => {
       unsubs.push(unsubSpecialWorking);
 
       // Real-time Firestore Attendance Unlock Requests listener (Primary)
-      const unsubUnlockRequests = onSnapshot(
+      const unsubUnlockRequests = safeOnSnapshot(
         collection(db, 'attendanceUnlockRequests'),
         snapshot => {
           setAttendanceEditRequests(prev => {
@@ -651,7 +762,7 @@ export const TeacherDashboard: React.FC = () => {
       unsubs.push(unsubUnlockRequests);
 
       // Legacy fallback listener for attendanceEditRequests
-      const unsubLegacyRequests = onSnapshot(
+      const unsubLegacyRequests = safeOnSnapshot(
         collection(db, 'attendanceEditRequests'),
         snapshot => {
           setAttendanceEditRequests(prev => {
@@ -679,7 +790,7 @@ export const TeacherDashboard: React.FC = () => {
       unsubs.push(unsubLegacyRequests);
 
       // Real-time Firestore News listener
-      const unsubNews = onSnapshot(
+      const unsubNews = safeOnSnapshot(
         collection(db, 'news'),
         snapshot => {
           if (!snapshot.empty) {
@@ -761,24 +872,6 @@ export const TeacherDashboard: React.FC = () => {
     }
   }, [currentTeacherInChargeClassId, user?.inChargeClassId, assignments, classes, attendanceClassId]);
 
-  // Sync classAttendanceConfig when attendanceClassId or allAttendanceConfigs changes
-  useEffect(() => {
-    if (!attendanceClassId) return;
-    const cfg = allAttendanceConfigs.find(c => c.classId === attendanceClassId);
-    if (cfg) {
-      setClassAttendanceConfig(cfg);
-      if (cfg.totalWorkingDays) setAttendanceTotalWorkingDays(cfg.totalWorkingDays);
-      if (cfg.studentDaysAttended) setStudentDaysAttendedMap(cfg.studentDaysAttended);
-    } else {
-      setClassAttendanceConfig({
-        classId: attendanceClassId,
-        totalWorkingDays: 88,
-        studentDaysAttended: {},
-        dailyRecords: {},
-      });
-    }
-  }, [attendanceClassId, allAttendanceConfigs]);
-
   // Check if a date is a Sunday (weekly closure by default)
   const isDateSunday = (dateStr: string): boolean => {
     const d = parseLocalDate(dateStr);
@@ -790,6 +883,131 @@ export const TeacherDashboard: React.FC = () => {
     const sw = specialWorkingDays[dateStr];
     if (!sw) return false;
     return isClassMatch(sw.targetClasses, classId || attendanceClassId);
+  };
+
+  // Check if date is designated as an Institution Holiday / Non-Working Day for this class
+  // CRITICAL: Evaluates ONLY against currently active holidays from Firestore (or Sunday default closure)
+  const isDateHoliday = (dateStr: string, classId?: string): boolean => {
+    const targetClass = classId || attendanceClassId;
+
+    // Sunday Default Closure Check
+    if (isDateSunday(dateStr)) {
+      if (isSundayUnlockedForClass(dateStr, targetClass)) {
+        return false; // Principal unlocked as working day
+      }
+      return true; // Default weekly Sunday closure
+    }
+
+    // Institution Holiday Check (class-specific) - Check real-time institutionHolidays map
+    const hol = institutionHolidays[dateStr];
+    if (hol && isClassMatch(hol.targetClasses, targetClass)) {
+      return true;
+    }
+
+    // Direct check against activeHolidays list from Firestore snapshot
+    const activeHol = activeHolidays.find(h => {
+      if (!isClassMatch(h.targetClasses, targetClass)) return false;
+      if (h.date === dateStr || h.id === dateStr) return true;
+      const rStart = h.rangeStart || (h as any).startDate;
+      const rEnd = h.rangeEnd || (h as any).endDate;
+      if (rStart && rEnd && dateStr >= rStart && dateStr <= rEnd) return true;
+      return false;
+    });
+    if (activeHol) return true;
+
+    // CRITICAL: Daily records MUST NOT be checked here. If date is not in institutionHolidays, it is NOT a holiday.
+    return false;
+  };
+
+  // Get metadata for a holiday (strictly read-only in Teacher Portal)
+  const getHolidayInfo = (dateStr: string, classId?: string): { date: string; reason: string; markedBy?: string } | null => {
+    const targetClass = classId || attendanceClassId;
+
+    if (isDateSunday(dateStr)) {
+      if (isSundayUnlockedForClass(dateStr, targetClass)) {
+        return null;
+      }
+      return {
+        date: dateStr,
+        reason: 'Sunday Weekly Closure (Non-Working Day)',
+        markedBy: 'System Default',
+      };
+    }
+
+    const hol = institutionHolidays[dateStr] || activeHolidays.find(h => {
+      if (!isClassMatch(h.targetClasses, targetClass)) return false;
+      if (h.date === dateStr || h.id === dateStr) return true;
+      const rStart = h.rangeStart || (h as any).startDate;
+      const rEnd = h.rangeEnd || (h as any).endDate;
+      if (rStart && rEnd && dateStr >= rStart && dateStr <= rEnd) return true;
+      return false;
+    });
+
+    if (hol && isClassMatch(hol.targetClasses, targetClass)) {
+      return {
+        date: dateStr,
+        reason: hol.reason || 'Official Holiday / Non-Working Day',
+        markedBy: hol.markedBy || hol.createdBy || 'Principal',
+      };
+    }
+
+    return null;
+  };
+
+  // Helper to fetch request for date & class
+  const getRequestForDate = (dateStr: string, classId?: string): AttendanceEditRequest | undefined => {
+    const targetClass = classId || attendanceClassId;
+    const direct = attendanceEditRequests[`${targetClass}_${dateStr}`] || attendanceEditRequests[dateStr];
+    if (direct) return direct;
+    const allReqs = Object.values(attendanceEditRequests);
+    return allReqs.find(r => {
+      if (r.classId && targetClass && r.classId !== targetClass) return false;
+      if ((r.mode === 'range' || (r.startDate && r.endDate)) && r.startDate && r.endDate) {
+        return dateStr >= r.startDate && dateStr <= r.endDate;
+      }
+      return false;
+    });
+  };
+
+  // Check if attendance has already been saved to Firestore for a given date (excluding empty/stale holiday stubs)
+  const isDateRecorded = (dateStr: string): boolean => {
+    const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
+    if (!rec) return false;
+    if ((rec.isHoliday || (rec as any).status === 'holiday') && !isDateHoliday(dateStr)) {
+      return false;
+    }
+    const hasStudentMarks =
+      (rec.presentStudentIds && rec.presentStudentIds.length > 0) ||
+      (rec.absentStudentIds && rec.absentStudentIds.length > 0) ||
+      (rec.statusMap && Object.keys(rec.statusMap).length > 0);
+    return Boolean(hasStudentMarks);
+  };
+
+  // Check if a date is locked (already saved to Firestore and not explicitly unlocked by Principal)
+  const isDateLocked = (dateStr: string): boolean => {
+    if (isDateHoliday(dateStr)) return true;
+    if (dateStr > todayStr) return true;
+    const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
+    if (!rec) return false;
+    if ((rec.isHoliday || (rec as any).status === 'holiday') && !isDateHoliday(dateStr)) {
+      return false;
+    }
+    const hasStudentMarks =
+      (rec.presentStudentIds && rec.presentStudentIds.length > 0) ||
+      (rec.absentStudentIds && rec.absentStudentIds.length > 0) ||
+      (rec.statusMap && Object.keys(rec.statusMap).length > 0);
+    if (!hasStudentMarks) return false;
+
+    // Check if Principal approved the unlock request in real time
+    const req = getRequestForDate(dateStr, attendanceClassId);
+    if (req?.status === 'approved') {
+      return false; // Principal unlocked this date for corrections
+    }
+    // If approved and unlocked by Principal in Firestore or locally marked editable
+    if (rec.isLocked === false || rec.unlocked === true || rec.editable === true || unlockedDates[dateStr]) {
+      return false;
+    }
+    return true;
   };
 
   // Helper to compute days of the week (Monday through Saturday, plus Sunday if unlocked for this class)
@@ -831,105 +1049,96 @@ export const TeacherDashboard: React.FC = () => {
     return days;
   };
 
-  // Helper to fetch request for date & class
-  const getRequestForDate = (dateStr: string, classId?: string): AttendanceEditRequest | undefined => {
-    const targetClass = classId || attendanceClassId;
-    const direct = attendanceEditRequests[`${targetClass}_${dateStr}`] || attendanceEditRequests[dateStr];
-    if (direct) return direct;
-    const allReqs = Object.values(attendanceEditRequests);
-    return allReqs.find(r => {
-      if (r.classId && targetClass && r.classId !== targetClass) return false;
-      if ((r.mode === 'range' || (r.startDate && r.endDate)) && r.startDate && r.endDate) {
-        return dateStr >= r.startDate && dateStr <= r.endDate;
+  const rawCfg = useMemo(() => {
+    if (!attendanceClassId) return null;
+    return (
+      allAttendanceConfigs.find(
+        c => c.classId === attendanceClassId || isClassMatch([attendanceClassId], c.classId)
+      ) || null
+    );
+  }, [allAttendanceConfigs, attendanceClassId]);
+
+  // Attendance Data Resolver: Cleans up stale isHoliday/status: 'holiday' flags and synchronizes classAttendanceConfig in memory
+  useEffect(() => {
+    if (!attendanceClassId) return;
+
+    const currentRecords = rawCfg?.dailyRecords || {};
+    const cleanedRecords: Record<string, DailyAttendanceRecord> = {};
+
+    Object.entries(currentRecords).forEach(([dKey, rec]) => {
+      const isRecordMarkedHoliday = rec?.isHoliday === true || (rec as any)?.status === 'holiday' || (rec as any)?.status === 'OFF';
+      const isDateActiveHoliday = isDateHoliday(dKey, attendanceClassId);
+
+      if (isRecordMarkedHoliday && !isDateActiveHoliday) {
+        const hasStudentMarks =
+          (rec.presentStudentIds && rec.presentStudentIds.length > 0) ||
+          (rec.absentStudentIds && rec.absentStudentIds.length > 0) ||
+          (rec.statusMap && Object.keys(rec.statusMap).length > 0);
+
+        if (hasStudentMarks) {
+          const { isHoliday, holidayReason, ...rest } = rec;
+          const cleanedItem: DailyAttendanceRecord = {
+            ...rest,
+            isHoliday: false,
+          };
+          delete (cleanedItem as any).status;
+          delete (cleanedItem as any).holidayReason;
+          cleanedRecords[dKey] = cleanedItem;
+        }
+      } else {
+        cleanedRecords[dKey] = rec;
       }
-      return false;
     });
-  };
 
-  // Check if attendance has already been saved to Firestore for a given date
-  const isDateRecorded = (dateStr: string): boolean => {
-    return !!classAttendanceConfig?.dailyRecords?.[dateStr];
-  };
+    const activeHolsForClass = Object.values(institutionHolidays).filter(
+      h => isClassMatch(h.targetClasses, attendanceClassId)
+    ).length;
+    const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
+      sw => isClassMatch(sw.targetClasses, attendanceClassId)
+    ).length;
+    const computedWorking = Math.max(1, 88 - activeHolsForClass + totalSundaysUnlocked);
+    const resolvedWorking = rawCfg?.totalWorkingDays ? Math.max(rawCfg.totalWorkingDays, computedWorking) : computedWorking;
 
-  // Check if a date is locked (already saved to Firestore and not explicitly unlocked by Principal)
-  const isDateLocked = (dateStr: string): boolean => {
-    if (isDateHoliday(dateStr)) return true;
-    if (dateStr > todayStr) return true;
-    const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
-    if (!rec) return false;
-    // Check if Principal approved the unlock request in real time
-    const req = getRequestForDate(dateStr, attendanceClassId);
-    if (req?.status === 'approved') {
-      return false;
+    const resolvedConfig: ClassAttendanceConfig = {
+      classId: attendanceClassId,
+      totalWorkingDays: resolvedWorking,
+      studentDaysAttended: rawCfg?.studentDaysAttended || {},
+      dailyRecords: cleanedRecords,
+      updatedAt: rawCfg?.updatedAt,
+    };
+
+    setClassAttendanceConfig(resolvedConfig);
+    setAttendanceTotalWorkingDays(resolvedWorking);
+    if (rawCfg?.studentDaysAttended) {
+      setStudentDaysAttendedMap(rawCfg.studentDaysAttended);
     }
-    // If approved and unlocked by Principal in Firestore or locally marked editable
-    if (rec.isLocked === false || rec.unlocked === true || rec.editable === true || unlockedDates[dateStr]) {
-      return false;
-    }
-    return true;
-  };
+  }, [attendanceClassId, rawCfg, institutionHolidays, specialWorkingDays]);
 
-  // Check if date is designated as an Institution Holiday / Non-Working Day for this class
-  const isDateHoliday = (dateStr: string, classId?: string): boolean => {
-    const targetClass = classId || attendanceClassId;
-
-    // Sunday Default Closure Check
-    if (isDateSunday(dateStr)) {
-      if (isSundayUnlockedForClass(dateStr, targetClass)) {
-        return false; // Principal unlocked as working day
+  // Dynamically listen to class attendance config from Firestore in real-time when switching classes
+  useEffect(() => {
+    if (!attendanceClassId || isFirestoreQuotaExhausted()) return;
+    const unsub = safeOnSnapshot(
+      doc(db, 'attendance', attendanceClassId),
+      attDoc => {
+        if (attDoc.exists()) {
+          const cfg = { ...attDoc.data(), classId: attDoc.id } as ClassAttendanceConfig;
+          setAllAttendanceConfigs(prev => {
+            const idx = prev.findIndex(c => c.classId === attendanceClassId);
+            if (idx >= 0) {
+              const copy = [...prev];
+              copy[idx] = cfg;
+              return copy;
+            }
+            return [...prev, cfg];
+          });
+        }
+      },
+      err => {
+        console.warn('Real-time attendance doc listener error in TeacherDashboard:', err);
       }
-      return true; // Default weekly Sunday closure
-    }
-
-    // Institution Holiday Check (class-specific)
-    const hol = institutionHolidays[dateStr];
-    if (hol && isClassMatch(hol.targetClasses, targetClass)) {
-      return true;
-    }
-
-    // Daily records holiday check
-    if (classAttendanceConfig?.dailyRecords?.[dateStr]?.isHoliday) {
-      return true;
-    }
-
-    return false;
-  };
-
-  // Get metadata for a holiday (strictly read-only in Teacher Portal)
-  const getHolidayInfo = (dateStr: string, classId?: string): { date: string; reason: string; markedBy?: string } | null => {
-    const targetClass = classId || attendanceClassId;
-
-    if (isDateSunday(dateStr)) {
-      if (isSundayUnlockedForClass(dateStr, targetClass)) {
-        return null;
-      }
-      return {
-        date: dateStr,
-        reason: 'Sunday Weekly Closure (Non-Working Day)',
-        markedBy: 'System Default',
-      };
-    }
-
-    const hol = institutionHolidays[dateStr];
-    if (hol && isClassMatch(hol.targetClasses, targetClass)) {
-      return {
-        date: dateStr,
-        reason: hol.reason || 'Official Holiday / Non-Working Day',
-        markedBy: hol.markedBy || hol.createdBy || 'Principal',
-      };
-    }
-
-    const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
-    if (rec?.isHoliday) {
-      return {
-        date: dateStr,
-        reason: rec.holidayReason || 'Official Holiday / Non-Working Day',
-        markedBy: rec.markedBy || 'Principal',
-      };
-    }
-
-    return null;
-  };
+    );
+    return () => unsub();
+  }, [attendanceClassId]);
 
   // Submit Attendance Unlock Request to Principal for approval
   const handleSubmitEditRequest = async (e: React.FormEvent) => {
@@ -1072,26 +1281,39 @@ export const TeacherDashboard: React.FC = () => {
   // Sync dailyStatusMap when selectedAttendanceDate, attendanceClassId, classAttendanceConfig, or allStudents change
   useEffect(() => {
     if (!attendanceClassId) return;
-    const currentStudents = allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active');
+    const currentStudents = allStudents.filter(
+      s =>
+        (s.classId === attendanceClassId ||
+          (s.classId && attendanceClassId && s.classId.replace(/[^0-9]/g, '') === attendanceClassId.replace(/[^0-9]/g, '')) ||
+          isClassMatch([attendanceClassId], s.classId)) &&
+        s.status === 'active'
+    );
     const recordForDate = classAttendanceConfig?.dailyRecords?.[selectedAttendanceDate];
+    const isStale = (recordForDate?.isHoliday === true || (recordForDate as any)?.status === 'holiday' || (recordForDate as any)?.status === 'OFF') && !isDateHoliday(selectedAttendanceDate, attendanceClassId);
 
     const newMap: Record<string, boolean> = {};
     currentStudents.forEach(st => {
-      if (recordForDate?.statusMap && recordForDate.statusMap[st.id] !== undefined) {
+      if (!isStale && recordForDate?.statusMap && recordForDate.statusMap[st.id] !== undefined) {
         newMap[st.id] = recordForDate.statusMap[st.id];
-      } else if (recordForDate?.absentStudentIds && recordForDate.absentStudentIds.includes(st.id)) {
+      } else if (!isStale && recordForDate?.absentStudentIds && recordForDate.absentStudentIds.includes(st.id)) {
         newMap[st.id] = false;
       } else {
         newMap[st.id] = true;
       }
     });
     setDailyStatusMap(newMap);
-  }, [selectedAttendanceDate, attendanceClassId, classAttendanceConfig, allStudents]);
+  }, [selectedAttendanceDate, attendanceClassId, classAttendanceConfig, allStudents, institutionHolidays]);
 
   // Sync weeklyStatusMap when selectedWeekDate, attendanceClassId, classAttendanceConfig, or allStudents change
   useEffect(() => {
     if (!attendanceClassId) return;
-    const currentStudents = allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active');
+    const currentStudents = allStudents.filter(
+      s =>
+        (s.classId === attendanceClassId ||
+          (s.classId && attendanceClassId && s.classId.replace(/[^0-9]/g, '') === attendanceClassId.replace(/[^0-9]/g, '')) ||
+          isClassMatch([attendanceClassId], s.classId)) &&
+        s.status === 'active'
+    );
     const weekDays = getWeekDays(selectedWeekDate);
     const newWeeklyMap: Record<string, Record<string, boolean>> = {};
 
@@ -1099,9 +1321,10 @@ export const TeacherDashboard: React.FC = () => {
       newWeeklyMap[st.id] = {};
       weekDays.forEach(wDay => {
         const rec = classAttendanceConfig?.dailyRecords?.[wDay.dateStr];
-        if (rec?.statusMap && rec.statusMap[st.id] !== undefined) {
+        const isStale = (rec?.isHoliday === true || (rec as any)?.status === 'holiday' || (rec as any)?.status === 'OFF') && !isDateHoliday(wDay.dateStr, attendanceClassId);
+        if (!isStale && rec?.statusMap && rec.statusMap[st.id] !== undefined) {
           newWeeklyMap[st.id][wDay.dateStr] = rec.statusMap[st.id];
-        } else if (rec?.absentStudentIds && rec.absentStudentIds.includes(st.id)) {
+        } else if (!isStale && rec?.absentStudentIds && rec.absentStudentIds.includes(st.id)) {
           newWeeklyMap[st.id][wDay.dateStr] = false;
         } else {
           newWeeklyMap[st.id][wDay.dateStr] = true;
@@ -1109,7 +1332,7 @@ export const TeacherDashboard: React.FC = () => {
       });
     });
     setWeeklyStatusMap(newWeeklyMap);
-  }, [selectedWeekDate, attendanceClassId, classAttendanceConfig, allStudents]);
+  }, [selectedWeekDate, attendanceClassId, classAttendanceConfig, allStudents, institutionHolidays]);
 
   // Quick navigation helpers for dates - STRICTLY CLAMPED BETWEEN JUNE 1 & TODAY
   const stepDailyDate = (offsetDays: number) => {
@@ -1165,10 +1388,12 @@ export const TeacherDashboard: React.FC = () => {
 
   // Mark all present in Daily view (disallowed if holiday, locked, or future)
   const markAllDailyPresent = () => {
-    if (isDateHoliday(selectedAttendanceDate) || isDateLocked(selectedAttendanceDate) || selectedAttendanceDate > todayStr) {
+    if (isDateHoliday(selectedAttendanceDate, attendanceClassId) || isDateLocked(selectedAttendanceDate) || selectedAttendanceDate > todayStr) {
       return;
     }
-    const currentStudents = allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active');
+    const currentStudents = allStudents.filter(
+      s => (s.classId === attendanceClassId || isClassMatch([attendanceClassId], s.classId)) && s.status === 'active'
+    );
     const newMap: Record<string, boolean> = {};
     currentStudents.forEach(st => {
       newMap[st.id] = true;
@@ -1178,10 +1403,12 @@ export const TeacherDashboard: React.FC = () => {
 
   // Mark all absent in Daily view (disallowed if holiday, locked, or future)
   const markAllDailyAbsent = () => {
-    if (isDateHoliday(selectedAttendanceDate) || isDateLocked(selectedAttendanceDate) || selectedAttendanceDate > todayStr) {
+    if (isDateHoliday(selectedAttendanceDate, attendanceClassId) || isDateLocked(selectedAttendanceDate) || selectedAttendanceDate > todayStr) {
       return;
     }
-    const currentStudents = allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active');
+    const currentStudents = allStudents.filter(
+      s => (s.classId === attendanceClassId || isClassMatch([attendanceClassId], s.classId)) && s.status === 'active'
+    );
     const newMap: Record<string, boolean> = {};
     currentStudents.forEach(st => {
       newMap[st.id] = false;
@@ -1191,7 +1418,7 @@ export const TeacherDashboard: React.FC = () => {
 
   // Toggle student day in Weekly view (strictly disallow holiday, future days, and locked days)
   const toggleWeeklyStudentDay = (studentId: string, dateStr: string) => {
-    if (isDateHoliday(dateStr) || dateStr > todayStr || isDateLocked(dateStr)) {
+    if (isDateHoliday(dateStr, attendanceClassId) || dateStr > todayStr || isDateLocked(dateStr)) {
       return;
     }
     setWeeklyStatusMap(prev => {
@@ -1209,14 +1436,20 @@ export const TeacherDashboard: React.FC = () => {
 
   // Mark all present in Weekly view (strictly ONLY for unrecorded or unlocked days <= todayStr that are NOT holidays)
   const markAllWeeklyPresent = () => {
-    const currentStudents = allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active');
+    const currentStudents = allStudents.filter(
+      s =>
+        (s.classId === attendanceClassId ||
+          (s.classId && attendanceClassId && s.classId.replace(/[^0-9]/g, '') === attendanceClassId.replace(/[^0-9]/g, '')) ||
+          isClassMatch([attendanceClassId], s.classId)) &&
+        s.status === 'active'
+    );
     const weekDays = getWeekDays(selectedWeekDate);
     const newMap: Record<string, Record<string, boolean>> = { ...weeklyStatusMap };
 
     currentStudents.forEach(st => {
       if (!newMap[st.id]) newMap[st.id] = {};
       weekDays.forEach(wDay => {
-        if (wDay.dateStr <= todayStr && !isDateLocked(wDay.dateStr) && !isDateHoliday(wDay.dateStr)) {
+        if (wDay.dateStr <= todayStr && !isDateLocked(wDay.dateStr) && !isDateHoliday(wDay.dateStr, attendanceClassId)) {
           newMap[st.id][wDay.dateStr] = true;
         }
       });
@@ -1244,7 +1477,13 @@ export const TeacherDashboard: React.FC = () => {
     setDailySaveSuccess(false);
     try {
       const currentStudents = sortStudentsBoysFirst(
-        allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active')
+        allStudents.filter(
+          s =>
+            (s.classId === attendanceClassId ||
+              (s.classId && attendanceClassId && s.classId.replace(/[^0-9]/g, '') === attendanceClassId.replace(/[^0-9]/g, '')) ||
+              isClassMatch([attendanceClassId], s.classId)) &&
+            s.status === 'active'
+        )
       );
       const presentStudentIds: string[] = [];
       const absentStudentIds: string[] = [];
@@ -1279,7 +1518,7 @@ export const TeacherDashboard: React.FC = () => {
 
       const distinctDates = Object.keys(updatedDailyRecords);
       const holidayDates = distinctDates.filter(
-        dKey => updatedDailyRecords[dKey]?.isHoliday || (institutionHolidays[dKey] && isClassMatch(institutionHolidays[dKey].targetClasses, attendanceClassId))
+        dKey => isDateHoliday(dKey, attendanceClassId)
       );
       const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
         sw => isClassMatch(sw.targetClasses, attendanceClassId)
@@ -1308,6 +1547,12 @@ export const TeacherDashboard: React.FC = () => {
       };
 
       await setDoc(doc(db, 'attendance', attendanceClassId), cleanForFirestore(updatedConfig), { merge: true });
+      await setDoc(doc(db, 'attendance', `${attendanceClassId}_${selectedAttendanceDate}`), cleanForFirestore({
+        classId: attendanceClassId,
+        ...updatedDailyRecords[selectedAttendanceDate],
+        date: selectedAttendanceDate,
+        updatedAt: new Date().toISOString(),
+      }), { merge: true }).catch(() => {});
 
       for (const st of currentStudents) {
         try {
@@ -1400,7 +1645,13 @@ export const TeacherDashboard: React.FC = () => {
     setWeeklySaveSuccess(false);
     try {
       const currentStudents = sortStudentsBoysFirst(
-        allStudents.filter(s => s.classId === attendanceClassId && s.status === 'active')
+        allStudents.filter(
+          s =>
+            (s.classId === attendanceClassId ||
+              (s.classId && attendanceClassId && s.classId.replace(/[^0-9]/g, '') === attendanceClassId.replace(/[^0-9]/g, '')) ||
+              isClassMatch([attendanceClassId], s.classId)) &&
+            s.status === 'active'
+        )
       );
       const weekDays = getWeekDays(selectedWeekDate);
       const updatedDailyRecords = { ...(classAttendanceConfig?.dailyRecords || {}) };
@@ -1456,7 +1707,7 @@ export const TeacherDashboard: React.FC = () => {
       };
       const distinctDates = Object.keys(updatedDailyRecords);
       const holidayDates = distinctDates.filter(
-        dKey => updatedDailyRecords[dKey]?.isHoliday || (institutionHolidays[dKey] && isClassMatch(institutionHolidays[dKey].targetClasses, attendanceClassId))
+        dKey => isDateHoliday(dKey, attendanceClassId)
       );
       const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
         sw => isClassMatch(sw.targetClasses, attendanceClassId)
@@ -1485,6 +1736,17 @@ export const TeacherDashboard: React.FC = () => {
       };
 
       await setDoc(doc(db, 'attendance', attendanceClassId), cleanForFirestore(updatedConfig), { merge: true });
+
+      for (const w of weekDays) {
+        if (w.dateStr <= todayStr && w.dateStr >= ACADEMIC_YEAR_START_DATE && updatedDailyRecords[w.dateStr]) {
+          await setDoc(doc(db, 'attendance', `${attendanceClassId}_${w.dateStr}`), cleanForFirestore({
+            classId: attendanceClassId,
+            ...updatedDailyRecords[w.dateStr],
+            date: w.dateStr,
+            updatedAt: new Date().toISOString(),
+          }), { merge: true }).catch(() => {});
+        }
+      }
 
       for (const st of currentStudents) {
         try {
@@ -1751,19 +2013,7 @@ export const TeacherDashboard: React.FC = () => {
 
   const selectedExam = examinations.find(e => e.id === selectedExamId);
 
-  // In-charge class information
-  const inChargeClassId =
-    currentTeacherInChargeClassId !== undefined
-      ? currentTeacherInChargeClassId
-      : (user?.inChargeClassId || (user as any)?.classInCharge);
-  const inChargeClass = inChargeClassId
-    ? (classes.find(
-        c =>
-          c.id === inChargeClassId ||
-          c.name.toLowerCase() === String(inChargeClassId).toLowerCase() ||
-          String(c.numericGrade) === String(inChargeClassId).replace(/\D/g, '')
-      ) || null)
-    : null;
+  // In-charge class students & subjects
   const inChargeStudents = inChargeClass
     ? sortStudentsBoysFirst(allStudents.filter(s => s.classId === inChargeClass.id && s.status === 'active')).map((s, idx) => ({
         ...s,
@@ -2273,7 +2523,7 @@ export const TeacherDashboard: React.FC = () => {
           ) : (
             <div className="space-y-6">
               {/* Class In-Charge Overview Banner */}
-              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-wrap items-center justify-between gap-4">
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 shadow-xs">
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1">
@@ -2290,28 +2540,33 @@ export const TeacherDashboard: React.FC = () => {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="bg-slate-50 px-4 py-2.5 rounded-xl border text-center">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                {/* Uniform 3-Column Summary Cards Grid */}
+                <div className="grid grid-cols-3 gap-2 sm:gap-4 w-full my-4 items-stretch">
+                  <div className="bg-slate-50 border border-slate-200 p-2.5 sm:p-4 rounded-xl flex flex-col justify-between items-center text-center">
+                    <span className="text-[10px] sm:text-xs font-semibold tracking-wider uppercase text-slate-500 block">
                       Enrolled Students
                     </span>
-                    <span className="text-lg font-black font-mono text-slate-800">
+                    <span className="text-sm sm:text-lg md:text-xl font-bold font-mono text-slate-800 mt-1">
                       {inChargeStudents.length}
                     </span>
                   </div>
-                  <div className="bg-emerald-50 px-4 py-2.5 rounded-xl border border-emerald-200 text-center">
-                    <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">
-                      Exam Reg Nos
+
+                  <div className="bg-emerald-50/60 border border-emerald-200 p-2.5 sm:p-4 rounded-xl flex flex-col justify-between items-center text-center">
+                    <span className="text-[10px] sm:text-xs font-semibold tracking-wider uppercase text-emerald-800 block">
+                      EXAM REGS
                     </span>
-                    <span className="text-lg font-black font-mono text-emerald-900">
-                      {inChargeStudents.filter(s => s.examRegisterNumbers?.[selectedExamId] || (s as any).examRegisterNos?.[selectedExamId] || (s as any).examRegNo).length} / {inChargeStudents.length}
-                    </span>
+                    <div className="whitespace-nowrap flex items-center justify-center gap-1 text-sm sm:text-lg md:text-xl font-bold text-emerald-900 font-mono mt-1">
+                      <span>{inChargeStudents.filter(s => s.examRegisterNumbers?.[selectedExamId] || (s as any).examRegisterNos?.[selectedExamId] || (s as any).examRegNo).length}</span>
+                      <span className="text-emerald-500 font-normal">/</span>
+                      <span>{inChargeStudents.length}</span>
+                    </div>
                   </div>
-                  <div className="bg-slate-50 px-4 py-2.5 rounded-xl border text-center">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+
+                  <div className="bg-slate-50 border border-slate-200 p-2.5 sm:p-4 rounded-xl flex flex-col justify-between items-center text-center">
+                    <span className="text-[10px] sm:text-xs font-semibold tracking-wider uppercase text-slate-500 block">
                       Class Subjects
                     </span>
-                    <span className="text-lg font-black font-mono text-slate-800">
+                    <span className="text-sm sm:text-lg md:text-xl font-bold font-mono text-slate-800 mt-1">
                       {inChargeSubjects.length}
                     </span>
                   </div>
@@ -3068,10 +3323,18 @@ export const TeacherDashboard: React.FC = () => {
          ========================================================================= */}
       {activeTab === 'attendance' && (() => {
         const selectedClass = classes.find(c => c.id === attendanceClassId) || inChargeClass || classes[0];
-        const effectiveClassId = selectedClass?.id || '';
+        const effectiveClassId = selectedClass?.id || attendanceClassId || '';
 
         const classStudents = selectedClass
-          ? sortStudentsBoysFirst(allStudents.filter(s => s.classId === effectiveClassId && s.status === 'active')).map((s, idx) => ({
+          ? sortStudentsBoysFirst(
+              allStudents.filter(
+                s =>
+                  (s.classId === effectiveClassId ||
+                    (s.classId && effectiveClassId && s.classId.replace(/[^0-9]/g, '') === effectiveClassId.replace(/[^0-9]/g, '')) ||
+                    isClassMatch([effectiveClassId], s.classId)) &&
+                  s.status === 'active'
+              )
+            ).map((s, idx) => ({
               ...s,
               rollNo: idx + 1,
             }))

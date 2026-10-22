@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { User, Student, ClassItem, sortStudentsBoysFirst } from '../../types';
-import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { db, handleFirestoreError, OperationType, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
-import { collection, doc, setDoc, deleteDoc, onSnapshot, writeBatch } from 'firebase/firestore';
+import { collection, doc, setDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 import {
   Users,
   Plus,
@@ -101,10 +101,12 @@ export const ParentManagement: React.FC = () => {
   useEffect(() => {
     loadData();
 
+    if (isFirestoreQuotaExhausted()) return;
+
     // Real-time listener for Firestore 'parents' collection
     let unsub: (() => void) | undefined;
     try {
-      unsub = onSnapshot(
+      unsub = safeOnSnapshot(
         collection(db, 'parents'),
         (snapshot) => {
           if (!snapshot.empty) {

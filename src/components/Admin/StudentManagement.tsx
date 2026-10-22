@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Student, ClassItem, sortStudentsBoysFirst, assignClassSequentialRollNumbers, recalculateClassRollsAndExamRegNos } from '../../types';
-import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { db, handleFirestoreError, OperationType, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
-import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { logAuditEvent } from '../../services/auditLogger';
 import {
   Users,
@@ -97,36 +97,26 @@ export const StudentManagement: React.FC = () => {
   useEffect(() => {
     loadData();
 
+    if (isFirestoreQuotaExhausted()) return;
+
     // Real-time listener for Firestore 'students' collection
     let unsub: (() => void) | undefined;
     try {
-      unsub = onSnapshot(
+      unsub = safeOnSnapshot(
         collection(db, 'students'),
         (snapshot) => {
           if (!snapshot.empty) {
-            // Delete rogue mock students from Firestore
-            const rogueIdsToDelete: string[] = [];
-
-            snapshot.docs.forEach((d) => {
-              const data = d.data() as any;
-              const adm = String(data?.admissionNo || '').trim();
-              const name = String(data?.nameEn || '').trim();
-
-              if (
-                ['st_501', 'st_301', 'st_903'].includes(d.id) ||
-                ['5001', '3001', '9003'].includes(adm) ||
-                ['Ahmed Nihal', 'Adil Mansoor', 'Adil Ibrahim'].includes(name)
-              ) {
-                rogueIdsToDelete.push(d.id);
-              }
-            });
-
-            rogueIdsToDelete.forEach((id) => {
-              deleteDoc(doc(db, 'students', id)).catch(() => {});
-            });
+            const rogueIds = ['st_501', 'st_301', 'st_903'];
+            const rogueAdms = ['5001', '3001', '9003'];
+            const rogueNames = ['Ahmed Nihal', 'Adil Mansoor', 'Adil Ibrahim'];
 
             const remoteStudents = snapshot.docs
-              .filter(d => !rogueIdsToDelete.includes(d.id))
+              .filter(d => {
+                const data = d.data() as any;
+                const adm = String(data?.admissionNo || '').trim();
+                const name = String(data?.nameEn || '').trim();
+                return !rogueIds.includes(d.id) && !rogueAdms.includes(adm) && !rogueNames.includes(name);
+              })
               .map((d) => ({
                 ...d.data(),
                 id: d.id,
@@ -146,7 +136,7 @@ export const StudentManagement: React.FC = () => {
               );
 
             // Resequence roll numbers without suppressing duplicates so duplicates are clearly visible for resolution
-            const resequenced = assignClassSequentialRollNumbers(remoteStudents);
+            const resequenced = assignClassSequentialRollNumbers<Student>(remoteStudents);
             setStudents(resequenced);
           } else {
             setStudents([]);

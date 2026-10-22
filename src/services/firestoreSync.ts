@@ -9,7 +9,7 @@ import {
   where,
   Unsubscribe,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from './firebase';
+import { db, handleFirestoreError, OperationType, isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, isQuotaError } from './firebase';
 import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination, FeePayment, ClassAttendanceConfig, InstitutionHoliday, SpecialWorkingDay, AuditLog, InstitutionSettings, assignClassSequentialRollNumbers } from '../types';
 
 /**
@@ -54,6 +54,24 @@ export class FirestoreSyncService {
     return FirestoreSyncService.instance;
   }
 
+  private handleSnapshotError(err: unknown, collectionName: string): void {
+    if (isQuotaError(err)) {
+      markFirestoreQuotaExhausted();
+      this.stopSubscriptions();
+    } else {
+      handleFirestoreError(err, OperationType.GET, collectionName);
+    }
+  }
+
+  private handleWriteError(err: unknown, op: OperationType, path: string): void {
+    if (isQuotaError(err)) {
+      markFirestoreQuotaExhausted();
+      this.stopSubscriptions();
+      return;
+    }
+    handleFirestoreError(err, op, path);
+  }
+
   // Setup real-time listeners for all collections
   public subscribeToCollections(callbacks: {
     onStudents?: (students: Student[]) => void;
@@ -78,6 +96,11 @@ export class FirestoreSyncService {
     getInitialExams?: () => Examination[];
   }): () => void {
     this.stopSubscriptions();
+
+    if (isFirestoreQuotaExhausted()) {
+      console.info('[FirestoreSync] Cloud subscriptions skipped: daily quota is exhausted. Operating in local storage mode.');
+      return () => {};
+    }
 
     const SEED_FLAG_KEY = 'madrasa_firestore_seeded_flag';
     const isGloballySeeded = () => localStorage.getItem(SEED_FLAG_KEY) === 'true';
@@ -209,12 +232,12 @@ export class FirestoreSyncService {
             }
           },
           err => {
-            handleFirestoreError(err, OperationType.GET, 'students');
+            this.handleSnapshotError(err, 'students');
           }
         );
         this.unsubscribers.push(unsub);
       } catch (e) {
-        handleFirestoreError(e, OperationType.GET, 'students');
+        this.handleSnapshotError(e, 'students');
       }
     }
 
@@ -257,12 +280,12 @@ export class FirestoreSyncService {
             }
           },
           err => {
-            handleFirestoreError(err, OperationType.GET, 'teachers');
+            this.handleSnapshotError(err, 'teachers');
           }
         );
         this.unsubscribers.push(unsub);
       } catch (e) {
-        handleFirestoreError(e, OperationType.GET, 'teachers');
+        this.handleSnapshotError(e, 'teachers');
       }
     }
 
@@ -304,12 +327,12 @@ export class FirestoreSyncService {
             }
           },
           err => {
-            handleFirestoreError(err, OperationType.GET, 'parents');
+            this.handleSnapshotError(err, 'parents');
           }
         );
         this.unsubscribers.push(unsub);
       } catch (e) {
-        handleFirestoreError(e, OperationType.GET, 'parents');
+        this.handleSnapshotError(e, 'parents');
       }
     }
 
@@ -351,12 +374,12 @@ export class FirestoreSyncService {
             }
           },
           err => {
-            handleFirestoreError(err, OperationType.GET, 'classes');
+            this.handleSnapshotError(err, 'classes');
           }
         );
         this.unsubscribers.push(unsub);
       } catch (e) {
-        handleFirestoreError(e, OperationType.GET, 'classes');
+        this.handleSnapshotError(e, 'classes');
       }
     }
 
@@ -398,12 +421,12 @@ export class FirestoreSyncService {
             }
           },
           err => {
-            handleFirestoreError(err, OperationType.GET, 'subjects');
+            this.handleSnapshotError(err, 'subjects');
           }
         );
         this.unsubscribers.push(unsub);
       } catch (e) {
-        handleFirestoreError(e, OperationType.GET, 'subjects');
+        this.handleSnapshotError(e, 'subjects');
       }
     }
 
@@ -445,12 +468,12 @@ export class FirestoreSyncService {
             }
           },
           err => {
-            handleFirestoreError(err, OperationType.GET, 'marks');
+            this.handleSnapshotError(err, 'marks');
           }
         );
         this.unsubscribers.push(unsub);
       } catch (e) {
-        handleFirestoreError(e, OperationType.GET, 'marks');
+        this.handleSnapshotError(e, 'marks');
       }
     }
 
@@ -492,12 +515,12 @@ export class FirestoreSyncService {
             }
           },
           err => {
-            handleFirestoreError(err, OperationType.GET, 'exams');
+            this.handleSnapshotError(err, 'exams');
           }
         );
         this.unsubscribers.push(unsub);
       } catch (e) {
-        handleFirestoreError(e, OperationType.GET, 'exams');
+        this.handleSnapshotError(e, 'exams');
       }
     }
 
@@ -514,12 +537,12 @@ export class FirestoreSyncService {
             callbacks.onFees?.(fees);
           },
           err => {
-            handleFirestoreError(err, OperationType.GET, 'fee_payments');
+            this.handleSnapshotError(err, 'fee_payments');
           }
         );
         this.unsubscribers.push(unsub);
       } catch (e) {
-        handleFirestoreError(e, OperationType.GET, 'fee_payments');
+        this.handleSnapshotError(e, 'fee_payments');
       }
     }
 
@@ -536,12 +559,12 @@ export class FirestoreSyncService {
             callbacks.onAdmins?.(admins);
           },
           err => {
-            handleFirestoreError(err, OperationType.GET, 'admins');
+            this.handleSnapshotError(err, 'admins');
           }
         );
         this.unsubscribers.push(unsub);
       } catch (e) {
-        handleFirestoreError(e, OperationType.GET, 'admins');
+        this.handleSnapshotError(e, 'admins');
       }
     }
 
@@ -558,12 +581,12 @@ export class FirestoreSyncService {
             callbacks.onAttendance?.(configs);
           },
           err => {
-            handleFirestoreError(err, OperationType.GET, 'attendance');
+            this.handleSnapshotError(err, 'attendance');
           }
         );
         this.unsubscribers.push(unsub);
       } catch (e) {
-        handleFirestoreError(e, OperationType.GET, 'attendance');
+        this.handleSnapshotError(e, 'attendance');
       }
     }
 
@@ -581,12 +604,12 @@ export class FirestoreSyncService {
             callbacks.onHolidays?.(holidays);
           },
           err => {
-            handleFirestoreError(err, OperationType.GET, 'institutionHolidays');
+            this.handleSnapshotError(err, 'institutionHolidays');
           }
         );
         this.unsubscribers.push(unsub);
       } catch (e) {
-        handleFirestoreError(e, OperationType.GET, 'institutionHolidays');
+        this.handleSnapshotError(e, 'institutionHolidays');
       }
     }
 
@@ -604,12 +627,12 @@ export class FirestoreSyncService {
             callbacks.onSpecialWorkingDays?.(days);
           },
           err => {
-            handleFirestoreError(err, OperationType.GET, 'specialWorkingDays');
+            this.handleSnapshotError(err, 'specialWorkingDays');
           }
         );
         this.unsubscribers.push(unsub);
       } catch (e) {
-        handleFirestoreError(e, OperationType.GET, 'specialWorkingDays');
+        this.handleSnapshotError(e, 'specialWorkingDays');
       }
     }
 
@@ -626,19 +649,36 @@ export class FirestoreSyncService {
             callbacks.onAuditLogs?.(logs);
           },
           err => {
-            handleFirestoreError(err, OperationType.GET, 'auditLogs');
+            this.handleSnapshotError(err, 'auditLogs');
           }
         );
         this.unsubscribers.push(unsub);
       } catch (e) {
-        handleFirestoreError(e, OperationType.GET, 'auditLogs');
+        this.handleSnapshotError(e, 'auditLogs');
       }
     }
 
-    // Automated Data Cleanup: Purge erroneous June 24 holiday from Class 5
-    this.cleanupJune24Class5Holiday().catch(err => {
-      console.warn('cleanupJune24Class5Holiday automated check error:', err);
-    });
+    // Automated Data Cleanup: Purge erroneous June 24 holiday from Class 5 and any stale restored holidays
+    // Executed at most once in background, skipped if quota is exhausted
+    const CLEANUP_KEY = 'madrasa_firestore_holiday_cleanups_v2';
+    if (!localStorage.getItem(CLEANUP_KEY) && !isFirestoreQuotaExhausted()) {
+      Promise.all([
+        this.cleanupJune24Class5Holiday(),
+        this.cleanupRestoredHolidays(),
+      ])
+        .then(() => {
+          try {
+            localStorage.setItem(CLEANUP_KEY, 'true');
+          } catch {}
+        })
+        .catch(err => {
+          if (isQuotaError(err)) {
+            markFirestoreQuotaExhausted();
+            this.stopSubscriptions();
+          }
+          console.warn('automated holiday cleanup notice:', err);
+        });
+    }
 
     return () => this.stopSubscriptions();
   }
@@ -654,6 +694,7 @@ export class FirestoreSyncService {
 
   // Sync single student to their canonical document ID
   public async syncStudent(student: Student): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       const canonicalId = student.id || String(student.admissionNo).trim();
       if (!canonicalId) return;
@@ -666,8 +707,7 @@ export class FirestoreSyncService {
         deleteDoc(doc(db, 'students', admKey)).catch(() => {});
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `students/${student.id || student.admissionNo}`);
-      throw e;
+      this.handleWriteError(e, OperationType.WRITE, `students/${student.id || student.admissionNo}`);
     }
   }
 
@@ -677,6 +717,7 @@ export class FirestoreSyncService {
     registerNumbers: Record<string, string>,
     students: Student[]
   ): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       for (const [sId, regNo] of Object.entries(registerNumbers)) {
         const targetStudent = students.find(s => s.id === sId || s.admissionNo === sId);
@@ -707,13 +748,13 @@ export class FirestoreSyncService {
         }
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, 'students/examRegisterNumbers');
-      console.warn('Error syncing exam register numbers to Firestore:', e);
+      this.handleWriteError(e, OperationType.WRITE, 'students/examRegisterNumbers');
     }
   }
 
   // Delete student
   public async deleteStudent(studentId: string, admissionNo?: string): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       if (studentId) {
         await deleteDoc(doc(db, 'students', studentId)).catch(() => {});
@@ -734,25 +775,25 @@ export class FirestoreSyncService {
         }
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `students/${studentId}`);
-      throw e;
+      this.handleWriteError(e, OperationType.DELETE, `students/${studentId}`);
     }
   }
 
   // Delete batch of students
   public async deleteStudentsBatch(studentIds: string[]): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       for (const id of studentIds) {
         await deleteDoc(doc(db, 'students', id));
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, 'students/batch');
-      throw e;
+      this.handleWriteError(e, OperationType.DELETE, 'students/batch');
     }
   }
 
   // Sync teacher
   public async syncTeacher(teacher: User): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       const asgs = Array.isArray(teacher.assignedSubjects)
         ? teacher.assignedSubjects
@@ -764,93 +805,93 @@ export class FirestoreSyncService {
       };
       await setDoc(doc(db, 'teachers', teacher.id), cleanForFirestore(docData), { merge: true });
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `teachers/${teacher.id}`);
-      throw e;
+      this.handleWriteError(e, OperationType.WRITE, `teachers/${teacher.id}`);
     }
   }
 
   // Delete teacher
   public async deleteTeacher(teacherId: string): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await deleteDoc(doc(db, 'teachers', teacherId));
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `teachers/${teacherId}`);
-      throw e;
+      this.handleWriteError(e, OperationType.DELETE, `teachers/${teacherId}`);
     }
   }
 
   // Sync parent
   public async syncParent(parent: User): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await setDoc(doc(db, 'parents', parent.id), cleanForFirestore(parent));
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `parents/${parent.id}`);
-      throw e;
+      this.handleWriteError(e, OperationType.WRITE, `parents/${parent.id}`);
     }
   }
 
   // Delete parent
   public async deleteParent(parentId: string): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await deleteDoc(doc(db, 'parents', parentId));
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `parents/${parentId}`);
-      throw e;
+      this.handleWriteError(e, OperationType.DELETE, `parents/${parentId}`);
     }
   }
 
   // Sync class
   public async syncClass(classItem: ClassItem): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await setDoc(doc(db, 'classes', classItem.id), cleanForFirestore(classItem));
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `classes/${classItem.id}`);
-      throw e;
+      this.handleWriteError(e, OperationType.WRITE, `classes/${classItem.id}`);
     }
   }
 
   // Delete class
   public async deleteClass(classId: string): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await deleteDoc(doc(db, 'classes', classId));
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `classes/${classId}`);
-      throw e;
+      this.handleWriteError(e, OperationType.DELETE, `classes/${classId}`);
     }
   }
 
   // Sync subject
   public async syncSubject(subject: SubjectItem): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await setDoc(doc(db, 'subjects', subject.id), cleanForFirestore(subject));
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `subjects/${subject.id}`);
-      throw e;
+      this.handleWriteError(e, OperationType.WRITE, `subjects/${subject.id}`);
     }
   }
 
   // Delete subject
   public async deleteSubject(subjectId: string): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await deleteDoc(doc(db, 'subjects', subjectId));
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `subjects/${subjectId}`);
-      throw e;
+      this.handleWriteError(e, OperationType.DELETE, `subjects/${subjectId}`);
     }
   }
 
   // Sync mark sheet
   public async syncMarkSheet(markSheet: MarkSheet): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await setDoc(doc(db, 'marks', markSheet.id), cleanForFirestore(markSheet));
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `marks/${markSheet.id}`);
-      throw e;
+      this.handleWriteError(e, OperationType.WRITE, `marks/${markSheet.id}`);
     }
   }
 
   // Sync exam
   public async syncExam(exam: Examination): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       const cleanData = cleanForFirestore(exam);
       await Promise.allSettled([
@@ -858,66 +899,66 @@ export class FirestoreSyncService {
         setDoc(doc(db, 'examinations', exam.id), cleanData, { merge: true }),
       ]);
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `exams/${exam.id}`);
-      throw e;
+      this.handleWriteError(e, OperationType.WRITE, `exams/${exam.id}`);
     }
   }
 
   // Delete exam
   public async deleteExam(examId: string): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await Promise.allSettled([
         deleteDoc(doc(db, 'exams', examId)),
         deleteDoc(doc(db, 'examinations', examId)),
       ]);
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `exams/${examId}`);
-      throw e;
+      this.handleWriteError(e, OperationType.DELETE, `exams/${examId}`);
     }
   }
 
   // Sync fee payment
   public async syncFeePayment(fee: FeePayment): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await setDoc(doc(db, 'fee_payments', fee.id), cleanForFirestore(fee), { merge: true });
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `fee_payments/${fee.id}`);
-      throw e;
+      this.handleWriteError(e, OperationType.WRITE, `fee_payments/${fee.id}`);
     }
   }
 
   // Delete fee payment
   public async deleteFeePayment(feeId: string): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await deleteDoc(doc(db, 'fee_payments', feeId));
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `fee_payments/${feeId}`);
-      throw e;
+      this.handleWriteError(e, OperationType.DELETE, `fee_payments/${feeId}`);
     }
   }
 
   // Sync sub-admin
   public async syncAdmin(admin: User): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await setDoc(doc(db, 'admins', admin.id), cleanForFirestore(admin), { merge: true });
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `admins/${admin.id}`);
-      throw e;
+      this.handleWriteError(e, OperationType.WRITE, `admins/${admin.id}`);
     }
   }
 
   // Delete sub-admin
   public async deleteAdmin(adminId: string): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await deleteDoc(doc(db, 'admins', adminId));
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `admins/${adminId}`);
-      throw e;
+      this.handleWriteError(e, OperationType.DELETE, `admins/${adminId}`);
     }
   }
 
   // Sync institution settings
   public async syncSettings(settings: InstitutionSettings): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       const cleanData = cleanForFirestore(settings);
       await Promise.allSettled([
@@ -925,13 +966,13 @@ export class FirestoreSyncService {
         setDoc(doc(db, 'settings', 'profile'), cleanData, { merge: true }),
       ]);
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, 'settings/institution');
-      throw e;
+      this.handleWriteError(e, OperationType.WRITE, 'settings/institution');
     }
   }
 
   // Sync class attendance config
   public async syncAttendance(config: ClassAttendanceConfig): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await setDoc(doc(db, 'attendance', config.classId), cleanForFirestore(config), { merge: true });
       if (config.studentDaysAttended) {
@@ -951,52 +992,141 @@ export class FirestoreSyncService {
         }
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `attendance/${config.classId}`);
-      throw e;
+      this.handleWriteError(e, OperationType.WRITE, `attendance/${config.classId}`);
     }
   }
 
   // Sync institution holiday to Firestore
   public async syncHoliday(holiday: InstitutionHoliday): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       const docId = holiday.date || holiday.id;
       await setDoc(doc(db, 'institutionHolidays', docId), cleanForFirestore(holiday), { merge: true });
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `institutionHolidays/${holiday.date || holiday.id}`);
-      throw e;
+      this.handleWriteError(e, OperationType.WRITE, `institutionHolidays/${holiday.date || holiday.id}`);
     }
   }
 
-  // Delete institution holiday from Firestore (handles both ID and date lookups)
+  // Delete institution holiday from Firestore (handles ID, date, and range lookups)
   public async deleteHoliday(dateOrId: string): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
-      await deleteDoc(doc(db, 'institutionHolidays', dateOrId));
-      // In case the document was saved with a different ID than date, search and delete
+      await deleteDoc(doc(db, 'institutionHolidays', dateOrId)).catch(() => {});
+      const affectedDates = new Set<string>([dateOrId]);
+
       try {
-        const snap = await getDocs(query(collection(db, 'institutionHolidays'), where('date', '==', dateOrId)));
-        snap.forEach(d => {
-          deleteDoc(doc(db, 'institutionHolidays', d.id)).catch(() => {});
-        });
+        const snap = await getDocs(collection(db, 'institutionHolidays'));
+        for (const d of snap.docs) {
+          const data = d.data();
+          const docDate = data.date || d.id;
+          const rStart = data.rangeStart || data.startDate;
+          const rEnd = data.rangeEnd || data.endDate;
+
+          const isMatch =
+            d.id === dateOrId ||
+            docDate === dateOrId ||
+            d.id.includes(dateOrId) ||
+            (data.rangeGroupId && (data.rangeGroupId === dateOrId || d.id.includes(data.rangeGroupId))) ||
+            (rStart && rEnd && dateOrId >= rStart && dateOrId <= rEnd);
+
+          if (isMatch) {
+            if (docDate) affectedDates.add(docDate);
+            if (rStart && rEnd) {
+              const pStart = new Date(rStart);
+              const pEnd = new Date(rEnd);
+              let c = new Date(pStart);
+              while (c <= pEnd) {
+                const y = c.getFullYear();
+                const m = String(c.getMonth() + 1).padStart(2, '0');
+                const day = String(c.getDate()).padStart(2, '0');
+                affectedDates.add(`${y}-${m}-${day}`);
+                c.setDate(c.getDate() + 1);
+              }
+            }
+            await deleteDoc(doc(db, 'institutionHolidays', d.id)).catch(() => {});
+          }
+        }
+      } catch {}
+
+      // Immediately purge stale isHoliday / status: OFF flags from attendance documents across all classes
+      try {
+        const attSnap = await getDocs(collection(db, 'attendance'));
+        for (const aDoc of attSnap.docs) {
+          // If this doc is an individual daily record doc e.g. classId_date
+          if (aDoc.id.includes('_')) {
+            const matchedDate = Array.from(affectedDates).find(ad => aDoc.id.endsWith(ad));
+            if (matchedDate) {
+              const data = aDoc.data();
+              if (data.isHoliday || data.status === 'OFF' || data.status === 'holiday') {
+                const hasMarks = (data.presentStudentIds && data.presentStudentIds.length > 0) || (data.absentStudentIds && data.absentStudentIds.length > 0);
+                if (!hasMarks) {
+                  await deleteDoc(doc(db, 'attendance', aDoc.id)).catch(() => {});
+                } else {
+                  await setDoc(doc(db, 'attendance', aDoc.id), { ...data, isHoliday: false, status: undefined, holidayReason: undefined }, { merge: true });
+                }
+              }
+            }
+            continue;
+          }
+
+          const cfg = aDoc.data() as ClassAttendanceConfig;
+          if (!cfg.dailyRecords) continue;
+          let changed = false;
+          const updatedDaily = { ...cfg.dailyRecords };
+
+          affectedDates.forEach(dStr => {
+            if (updatedDaily[dStr]) {
+              const rec = updatedDaily[dStr];
+              if (rec.isHoliday || (rec as any).status === 'OFF' || (rec as any).status === 'holiday') {
+                changed = true;
+                const hasMarks =
+                  (rec.presentStudentIds && rec.presentStudentIds.length > 0) ||
+                  (rec.absentStudentIds && rec.absentStudentIds.length > 0) ||
+                  (rec.statusMap && Object.keys(rec.statusMap).length > 0);
+                if (hasMarks) {
+                  const { isHoliday, holidayReason, ...rest } = rec;
+                  const cleanedItem: any = { ...rest, isHoliday: false };
+                  delete cleanedItem.status;
+                  delete cleanedItem.holidayReason;
+                  updatedDaily[dStr] = cleanedItem;
+                } else {
+                  delete updatedDaily[dStr];
+                }
+              }
+            }
+          });
+
+          if (changed) {
+            const remainingHolidays = Object.keys(updatedDaily).filter(k => updatedDaily[k]?.isHoliday).length;
+            const totalWorking = Math.max(1, 88 - remainingHolidays);
+            await setDoc(doc(db, 'attendance', aDoc.id), cleanForFirestore({
+              ...cfg,
+              totalWorkingDays: totalWorking,
+              dailyRecords: updatedDaily,
+              updatedAt: new Date().toISOString(),
+            }), { merge: true });
+          }
+        }
       } catch {}
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `institutionHolidays/${dateOrId}`);
-      throw e;
+      this.handleWriteError(e, OperationType.DELETE, `institutionHolidays/${dateOrId}`);
     }
   }
 
   // Sync special working Sunday to Firestore
   public async syncSpecialWorkingDay(workingDay: SpecialWorkingDay): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       const docId = workingDay.date || workingDay.id;
       await setDoc(doc(db, 'specialWorkingDays', docId), cleanForFirestore(workingDay), { merge: true });
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `specialWorkingDays/${workingDay.date || workingDay.id}`);
-      throw e;
+      this.handleWriteError(e, OperationType.WRITE, `specialWorkingDays/${workingDay.date || workingDay.id}`);
     }
   }
 
   // Delete special working Sunday from Firestore
   public async deleteSpecialWorkingDay(dateOrId: string): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await deleteDoc(doc(db, 'specialWorkingDays', dateOrId));
       try {
@@ -1006,13 +1136,139 @@ export class FirestoreSyncService {
         });
       } catch {}
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `specialWorkingDays/${dateOrId}`);
-      throw e;
+      this.handleWriteError(e, OperationType.DELETE, `specialWorkingDays/${dateOrId}`);
+    }
+  }
+
+  // Automated Cleanup: Purge restored holidays (e.g. Oct 12–17) and stale isHoliday/status: OFF flags across all classes
+  public async cleanupRestoredHolidays(): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
+    const CLEANUP_KEY = 'madrasa_holidays_cleanup_v3_done';
+    if (typeof window !== 'undefined' && localStorage.getItem(CLEANUP_KEY) === 'true') {
+      return;
+    }
+    try {
+      const holSnap = await getDocs(collection(db, 'institutionHolidays'));
+      const activeHolidayDates = new Set<string>();
+
+      // Specifically purge restored Oct 12–17 holidays ("KMEB Spec... OFF") from institutionHolidays
+      for (const d of holSnap.docs) {
+        const data = d.data();
+        const docDate = data.date || d.id;
+        const rStart = data.rangeStart || data.startDate;
+        const rEnd = data.rangeEnd || data.endDate;
+        const reason = String(data.reason || '').toLowerCase();
+
+        const isRestoredOctRange =
+          (docDate >= '2026-10-12' && docDate <= '2026-10-17') ||
+          d.id.includes('2026-10-12') ||
+          d.id.includes('2026-10-13') ||
+          d.id.includes('2026-10-14') ||
+          d.id.includes('2026-10-15') ||
+          d.id.includes('2026-10-16') ||
+          d.id.includes('2026-10-17') ||
+          reason.includes('kmeb spec') ||
+          (rStart === '2026-10-12' && rEnd === '2026-10-17');
+
+        if (isRestoredOctRange) {
+          await deleteDoc(doc(db, 'institutionHolidays', d.id)).catch(() => {});
+          continue; // Skip adding to activeHolidayDates!
+        }
+
+        activeHolidayDates.add(docDate);
+        if (rStart && rEnd) {
+          const s = new Date(rStart);
+          const e = new Date(rEnd);
+          let curr = new Date(s);
+          while (curr <= e) {
+            const y = curr.getFullYear();
+            const m = String(curr.getMonth() + 1).padStart(2, '0');
+            const day = String(curr.getDate()).padStart(2, '0');
+            activeHolidayDates.add(`${y}-${m}-${day}`);
+            curr.setDate(curr.getDate() + 1);
+          }
+        }
+      }
+
+      // Also clean up any lingering Oct 12–17 holiday daily records from all attendance documents
+      const restoredDates = ['2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16', '2026-10-17'];
+
+      const attSnap = await getDocs(collection(db, 'attendance'));
+      for (const aDoc of attSnap.docs) {
+        // Individual daily docs e.g. classId_date
+        if (aDoc.id.includes('_')) {
+          const matchedOct = restoredDates.find(od => aDoc.id.endsWith(od));
+          if (matchedOct) {
+            const data = aDoc.data();
+            if (data.isHoliday || data.status === 'OFF' || data.status === 'holiday') {
+              const hasMarks = (data.presentStudentIds && data.presentStudentIds.length > 0) || (data.absentStudentIds && data.absentStudentIds.length > 0);
+              if (!hasMarks) {
+                await deleteDoc(doc(db, 'attendance', aDoc.id)).catch(() => {});
+              } else {
+                await setDoc(doc(db, 'attendance', aDoc.id), { ...data, isHoliday: false, status: undefined, holidayReason: undefined }, { merge: true });
+              }
+            }
+          }
+          continue;
+        }
+
+        const cfg = aDoc.data() as ClassAttendanceConfig;
+        if (!cfg.dailyRecords) continue;
+        let modified = false;
+        const updatedDaily = { ...cfg.dailyRecords };
+
+        for (const [dStr, rec] of Object.entries(updatedDaily)) {
+          const isMarkedHoliday = rec?.isHoliday === true || (rec as any)?.status === 'OFF' || (rec as any)?.status === 'holiday';
+          const isRestoredDate = restoredDates.includes(dStr);
+          if (isMarkedHoliday) {
+            const parts = dStr.split('-');
+            const isSun = parts.length === 3 ? new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2])).getDay() === 0 : false;
+            // If date is not in activeHolidayDates and not a Sunday, or is in restoredDates
+            if ((!activeHolidayDates.has(dStr) && !isSun) || isRestoredDate) {
+              modified = true;
+              const hasMarks =
+                (rec.presentStudentIds && rec.presentStudentIds.length > 0) ||
+                (rec.absentStudentIds && rec.absentStudentIds.length > 0) ||
+                (rec.statusMap && Object.keys(rec.statusMap).length > 0);
+              if (hasMarks) {
+                const { isHoliday, holidayReason, ...rest } = rec;
+                const cleanedItem: any = { ...rest, isHoliday: false };
+                delete cleanedItem.status;
+                delete cleanedItem.holidayReason;
+                updatedDaily[dStr] = cleanedItem;
+              } else {
+                delete updatedDaily[dStr];
+              }
+            }
+          }
+        }
+
+        if (modified) {
+          const remainingHolidays = Object.keys(updatedDaily).filter(k => updatedDaily[k]?.isHoliday || activeHolidayDates.has(k)).length;
+          const totalWorking = Math.max(1, 88 - remainingHolidays);
+          await setDoc(doc(db, 'attendance', aDoc.id), cleanForFirestore({
+            ...cfg,
+            totalWorkingDays: totalWorking,
+            dailyRecords: updatedDaily,
+            updatedAt: new Date().toISOString(),
+          }));
+        }
+      }
+      try {
+        localStorage.setItem(CLEANUP_KEY, 'true');
+      } catch {}
+    } catch (e) {
+      this.handleWriteError(e, OperationType.WRITE, 'cleanupRestoredHolidays');
     }
   }
 
   // Automated Cleanup: Completely remove erroneous June 24 holiday from Class 5
   public async cleanupJune24Class5Holiday(): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
+    const CLEANUP_JUNE24_KEY = 'madrasa_cleanup_june24_v2_done';
+    if (typeof window !== 'undefined' && localStorage.getItem(CLEANUP_JUNE24_KEY) === 'true') {
+      return;
+    }
     try {
       const targetDates = ['2026-06-24', '24/06/2026', '24-06-2026'];
       // 1. Scan institutionHolidays collection
@@ -1061,27 +1317,28 @@ export class FirestoreSyncService {
                     totalWorkingDays: totalWorking,
                     dailyRecords: updatedDaily,
                     updatedAt: new Date().toISOString(),
-                  }),
-                  { merge: true }
+                  })
                 );
               }
             }
           }
         } catch {}
       }
+      try {
+        localStorage.setItem(CLEANUP_JUNE24_KEY, 'true');
+      } catch {}
     } catch (e) {
-      console.warn('cleanupJune24Class5Holiday error:', e);
+      this.handleWriteError(e, OperationType.WRITE, 'cleanupJune24Class5Holiday');
     }
   }
 
-
   // Sync audit log to Firestore
   public async syncAuditLog(log: AuditLog): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await setDoc(doc(db, 'auditLogs', log.id), cleanForFirestore(log), { merge: true });
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `auditLogs/${log.id}`);
-      throw e;
+      this.handleWriteError(e, OperationType.WRITE, `auditLogs/${log.id}`);
     }
   }
 
@@ -1095,6 +1352,7 @@ export class FirestoreSyncService {
     marks: MarkSheet[];
     exams?: Examination[];
   }): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       // Students
       for (const st of data.students) {
@@ -1129,12 +1387,13 @@ export class FirestoreSyncService {
         }
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, 'batch_full_state');
+      this.handleWriteError(e, OperationType.WRITE, 'batch_full_state');
     }
   }
 
   // Contextual module-specific purges
   public async purgeDemoStudentsFromFirestore(): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       const studentSnap = await getDocs(collection(db, 'students'));
       for (const d of studentSnap.docs) {
@@ -1145,11 +1404,12 @@ export class FirestoreSyncService {
         await deleteDoc(d.ref);
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, 'purgeDemoStudents');
+      this.handleWriteError(e, OperationType.DELETE, 'purgeDemoStudents');
     }
   }
 
   public async purgeDemoTeachersFromFirestore(): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       const teachersSnap = await getDocs(collection(db, 'teachers'));
       for (const d of teachersSnap.docs) {
@@ -1159,29 +1419,31 @@ export class FirestoreSyncService {
         }
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, 'purgeDemoTeachers');
+      this.handleWriteError(e, OperationType.DELETE, 'purgeDemoTeachers');
     }
   }
 
   public async purgeDemoParentsFromFirestore(): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       const parentsSnap = await getDocs(collection(db, 'parents'));
       for (const d of parentsSnap.docs) {
         await deleteDoc(d.ref);
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, 'purgeDemoParents');
+      this.handleWriteError(e, OperationType.DELETE, 'purgeDemoParents');
     }
   }
 
   // Complete clear dummy / demo data from Firestore and keep admin
   public async purgeDemoDataFromFirestore(): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
     try {
       await this.purgeDemoStudentsFromFirestore();
       await this.purgeDemoTeachersFromFirestore();
       await this.purgeDemoParentsFromFirestore();
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, 'purgeDemoData');
+      this.handleWriteError(e, OperationType.DELETE, 'purgeDemoData');
     }
   }
 }

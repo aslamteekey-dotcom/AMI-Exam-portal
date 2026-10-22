@@ -26,6 +26,7 @@ import {
   DEFAULT_ADMIN_PERMISSIONS,
 } from '../types';
 import { firestoreSync } from './firestoreSync';
+import { isFirestoreQuotaExhausted, QUOTA_STATUS_EVENT } from './firebase';
 
 export interface MadrasaDatabase {
   users: User[];
@@ -758,8 +759,47 @@ export class ClientStorageApi {
         s.nameEn !== 'Adil Ibrahim'
     );
     this.performJune24Class5Cleanup();
+    this.performRestoredHolidaysCleanup();
     this.saveDB();
     this.initFirestoreSync();
+  }
+
+  /**
+   * Data Cleanup: Purge restored Oct 12-17 holidays ("KMEB Spec... OFF") and restore working days
+   */
+  public performRestoredHolidaysCleanup(): void {
+    const octDates = ['2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16', '2026-10-17'];
+    if (this.db.institutionHolidays) {
+      this.db.institutionHolidays = this.db.institutionHolidays.filter(h => {
+        const d = h.date || h.id || '';
+        if (octDates.includes(d) || (d >= '2026-10-12' && d <= '2026-10-17')) return false;
+        if (h.reason && typeof h.reason === 'string' && h.reason.toLowerCase().includes('kmeb spec')) return false;
+        if (h.rangeStart === '2026-10-12' && h.rangeEnd === '2026-10-17') return false;
+        return true;
+      });
+    }
+    if (this.db.attendanceConfigs) {
+      this.db.attendanceConfigs.forEach(cfg => {
+        const records = cfg.dailyRecords;
+        if (records) {
+          octDates.forEach(k => {
+            const rec = records[k];
+            if (rec && (rec.isHoliday || (rec as any).status === 'OFF' || (rec as any).status === 'holiday')) {
+              const hasMarks = (rec.presentStudentIds && rec.presentStudentIds.length > 0) || (rec.absentStudentIds && rec.absentStudentIds.length > 0);
+              if (hasMarks) {
+                delete (rec as any).isHoliday;
+                delete (rec as any).status;
+                delete (rec as any).holidayReason;
+              } else {
+                delete records[k];
+              }
+            }
+          });
+          const remainingHolidays = Object.values(records).filter(r => r.isHoliday).length;
+          cfg.totalWorkingDays = Math.max(1, 88 - remainingHolidays);
+        }
+      });
+    }
   }
 
   /**
@@ -867,6 +907,24 @@ export class ClientStorageApi {
 
   private initFirestoreSync(): void {
     if (typeof window === 'undefined') return;
+
+    // Register dynamic listener for quota status changes once
+    if (!(window as any).__madrasa_quota_listener_registered) {
+      (window as any).__madrasa_quota_listener_registered = true;
+      window.addEventListener(QUOTA_STATUS_EVENT, ((e: CustomEvent) => {
+        if (e.detail?.exhausted) {
+          firestoreSync.stopSubscriptions();
+        } else {
+          this.initFirestoreSync();
+        }
+      }) as EventListener);
+    }
+
+    if (isFirestoreQuotaExhausted()) {
+      console.info('[ClientStorageApi] Cloud sync paused: daily Firestore quota exhausted. Operating from local offline storage.');
+      return;
+    }
+
     try {
       firestoreSync.subscribeToCollections({
         onStudents: (remoteStudents) => {
@@ -3888,43 +3946,89 @@ export class ClientStorageApi {
       const holidayDeleteMatch = path.match(/^\/api\/institution-holidays\/([^/]+)$/);
       if ((holidayDeleteMatch || path === '/api/institution-holidays') && method === 'DELETE') {
         const rangeGroupId = params.get('rangeGroupId');
+        const hTarget = (holidayDeleteMatch ? holidayDeleteMatch[1] : (params.get('date') || params.get('id'))) || '';
+        const affectedDates = new Set<string>();
+
         if (rangeGroupId && this.db.institutionHolidays) {
           const toDelete = this.db.institutionHolidays.filter(h => h.rangeGroupId === rangeGroupId);
-          this.db.institutionHolidays = this.db.institutionHolidays.filter(h => h.rangeGroupId !== rangeGroupId);
           toDelete.forEach(h => {
-            (this.db.attendanceConfigs || []).forEach(cfg => {
-              if (cfg.dailyRecords && cfg.dailyRecords[h.date]?.isHoliday) {
-                delete cfg.dailyRecords[h.date];
-                const remainingHolidays = Object.values(cfg.dailyRecords).filter(r => r.isHoliday).length;
-                cfg.totalWorkingDays = Math.max(1, 88 - remainingHolidays);
-                cfg.updatedAt = new Date().toISOString();
+            if (h.date) affectedDates.add(h.date);
+            if (h.rangeStart && h.rangeEnd) {
+              let c = new Date(h.rangeStart);
+              const end = new Date(h.rangeEnd);
+              while (c <= end) {
+                const y = c.getFullYear();
+                const m = String(c.getMonth() + 1).padStart(2, '0');
+                const day = String(c.getDate()).padStart(2, '0');
+                affectedDates.add(`${y}-${m}-${day}`);
+                c.setDate(c.getDate() + 1);
               }
-            });
-            firestoreSync.deleteHoliday(h.date).catch(() => {});
+            }
           });
-          this.saveDB();
-          return this.jsonResponse({ success: true, rangeGroupId });
-        }
-        const hTarget = (holidayDeleteMatch ? holidayDeleteMatch[1] : (params.get('date') || params.get('id'))) || '';
-        if (hTarget && this.db.institutionHolidays) {
-          this.db.institutionHolidays = this.db.institutionHolidays.filter(
-            h => h.date !== hTarget && h.id !== hTarget
+          this.db.institutionHolidays = this.db.institutionHolidays.filter(h => h.rangeGroupId !== rangeGroupId);
+        } else if (hTarget && this.db.institutionHolidays) {
+          affectedDates.add(hTarget);
+          const matched = this.db.institutionHolidays.filter(
+            h => h.date === hTarget || h.id === hTarget || (h.rangeStart && h.rangeEnd && hTarget >= h.rangeStart && hTarget <= h.rangeEnd)
           );
-          // Restore working days for any attendance configs that recorded this holiday
-          (this.db.attendanceConfigs || []).forEach(cfg => {
-            if (cfg.dailyRecords && cfg.dailyRecords[hTarget]?.isHoliday) {
-              delete cfg.dailyRecords[hTarget];
-              const remainingHolidays = Object.values(cfg.dailyRecords).filter(r => r.isHoliday).length;
+          matched.forEach(h => {
+            if (h.date) affectedDates.add(h.date);
+            if (h.rangeStart && h.rangeEnd) {
+              let c = new Date(h.rangeStart);
+              const end = new Date(h.rangeEnd);
+              while (c <= end) {
+                const y = c.getFullYear();
+                const m = String(c.getMonth() + 1).padStart(2, '0');
+                const day = String(c.getDate()).padStart(2, '0');
+                affectedDates.add(`${y}-${m}-${day}`);
+                c.setDate(c.getDate() + 1);
+              }
+            }
+          });
+          this.db.institutionHolidays = this.db.institutionHolidays.filter(
+            h => !affectedDates.has(h.date) && !affectedDates.has(h.id) && !(h.rangeStart && h.rangeEnd && (affectedDates.has(h.rangeStart) || affectedDates.has(h.rangeEnd)))
+          );
+        }
+
+        // Restore working days for any attendance configs that recorded these holiday dates
+        if (affectedDates.size > 0 && this.db.attendanceConfigs) {
+          this.db.attendanceConfigs.forEach(cfg => {
+            const records = cfg.dailyRecords;
+            if (records) {
+              affectedDates.forEach(dStr => {
+                const rec = records[dStr];
+                if (rec && (rec.isHoliday || (rec as any).status === 'OFF' || (rec as any).status === 'holiday')) {
+                  const hasMarks = (rec.presentStudentIds && rec.presentStudentIds.length > 0) || (rec.absentStudentIds && rec.absentStudentIds.length > 0);
+                  if (hasMarks) {
+                    delete (rec as any).isHoliday;
+                    delete (rec as any).status;
+                    delete (rec as any).holidayReason;
+                  } else {
+                    delete records[dStr];
+                  }
+                }
+              });
+              const remainingHolidays = Object.values(records).filter(r => r.isHoliday).length;
               cfg.totalWorkingDays = Math.max(1, 88 - remainingHolidays);
               cfg.updatedAt = new Date().toISOString();
             }
           });
-          this.saveDB();
         }
+
+        this.saveDB();
+
         if (hTarget) {
-          firestoreSync.deleteHoliday(hTarget).catch(e => console.warn('Firestore deleteHoliday error:', e));
+          firestoreSync.deleteHoliday(hTarget).catch(() => {});
         }
-        return this.jsonResponse({ success: true, dateOrId: hTarget });
+        affectedDates.forEach(dStr => {
+          if (dStr !== hTarget) firestoreSync.deleteHoliday(dStr).catch(() => {});
+        });
+
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_holidays_updated', { detail: this.db.institutionHolidays }));
+        }
+
+        return this.jsonResponse({ success: true, affectedDates: Array.from(affectedDates) });
       }
 
       // Special Working Days (Principal Sunday Unlock) endpoints

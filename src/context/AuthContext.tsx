@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
 import { Language, translations } from '../i18n';
 import { clientStorageApi } from '../services/clientStorageApi';
-import { db } from '../services/firebase';
+import { db, isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, isQuotaError } from '../services/firebase';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { logAuditEvent } from '../services/auditLogger';
 
@@ -51,9 +51,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshUser = async () => {
     const current = clientStorageApi.getCurrentUser();
-    if (current && current.role === 'teacher') {
+    if (current && current.role === 'teacher' && !isFirestoreQuotaExhausted()) {
       try {
-        const tDoc = await getDoc(doc(db, 'teachers', current.id));
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout')), 2500)
+        );
+        const tDoc = await Promise.race([
+          getDoc(doc(db, 'teachers', current.id)),
+          timeoutPromise,
+        ]);
         if (tDoc.exists()) {
           const tData = tDoc.data();
           const asgs = Array.isArray(tData.assignedSubjects)
@@ -71,6 +77,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
       } catch (fErr) {
+        if (isQuotaError(fErr)) {
+          markFirestoreQuotaExhausted();
+        }
         console.warn('Could not refresh teacher doc from Firestore:', fErr);
       }
     }
@@ -84,18 +93,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (username: string, pass: string) => {
     try {
-      // 1. Fresh cloud fetch on login: fetch fresh teachers from Firestore to ensure assignments and credentials sync across devices
-      try {
-        const teachersSnap = await getDocs(collection(db, 'teachers'));
-        if (!teachersSnap.empty) {
-          const remoteTeachers = teachersSnap.docs.map(d => ({
-            ...d.data(),
-            id: d.id,
-          } as User));
-          clientStorageApi.syncTeachersFromRemote(remoteTeachers);
+      // 1. Fresh cloud fetch on login: fetch fresh teachers from Firestore if quota is available
+      if (!isFirestoreQuotaExhausted()) {
+        try {
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Timeout')), 2500)
+          );
+          const teachersSnap = await Promise.race([
+            getDocs(collection(db, 'teachers')),
+            timeoutPromise,
+          ]);
+          if (!teachersSnap.empty) {
+            const remoteTeachers = teachersSnap.docs.map(d => ({
+              ...d.data(),
+              id: d.id,
+            } as User));
+            clientStorageApi.syncTeachersFromRemote(remoteTeachers);
+          }
+        } catch (syncErr) {
+          if (isQuotaError(syncErr)) {
+            markFirestoreQuotaExhausted();
+          }
+          console.warn('Could not pre-sync teachers from Firestore on login:', syncErr);
         }
-      } catch (syncErr) {
-        console.warn('Could not pre-sync teachers from Firestore on login:', syncErr);
       }
 
       const res = clientStorageApi.login(username, pass);
@@ -104,9 +124,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // If user is teacher, ensure their fresh document with assignedSubjects is active
-      if (res.user.role === 'teacher') {
+      if (res.user.role === 'teacher' && !isFirestoreQuotaExhausted()) {
         try {
-          const tDoc = await getDoc(doc(db, 'teachers', res.user.id));
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Timeout')), 2500)
+          );
+          const tDoc = await Promise.race([
+            getDoc(doc(db, 'teachers', res.user.id)),
+            timeoutPromise,
+          ]);
           if (tDoc.exists()) {
             const tData = tDoc.data();
             const asgs = Array.isArray(tData.assignedSubjects)
@@ -122,6 +148,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             res.user = updatedUser;
           }
         } catch (fErr) {
+          if (isQuotaError(fErr)) {
+            markFirestoreQuotaExhausted();
+          }
           console.warn('Could not fetch teacher doc from Firestore during login:', fErr);
         }
       }

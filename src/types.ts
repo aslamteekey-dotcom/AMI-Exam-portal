@@ -663,3 +663,43 @@ export const DEFAULT_ROOT_FOLDERS: StudyMaterialFolder[] = [
     createdAt: '2026-01-01T00:00:00Z',
   },
 ];
+
+export const ALL_STANDARD_CLASSES: ClassItem[] = [
+  { id: 'cls_1', name: 'Class 1', nameMl: 'ക്ലാസ്സ് 1', numericGrade: 1, active: true },
+  { id: 'cls_2', name: 'Class 2', nameMl: 'ക്ലാസ്സ് 2', numericGrade: 2, active: true },
+  { id: 'cls_3', name: 'Class 3', nameMl: 'ക്ലാസ്സ് 3', numericGrade: 3, active: true },
+  { id: 'cls_4', name: 'Class 4', nameMl: 'ക്ലാസ്സ് 4', numericGrade: 4, active: true },
+  { id: 'cls_5', name: 'Class 5', nameMl: 'ക്ലാസ്സ് 5', numericGrade: 5, active: true },
+  { id: 'cls_6', name: 'Class 6', nameMl: 'ക്ലാസ്സ് 6', numericGrade: 6, active: true },
+  { id: 'cls_7', name: 'Class 7', nameMl: 'ക്ലാസ്സ് 7', numericGrade: 7, active: true },
+  { id: 'cls_8', name: 'Class 8', nameMl: 'ക്ലാസ്സ് 8', numericGrade: 8, active: true },
+  { id: 'cls_9', name: 'Class 9', nameMl: 'ക്ലാസ്സ് 9', numericGrade: 9, active: true },
+];
+
+export function mergeClassesWithStandard(rawClasses?: ClassItem[]): ClassItem[] {
+  const map = new Map<string, ClassItem>();
+  ALL_STANDARD_CLASSES.forEach(c => map.set(c.id, c));
+  if (Array.isArray(rawClasses)) {
+    rawClasses.forEach(c => {
+      if (c && c.id) {
+        // Normalize class keys e.g. cls_1
+        const num = c.numericGrade || parseInt(c.id.replace(/\D/g, ''), 10) || parseInt(c.name.replace(/\D/g, ''), 10);
+        if (num >= 1 && num <= 9) {
+          const canonicalId = `cls_${num}`;
+          map.set(canonicalId, {
+            ...map.get(canonicalId)!,
+            ...c,
+            id: canonicalId,
+            numericGrade: num,
+          });
+        } else {
+          map.set(c.id, c);
+        }
+      }
+    });
+  }
+  const list = Array.from(map.values());
+  list.sort((a, b) => a.numericGrade - b.numericGrade);
+  return list;
+}
+

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { db, handleFirestoreError, OperationType, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 import { cleanForFirestore } from '../../services/firestoreSync';
 import { handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
-import { collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, setDoc } from 'firebase/firestore';
 import { logAuditEvent } from '../../services/auditLogger';
 import {
   ClassItem,
@@ -121,38 +121,40 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
 
     // Real-time Firestore listener for student updates (including Exam Register Numbers)
     let unsub: (() => void) | undefined;
-    try {
-      unsub = onSnapshot(collection(db, 'students'), (snapshot: any) => {
-        if (!snapshot.empty) {
-          const remoteList: Student[] = snapshot.docs.map((d: any) => ({ ...d.data(), id: d.id } as Student));
-          setStudents(prev =>
-            prev.map(p => {
-              const remote = remoteList.find((r: Student) => r.id === p.id || r.admissionNo === p.admissionNo);
-              if (remote) {
-                const regNos = {
-                  ...(p.examRegisterNumbers || {}),
-                  ...((remote as any).examRegisterNumbers || {}),
-                  ...((remote as any).examRegisterNos || {}),
-                };
-                return {
-                  ...p,
-                  ...remote,
-                  examRegisterNumbers: regNos,
-                  examRegisterNos: regNos,
-                  examRegNo:
-                    (remote as any).examRegNo ||
-                    (remote as any).examRegisterNos?.[examinationId] ||
-                    regNos[examinationId] ||
-                    '',
-                };
-              }
-              return p;
-            })
-          );
-        }
-      });
-    } catch (e) {
-      console.warn('Real-time students listener error in MarkEntryScreen:', e);
+    if (!isFirestoreQuotaExhausted()) {
+      try {
+        unsub = safeOnSnapshot(collection(db, 'students'), (snapshot: any) => {
+          if (!snapshot.empty) {
+            const remoteList: Student[] = snapshot.docs.map((d: any) => ({ ...d.data(), id: d.id } as Student));
+            setStudents(prev =>
+              prev.map(p => {
+                const remote = remoteList.find((r: Student) => r.id === p.id || r.admissionNo === p.admissionNo);
+                if (remote) {
+                  const regNos = {
+                    ...(p.examRegisterNumbers || {}),
+                    ...((remote as any).examRegisterNumbers || {}),
+                    ...((remote as any).examRegisterNos || {}),
+                  };
+                  return {
+                    ...p,
+                    ...remote,
+                    examRegisterNumbers: regNos,
+                    examRegisterNos: regNos,
+                    examRegNo:
+                      (remote as any).examRegNo ||
+                      (remote as any).examRegisterNos?.[examinationId] ||
+                      regNos[examinationId] ||
+                      '',
+                  };
+                }
+                return p;
+              })
+            );
+          }
+        });
+      } catch (e) {
+        console.warn('Real-time students listener error in MarkEntryScreen:', e);
+      }
     }
 
     const handleStudentsUpdated = (e: any) => {
@@ -398,92 +400,95 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
   return (
     <div className="space-y-6">
       {/* Header Bar */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onBack}
-            className="p-2 rounded-xl text-slate-600 bg-slate-100 hover:bg-slate-200 transition"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-xl font-bold text-slate-900 font-ml">
-                {cls?.numericGrade === 9 && (subject?.id === 'sub_history_buhuth' || subject?.code === 'HST')
-                  ? 'ബുഹൂസ്'
-                  : subject?.displayNameMl || subject?.nameMl || subject?.nameEn}
-              </h2>
-              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                {isMl ? cls?.nameMl : cls?.name}
-              </span>
+      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onBack}
+              className="p-2 rounded-xl text-slate-600 bg-slate-100 hover:bg-slate-200 transition"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-bold text-slate-900 font-ml">
+                  {cls?.numericGrade === 9 && (subject?.id === 'sub_history_buhuth' || subject?.code === 'HST')
+                    ? 'ബുഹൂസ്'
+                    : subject?.displayNameMl || subject?.nameMl || subject?.nameEn}
+                </h2>
+                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                  {isMl ? cls?.nameMl : cls?.name}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {isMl ? exam?.nameMl : exam?.nameEn} • Max Marks: {subjectMaxMarks}
+              </p>
             </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {isMl ? exam?.nameMl : exam?.nameEn} • Max Marks: {subjectMaxMarks}
-            </p>
+          </div>
+
+          {/* Status Badges */}
+          <div className="flex items-center gap-3">
+            {markSheet?.status === 'returned_for_correction' && (
+              <div className="text-xs bg-amber-50 text-amber-800 border border-amber-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                <AlertCircle className="w-4 h-4 text-amber-600" />
+                <span>
+                  Returned: <strong className="font-semibold">{markSheet.returnedReason}</strong>
+                </span>
+              </div>
+            )}
+
+            {markSheet?.status === 'submitted' && (
+              <div className="text-xs bg-blue-50 text-blue-800 border border-blue-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-blue-600" />
+                <span>Submitted — Awaiting Principal's Verification</span>
+              </div>
+            )}
+
+            {markSheet?.status === 'approved' && (
+              <div className="text-xs bg-emerald-50 text-emerald-800 border border-emerald-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                <CheckCircle className="w-4 h-4 text-emerald-600" />
+                <span>Verified & Approved</span>
+              </div>
+            )}
+
+            {markSheet?.status === 'locked' && (
+              <div className="text-xs bg-purple-50 text-purple-800 border border-purple-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                <Lock className="w-4 h-4 text-purple-600" />
+                <span>Locked by Principal</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Status Badge & Actions */}
-        <div className="flex items-center gap-3">
-          {markSheet?.status === 'returned_for_correction' && (
-            <div className="text-xs bg-amber-50 text-amber-800 border border-amber-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
-              <AlertCircle className="w-4 h-4 text-amber-600" />
-              <span>
-                Returned: <strong className="font-semibold">{markSheet.returnedReason}</strong>
-              </span>
-            </div>
-          )}
+        {/* Action Buttons Row */}
+        {!isReadOnly && (
+          <div className="grid grid-cols-3 gap-2 w-full my-3">
+            <button
+              onClick={handleSaveDraft}
+              disabled={isSaving}
+              className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 rounded-xl transition shadow-2xs disabled:opacity-50"
+            >
+              <Save className="w-4 h-4 shrink-0" />
+              <span>{isSaving ? 'Saving...' : 'Save'}</span>
+            </button>
 
-          {markSheet?.status === 'submitted' && (
-            <div className="text-xs bg-blue-50 text-blue-800 border border-blue-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
-              <Clock className="w-4 h-4 text-blue-600" />
-              <span>Submitted — Awaiting Principal's Verification</span>
-            </div>
-          )}
+            <button
+              onClick={() => setShowPreviewModal(true)}
+              className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap border border-emerald-300 text-emerald-800 bg-emerald-50/50 hover:bg-emerald-100 rounded-xl transition shadow-2xs"
+            >
+              <Eye className="w-4 h-4 shrink-0" />
+              <span>Preview</span>
+            </button>
 
-          {markSheet?.status === 'approved' && (
-            <div className="text-xs bg-emerald-50 text-emerald-800 border border-emerald-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
-              <CheckCircle className="w-4 h-4 text-emerald-600" />
-              <span>Verified & Approved</span>
-            </div>
-          )}
-
-          {markSheet?.status === 'locked' && (
-            <div className="text-xs bg-purple-50 text-purple-800 border border-purple-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
-              <Lock className="w-4 h-4 text-purple-600" />
-              <span>Locked by Principal</span>
-            </div>
-          )}
-
-          {!isReadOnly && (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleSaveDraft}
-                disabled={isSaving}
-                className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl transition"
-              >
-                <Save className="w-4 h-4" />
-                {isSaving ? 'Saving...' : t.saveDraft}
-              </button>
-
-              <button
-                onClick={() => setShowPreviewModal(true)}
-                className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition"
-              >
-                <Eye className="w-4 h-4" />
-                Preview
-              </button>
-
-              <button
-                onClick={() => setShowSubmitModal(true)}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl shadow-xs transition"
-              >
-                <Send className="w-4 h-4" />
-                {t.submitMarks}
-              </button>
-            </div>
-          )}
-        </div>
+            <button
+              onClick={() => setShowSubmitModal(true)}
+              className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap bg-emerald-800 text-white shadow-sm hover:bg-emerald-900 rounded-xl transition"
+            >
+              <Send className="w-4 h-4 shrink-0" />
+              <span>Submit</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {saveSuccess && (
@@ -509,19 +514,19 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
           <table className="w-full text-left border-collapse text-sm">
             <thead className="sticky top-0 bg-slate-100 z-30">
               <tr className="bg-slate-100 text-slate-700 text-xs uppercase tracking-wider border-b border-slate-200">
-                <th className="py-3 px-3 w-12 text-center sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
-                <th className="py-3 px-4 sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[180px] md:min-w-[220px]">Student Name</th>
-                <th className="py-3 px-2 w-20 text-center font-mono">Reg No</th>
+                <th className="py-3 px-3 w-12 text-center sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb] font-mono">Roll</th>
+                <th className="py-3 px-2 w-20 text-center sticky left-12 bg-slate-100 z-40 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)] font-mono text-emerald-900 font-bold">Reg No</th>
+                <th className="py-3 px-4 min-w-[160px] md:min-w-[200px] text-left">Student Name</th>
                 <th className="py-3 px-3 w-24 text-center">Status</th>
                 {effectiveComponents.map(comp => (
-                  <th key={comp.componentKey} className="py-3 px-3 text-center min-w-[120px]">
+                  <th key={comp.componentKey} className="py-3 px-3 text-center min-w-[100px]">
                     <div>{comp.labelEn}</div>
                     <div className="text-[10px] text-emerald-800 font-bold lowercase">
                       (max {comp.maxMarks})
                     </div>
                   </th>
                 ))}
-                <th className="py-3 px-4 w-28 text-center font-bold bg-slate-200/60">
+                <th className="py-3 px-4 w-24 text-center font-bold bg-slate-200/60">
                   Total
                   <div className="text-[10px] text-slate-500 lowercase">(max {subjectMaxMarks})</div>
                 </th>
@@ -549,41 +554,43 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                         : 'bg-slate-50/30 hover:bg-slate-50/80'
                     }`}
                   >
+                    {/* Compact Sticky Frozen Column 1: Roll No */}
                     <td
-                      className={`py-3 px-3 text-center font-bold font-mono text-slate-600 w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${
+                      className={`py-3 px-3 w-12 text-center font-bold font-mono text-slate-600 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${
                         isAbsent ? 'bg-amber-50 group-hover:bg-amber-100' : 'bg-white group-hover:bg-slate-50'
                       }`}
                     >
                       {student.rollNo}
                     </td>
+
+                    {/* Compact Sticky Frozen Column 2: Exam Reg No */}
                     <td
-                      className={`py-3 px-4 sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[180px] md:min-w-[220px] ${
+                      className={`py-3 px-2 w-20 text-center font-semibold font-mono text-emerald-800 sticky left-12 z-20 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)] ${
                         isAbsent ? 'bg-amber-50 group-hover:bg-amber-100' : 'bg-white group-hover:bg-slate-50'
                       }`}
                     >
+                      {regNo}
+                    </td>
+
+                    {/* Scrollable Column 3: Student Name (Clean without Admission Number) */}
+                    <td className="py-3 px-4 min-w-[160px] md:min-w-[200px] text-left">
                       <div className="font-bold text-slate-900 whitespace-nowrap text-xs">
-                        {student.nameEn}{' '}
-                        <span className="font-mono text-[11px] font-normal text-slate-400">
-                          (Adm: {student.admissionNo})
-                        </span>
+                        {student.nameEn}
                       </div>
                       {student.nameMl && (
-                        <div className="text-[11px] text-slate-500 font-ml leading-tight mt-0.5">
+                        <div className="text-[11px] text-slate-500 font-ml leading-tight mt-0.5 whitespace-nowrap">
                           {student.nameMl}
                         </div>
                       )}
                     </td>
-                    <td className="py-3 px-2 text-center font-mono font-bold text-emerald-950 w-20 bg-emerald-50/30">
-                      {regNo}
-                    </td>
 
                     {/* Present / Absent Toggle Button */}
-                    <td className="py-3 px-4 text-center">
+                    <td className="py-3 px-3 text-center">
                       <button
                         type="button"
                         disabled={isReadOnly}
                         onClick={() => handleToggleAbsent(student.id)}
-                        className={`px-2.5 py-1 text-xs font-bold rounded-lg border flex items-center justify-center gap-1 mx-auto transition ${
+                        className={`px-2.5 py-1.5 text-xs font-bold rounded-lg border flex items-center justify-center gap-1 mx-auto transition cursor-pointer disabled:cursor-not-allowed ${
                           isAbsent
                             ? 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
                             : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
@@ -604,9 +611,9 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                       </button>
                     </td>
 
-                    {/* Component Inputs */}
+                    {/* Component Inputs with comfortable touch padding */}
                     {effectiveComponents.map(comp => (
-                      <td key={comp.componentKey} className="py-3 px-3 text-center">
+                      <td key={comp.componentKey} className="py-3 px-2 text-center min-w-[90px]">
                         {isAbsent ? (
                           <span className="text-slate-400 font-mono text-xs select-none">—</span>
                         ) : (
@@ -620,14 +627,14 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                               handleMarkChange(student.id, comp.componentKey, e.target.value, comp.maxMarks)
                             }
                             placeholder="0"
-                            className="w-16 mx-auto text-center font-bold font-mono py-1.5 px-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent bg-white disabled:bg-slate-100 disabled:text-slate-500 shadow-2xs"
+                            className="w-16 mx-auto text-center font-bold font-mono py-2 px-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent bg-white disabled:bg-slate-100 disabled:text-slate-500 shadow-2xs touch-manipulation"
                           />
                         )}
                       </td>
                     ))}
 
                     {/* Auto Computed Total */}
-                    <td className="py-3 px-4 text-center font-mono font-extrabold text-base bg-slate-50/70">
+                    <td className="py-3 px-4 text-center font-mono font-extrabold text-base bg-slate-50/70 w-24">
                       {isAbsent ? (
                         <span className="text-amber-800 text-xs font-bold bg-amber-100 px-2 py-0.5 rounded">
                           Absent

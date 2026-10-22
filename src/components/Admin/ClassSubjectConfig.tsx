@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { ClassItem, SubjectItem, SubjectAssessmentRule } from '../../types';
-import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { db, handleFirestoreError, OperationType, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
-import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import {
   BookOpen,
   Layers,
@@ -66,11 +66,13 @@ export const ClassSubjectConfig: React.FC = () => {
   useEffect(() => {
     loadData();
 
+    if (isFirestoreQuotaExhausted()) return;
+
     // Real-time Firestore sync for classes
     let unsubClasses: (() => void) | undefined;
     let unsubSubjects: (() => void) | undefined;
     try {
-      unsubClasses = onSnapshot(
+      unsubClasses = safeOnSnapshot(
         collection(db, 'classes'),
         snapshot => {
           if (!snapshot.empty) {
@@ -87,7 +89,7 @@ export const ClassSubjectConfig: React.FC = () => {
         }
       );
 
-      unsubSubjects = onSnapshot(
+      unsubSubjects = safeOnSnapshot(
         collection(db, 'subjects'),
         snapshot => {
           if (!snapshot.empty) {

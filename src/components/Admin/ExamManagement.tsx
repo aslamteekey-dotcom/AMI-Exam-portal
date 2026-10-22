@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Examination, AcademicYear, ClassItem } from '../../types';
-import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { db, handleFirestoreError, OperationType, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
-import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import {
   Calendar,
   CheckCircle2,
@@ -109,10 +109,12 @@ export const ExamManagement: React.FC = () => {
   useEffect(() => {
     loadData();
 
+    if (isFirestoreQuotaExhausted()) return;
+
     // Real-time Firestore sync for exams
     let unsubExams: (() => void) | undefined;
     try {
-      unsubExams = onSnapshot(
+      unsubExams = safeOnSnapshot(
         collection(db, 'exams'),
         snapshot => {
           if (!snapshot.empty) {
@@ -134,7 +136,7 @@ export const ExamManagement: React.FC = () => {
     // Real-time Firestore sync for marks
     let unsubMarks: (() => void) | undefined;
     try {
-      unsubMarks = onSnapshot(
+      unsubMarks = safeOnSnapshot(
         collection(db, 'marks'),
         snapshot => {
           if (!snapshot.empty) {

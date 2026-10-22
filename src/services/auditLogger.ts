@@ -1,4 +1,4 @@
-import { db } from './firebase';
+import { db, isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, isQuotaError } from './firebase';
 import { doc, setDoc } from 'firebase/firestore';
 import { cleanForFirestore } from './firestoreSync';
 import { clientStorageApi } from './clientStorageApi';
@@ -67,12 +67,17 @@ export async function logAuditEvent(params: AuditEventParams): Promise<AuditLog>
     console.warn('Local audit log storage warning:', err);
   }
 
-  // 2. Persist to Firestore 'auditLogs' collection
-  try {
-    const docRef = doc(db, 'auditLogs', logId);
-    await setDoc(docRef, cleanForFirestore(auditRecord), { merge: true });
-  } catch (fireErr) {
-    console.warn('Firestore auditLogs setDoc warning:', fireErr);
+  // 2. Persist to Firestore 'auditLogs' collection if cloud quota is available
+  if (!isFirestoreQuotaExhausted()) {
+    try {
+      const docRef = doc(db, 'auditLogs', logId);
+      await setDoc(docRef, cleanForFirestore(auditRecord), { merge: true });
+    } catch (fireErr) {
+      if (isQuotaError(fireErr)) {
+        markFirestoreQuotaExhausted();
+      }
+      console.warn('Firestore auditLogs setDoc notice:', fireErr);
+    }
   }
 
   // 3. Dispatch browser event for active dashboard view listeners

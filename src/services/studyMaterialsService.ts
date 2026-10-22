@@ -15,7 +15,7 @@ import {
   getDownloadURL,
   deleteObject,
 } from 'firebase/storage';
-import { db, storage, handleFirestoreError, OperationType } from './firebase';
+import { db, storage, handleFirestoreError, OperationType, isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, isQuotaError } from './firebase';
 import { StudyMaterialFolder, StudyMaterialFile, DEFAULT_ROOT_FOLDERS } from '../types';
 
 const FOLDERS_COLLECTION = 'study_materials_folders';
@@ -64,6 +64,9 @@ export class StudyMaterialsService {
 
   // Ensure default root folders exist in Firestore and local storage
   public async initDefaultFolders(): Promise<void> {
+    if (isFirestoreQuotaExhausted()) {
+      return;
+    }
     try {
       const snap = await getDocs(collection(db, FOLDERS_COLLECTION));
       const existingIds = new Set(snap.docs.map(d => d.id));
@@ -77,6 +80,9 @@ export class StudyMaterialsService {
         }
       }
     } catch (err) {
+      if (isQuotaError(err)) {
+        markFirestoreQuotaExhausted();
+      }
       console.warn('Firestore default folders init notice (using local storage fallback):', err);
       const local = getLocalFolders();
       const existingLocalIds = new Set(local.map(f => f.id));
@@ -96,6 +102,10 @@ export class StudyMaterialsService {
     // Initial call with local data
     const local = getLocalFolders();
     callback(local);
+
+    if (isFirestoreQuotaExhausted()) {
+      return () => {};
+    }
 
     try {
       return onSnapshot(
@@ -124,11 +134,18 @@ export class StudyMaterialsService {
           }
         },
         err => {
-          handleFirestoreError(err, OperationType.LIST, FOLDERS_COLLECTION);
+          if (isQuotaError(err)) {
+            markFirestoreQuotaExhausted();
+          } else {
+            handleFirestoreError(err, OperationType.LIST, FOLDERS_COLLECTION);
+          }
           callback(getLocalFolders());
         }
       );
     } catch (err) {
+      if (isQuotaError(err)) {
+        markFirestoreQuotaExhausted();
+      }
       console.warn('Real-time folders listener error:', err);
       callback(getLocalFolders());
       return () => {};
@@ -138,6 +155,10 @@ export class StudyMaterialsService {
   // Subscribe to all files (or filter by folder in memory)
   public subscribeFiles(callback: (files: StudyMaterialFile[]) => void): Unsubscribe {
     callback(getLocalFiles());
+
+    if (isFirestoreQuotaExhausted()) {
+      return () => {};
+    }
 
     try {
       return onSnapshot(
@@ -151,11 +172,18 @@ export class StudyMaterialsService {
           callback(list);
         },
         err => {
-          handleFirestoreError(err, OperationType.LIST, FILES_COLLECTION);
+          if (isQuotaError(err)) {
+            markFirestoreQuotaExhausted();
+          } else {
+            handleFirestoreError(err, OperationType.LIST, FILES_COLLECTION);
+          }
           callback(getLocalFiles());
         }
       );
     } catch (err) {
+      if (isQuotaError(err)) {
+        markFirestoreQuotaExhausted();
+      }
       console.warn('Real-time files listener error:', err);
       callback(getLocalFiles());
       return () => {};
@@ -181,10 +209,15 @@ export class StudyMaterialsService {
     };
 
     // Save to Firestore
-    try {
-      await setDoc(doc(db, FOLDERS_COLLECTION, id), newFolder);
-    } catch (err) {
-      console.warn('Firestore folder create error (fallback to local):', err);
+    if (!isFirestoreQuotaExhausted()) {
+      try {
+        await setDoc(doc(db, FOLDERS_COLLECTION, id), newFolder);
+      } catch (err) {
+        if (isQuotaError(err)) {
+          markFirestoreQuotaExhausted();
+        }
+        console.warn('Firestore folder create error (fallback to local):', err);
+      }
     }
 
     // Always update local cache
@@ -226,11 +259,16 @@ export class StudyMaterialsService {
     }
 
     // Delete folders from Firestore
-    for (const fId of foldersToDelete) {
-      try {
-        await deleteDoc(doc(db, FOLDERS_COLLECTION, fId));
-      } catch (err) {
-        console.warn(`Firestore folder delete error for ${fId}:`, err);
+    if (!isFirestoreQuotaExhausted()) {
+      for (const fId of foldersToDelete) {
+        try {
+          await deleteDoc(doc(db, FOLDERS_COLLECTION, fId));
+        } catch (err) {
+          if (isQuotaError(err)) {
+            markFirestoreQuotaExhausted();
+          }
+          console.warn(`Firestore folder delete error for ${fId}:`, err);
+        }
       }
     }
 
@@ -305,10 +343,15 @@ export class StudyMaterialsService {
     };
 
     // Save metadata in Firestore
-    try {
-      await setDoc(doc(db, FILES_COLLECTION, id), newFile);
-    } catch (dbErr) {
-      console.warn('Firestore file metadata save error (persisting locally):', dbErr);
+    if (!isFirestoreQuotaExhausted()) {
+      try {
+        await setDoc(doc(db, FILES_COLLECTION, id), newFile);
+      } catch (dbErr) {
+        if (isQuotaError(dbErr)) {
+          markFirestoreQuotaExhausted();
+        }
+        console.warn('Firestore file metadata save error (persisting locally):', dbErr);
+      }
     }
 
     // Always update local cache
@@ -332,10 +375,15 @@ export class StudyMaterialsService {
     }
 
     // 2. Delete document from Firestore
-    try {
-      await deleteDoc(doc(db, FILES_COLLECTION, file.id));
-    } catch (err) {
-      console.warn('Firestore file delete warning:', err);
+    if (!isFirestoreQuotaExhausted()) {
+      try {
+        await deleteDoc(doc(db, FILES_COLLECTION, file.id));
+      } catch (err) {
+        if (isQuotaError(err)) {
+          markFirestoreQuotaExhausted();
+        }
+        console.warn('Firestore file delete warning:', err);
+      }
     }
 
     // 3. Update local cache

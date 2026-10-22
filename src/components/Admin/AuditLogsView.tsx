@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { AuditLog } from '../../types';
-import { db } from '../../services/firebase';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { db, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
+import { collection } from 'firebase/firestore';
 import {
   ShieldCheck,
   Search,
@@ -54,10 +54,12 @@ export const AuditLogsView: React.FC = () => {
   useEffect(() => {
     loadLogs();
 
+    if (isFirestoreQuotaExhausted()) return;
+
     // 1. Live Firestore real-time listener for auditLogs collection
     let unsub: (() => void) | undefined;
     try {
-      unsub = onSnapshot(
+      unsub = safeOnSnapshot(
         collection(db, 'auditLogs'),
         snapshot => {
           const remote = snapshot.docs.map(doc => ({

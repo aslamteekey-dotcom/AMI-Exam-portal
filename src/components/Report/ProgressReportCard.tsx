@@ -4,8 +4,8 @@ import { useAuth } from '../../context/AuthContext';
 import { Printer, Download, Award, GraduationCap, ShieldAlert, AlertTriangle } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { extractComponentColumns, calculateStudentReportMetrics } from '../../utils/reportCalculations';
-import { collection, onSnapshot, doc } from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { collection, doc } from 'firebase/firestore';
+import { db, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 
 interface Props {
   report: StudentProgressReport;
@@ -43,6 +43,7 @@ export const ProgressReportCard: React.FC<Props> = ({
 
   // Globally fetch settings & listen to updates so Admin settings, address, reg no, Principal name dynamically reflect
   useEffect(() => {
+    if (isBatchItem) return;
     let isMounted = true;
     const fetchFreshSettings = async () => {
       try {
@@ -62,20 +63,22 @@ export const ProgressReportCard: React.FC<Props> = ({
 
     // Real-time Firestore settings collection listener
     let unsubFirestore: (() => void) | undefined;
-    try {
-      unsubFirestore = onSnapshot(collection(db, 'settings'), (snapshot) => {
-        if (!snapshot.empty && isMounted) {
-          let merged: any = {};
-          snapshot.docs.forEach(d => {
-            merged = { ...merged, ...d.data() };
-          });
-          if (Object.keys(merged).length > 0) {
-            setCurrentSettings(prev => ({ ...prev, ...merged }));
+    if (!isFirestoreQuotaExhausted()) {
+      try {
+        unsubFirestore = safeOnSnapshot(collection(db, 'settings'), (snapshot) => {
+          if (!snapshot.empty && isMounted) {
+            let merged: any = {};
+            snapshot.docs.forEach(d => {
+              merged = { ...merged, ...d.data() };
+            });
+            if (Object.keys(merged).length > 0) {
+              setCurrentSettings(prev => ({ ...prev, ...merged }));
+            }
           }
-        }
-      });
-    } catch (e) {
-      console.warn('Settings onSnapshot error in ProgressReportCard:', e);
+        });
+      } catch (e) {
+        console.warn('Settings onSnapshot error in ProgressReportCard:', e);
+      }
     }
 
     const handleSettingsUpdated = (e: any) => {
@@ -93,7 +96,7 @@ export const ProgressReportCard: React.FC<Props> = ({
       if (unsubFirestore) unsubFirestore();
       window.removeEventListener('madrasa_settings_updated', handleSettingsUpdated);
     };
-  }, []);
+  }, [isBatchItem]);
 
   // Strictly English class name (e.g., "Class 7", strip any Malayalam text)
   const cleanClassName = (report?.classNameEn || 'Class')
@@ -114,6 +117,7 @@ export const ProgressReportCard: React.FC<Props> = ({
       setTeacherName(report.classTeacherName);
       return;
     }
+    if (isBatchItem) return;
     let isMounted = true;
     const fetchTeacher = async () => {
       try {

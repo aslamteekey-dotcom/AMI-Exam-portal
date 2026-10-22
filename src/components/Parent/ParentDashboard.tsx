@@ -58,8 +58,8 @@ import {
   Facebook,
   Youtube,
 } from 'lucide-react';
-import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { collection } from 'firebase/firestore';
+import { db, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 
 export type ParentPortalTab =
   | 'home'
@@ -226,11 +226,13 @@ export const ParentDashboard: React.FC = () => {
   useEffect(() => {
     loadInitialData();
 
+    if (isFirestoreQuotaExhausted()) return;
+
     const unsubs: (() => void)[] = [];
 
     // 1. Real-time Firestore listener for student register numbers & details
     try {
-      const unsubStu = onSnapshot(collection(db, 'students'), snapshot => {
+      const unsubStu = safeOnSnapshot(collection(db, 'students'), snapshot => {
         if (!snapshot.empty) {
           const remoteList = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Student));
           setChildren(prev =>
@@ -281,7 +283,7 @@ export const ParentDashboard: React.FC = () => {
         }
       };
 
-      const unsubExams = onSnapshot(collection(db, 'exams'), snapshot => {
+      const unsubExams = safeOnSnapshot(collection(db, 'exams'), snapshot => {
         if (!snapshot.empty) {
           const remoteExams = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Examination));
           handleRemoteExams(remoteExams);
@@ -289,7 +291,7 @@ export const ParentDashboard: React.FC = () => {
       });
       unsubs.push(unsubExams);
 
-      const unsubExaminations = onSnapshot(collection(db, 'examinations'), snapshot => {
+      const unsubExaminations = safeOnSnapshot(collection(db, 'examinations'), snapshot => {
         if (!snapshot.empty) {
           const remoteExams = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Examination));
           handleRemoteExams(remoteExams);
@@ -302,7 +304,7 @@ export const ParentDashboard: React.FC = () => {
 
     // 3. Real-time Firestore listener for marks: listen to published/approved marks for active child
     try {
-      const unsubMarks = onSnapshot(collection(db, 'marks'), snapshot => {
+      const unsubMarks = safeOnSnapshot(collection(db, 'marks'), snapshot => {
         if (!snapshot.empty && selectedChildIdRef.current && selectedExamIdRef.current) {
           const activeChild = childrenRef.current.find(c => String(c.id) === String(selectedChildIdRef.current));
           if (activeChild) {
@@ -327,7 +329,7 @@ export const ParentDashboard: React.FC = () => {
 
     // 4. Real-time Firestore listener for attendance records
     try {
-      const unsubAttendance = onSnapshot(collection(db, 'attendance'), snapshot => {
+      const unsubAttendance = safeOnSnapshot(collection(db, 'attendance'), snapshot => {
         if (!snapshot.empty) {
           const attMap: Record<string, ClassAttendanceConfig> = {};
           snapshot.docs.forEach(docSnap => {
@@ -343,7 +345,7 @@ export const ParentDashboard: React.FC = () => {
 
     // 4b. Real-time Firestore listener for institution holidays
     try {
-      const unsubHolidays = onSnapshot(collection(db, 'institutionHolidays'), snapshot => {
+      const unsubHolidays = safeOnSnapshot(collection(db, 'institutionHolidays'), snapshot => {
         const holMap: Record<string, InstitutionHoliday> = {};
         snapshot.docs.forEach(docSnap => {
           holMap[docSnap.id] = { ...docSnap.data(), id: docSnap.id, date: docSnap.data().date || docSnap.id } as InstitutionHoliday;
@@ -357,7 +359,7 @@ export const ParentDashboard: React.FC = () => {
 
     // 4c. Real-time Firestore listener for special working days (unlocked Sundays)
     try {
-      const unsubSpecial = onSnapshot(collection(db, 'specialWorkingDays'), snapshot => {
+      const unsubSpecial = safeOnSnapshot(collection(db, 'specialWorkingDays'), snapshot => {
         const swMap: Record<string, SpecialWorkingDay> = {};
         snapshot.docs.forEach(docSnap => {
           swMap[docSnap.id] = { ...docSnap.data(), id: docSnap.id, date: docSnap.data().date || docSnap.id } as SpecialWorkingDay;
@@ -371,7 +373,7 @@ export const ParentDashboard: React.FC = () => {
 
     // 5. Real-time Firestore listener for news & announcements
     try {
-      const unsubNews = onSnapshot(collection(db, 'news'), snapshot => {
+      const unsubNews = safeOnSnapshot(collection(db, 'news'), snapshot => {
         if (!snapshot.empty) {
           const remoteNews = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as NewsItem));
           const existingIds = new Set(remoteNews.map(n => n.id));
@@ -382,12 +384,12 @@ export const ParentDashboard: React.FC = () => {
       });
       unsubs.push(unsubNews);
     } catch (e) {
-      console.warn('Real-time news listener error in ParentDashboard:', e);
+      console.error('Real-time news listener error in ParentDashboard:', e);
     }
 
     // 6. Real-time Firestore listener for teachers
     try {
-      const unsubTeachers = onSnapshot(collection(db, 'teachers'), snapshot => {
+      const unsubTeachers = safeOnSnapshot(collection(db, 'teachers'), snapshot => {
         if (!snapshot.empty) {
           const remoteTeachers = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as AppUser));
           setTeachers(remoteTeachers);
@@ -1409,7 +1411,7 @@ export const ParentDashboard: React.FC = () => {
                   }
                 });
                 Object.entries(records).forEach(([dKey, rec]) => {
-                  if (rec.isHoliday) {
+                  if (rec.isHoliday && institutionHolidays[dKey] && isClassMatch(institutionHolidays[dKey]?.targetClasses, childClassId)) {
                     allHolidaysMap[dKey] = {
                       date: dKey,
                       reason: rec.holidayReason || allHolidaysMap[dKey]?.reason || 'Official Holiday',

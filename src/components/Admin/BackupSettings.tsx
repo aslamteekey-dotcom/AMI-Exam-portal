@@ -2,6 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { InstitutionSettings, User, AdminPermissions } from '../../types';
 import { firestoreSync } from '../../services/firestoreSync';
+import {
+  isFirestoreQuotaExhausted,
+  markFirestoreQuotaExhausted,
+  resetFirestoreQuotaStatus,
+  testFirestoreConnection,
+  QUOTA_STATUS_EVENT,
+} from '../../services/firebase';
 import { SubAdminModal } from './SubAdminModal';
 import {
   Download,
@@ -21,6 +28,8 @@ import {
   Plus,
   Edit2,
   ShieldCheck,
+  Cloud,
+  CloudOff,
 } from 'lucide-react';
 
 export const BackupSettings: React.FC = () => {
@@ -40,6 +49,42 @@ export const BackupSettings: React.FC = () => {
   const [showAdminPassword, setShowAdminPassword] = useState(false);
   const [credentialSuccess, setCredentialSuccess] = useState(false);
   const [isUpdatingCredentials, setIsUpdatingCredentials] = useState(false);
+
+  // Cloud Sync & Quota status state
+  const [isQuotaExhausted, setIsQuotaExhausted] = useState<boolean>(() => isFirestoreQuotaExhausted());
+  const [isTestingCloud, setIsTestingCloud] = useState<boolean>(false);
+  const [cloudStatusMessage, setCloudStatusMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleQuotaChange = (e: any) => {
+      setIsQuotaExhausted(Boolean(e.detail?.exhausted));
+    };
+    window.addEventListener(QUOTA_STATUS_EVENT, handleQuotaChange);
+    return () => window.removeEventListener(QUOTA_STATUS_EVENT, handleQuotaChange);
+  }, []);
+
+  const handleTestCloudConnection = async () => {
+    setIsTestingCloud(true);
+    setCloudStatusMessage(null);
+    try {
+      resetFirestoreQuotaStatus();
+      const connected = await testFirestoreConnection();
+      if (connected) {
+        setIsQuotaExhausted(false);
+        setCloudStatusMessage('Firebase Cloud connection active and synchronized.');
+      } else {
+        markFirestoreQuotaExhausted(60);
+        setIsQuotaExhausted(true);
+        setCloudStatusMessage('Firebase daily quota limit reached for today. Safe local offline storage is active.');
+      }
+    } catch {
+      markFirestoreQuotaExhausted(60);
+      setIsQuotaExhausted(true);
+      setCloudStatusMessage('Firebase Cloud quota reached. Operating safely in local storage mode.');
+    } finally {
+      setIsTestingCloud(false);
+    }
+  };
 
   useEffect(() => {
     if (user) {
@@ -369,6 +414,69 @@ export const BackupSettings: React.FC = () => {
             </button>
           </div>
         </form>
+      </div>
+
+      {/* Cloud Synchronization & Quota Status Card */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2">
+            {isQuotaExhausted ? (
+              <CloudOff className="w-5 h-5 text-amber-600" />
+            ) : (
+              <Cloud className="w-5 h-5 text-emerald-800" />
+            )}
+            <div>
+              <h3 className="text-base font-bold text-slate-900">Cloud Synchronization & Storage Mode</h3>
+              <p className="text-xs text-slate-500">
+                Firebase Firestore cloud status and automated quota circuit-breaker management.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleTestCloudConnection}
+            disabled={isTestingCloud}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl transition cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isTestingCloud ? 'animate-spin' : ''}`} />
+            {isTestingCloud ? 'Checking Cloud...' : 'Test & Reconnect Cloud'}
+          </button>
+        </div>
+
+        {/* Status Callout Banner */}
+        {isQuotaExhausted ? (
+          <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-xl text-xs space-y-2">
+            <div className="flex items-center gap-2 font-bold text-amber-900">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+              Local Offline Storage Active (Cloud Quota Reached)
+            </div>
+            <p className="text-slate-600 leading-relaxed">
+              The Firebase Firestore daily free quota has been exhausted. To maintain smooth operation without interruption, the portal's circuit breaker has engaged local browser storage mode.
+            </p>
+            <ul className="list-disc list-inside text-slate-600 space-y-1 pl-1">
+              <li>All marks, student records, exams, and attendance are safely saved on this device.</li>
+              <li>You can download a complete JSON database backup below at any time to preserve snapshots.</li>
+              <li>When the daily quota resets or if upgraded, click <strong>"Test & Reconnect Cloud"</strong> to resume real-time sync.</li>
+            </ul>
+          </div>
+        ) : (
+          <div className="p-4 bg-emerald-50/80 border border-emerald-200 rounded-xl text-xs space-y-1">
+            <div className="flex items-center gap-2 font-bold text-emerald-900">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+              Firebase Cloud Synchronization Connected
+            </div>
+            <p className="text-slate-600 leading-relaxed">
+              Real-time synchronization with Firestore is enabled. Updates to students, mark entries, attendance, and exam configurations are saved both locally and in the cloud.
+            </p>
+          </div>
+        )}
+
+        {cloudStatusMessage && (
+          <div className="text-xs p-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-700">
+            {cloudStatusMessage}
+          </div>
+        )}
       </div>
 
       {/* Database Backup & Disaster Recovery Card */}

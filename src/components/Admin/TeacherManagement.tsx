@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { User, ClassItem, SubjectItem, TeacherAssignment } from '../../types';
-import { db, handleFirestoreError, OperationType } from '../../services/firebase';
+import { db, handleFirestoreError, OperationType, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
-import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { logAuditEvent } from '../../services/auditLogger';
 import {
   Users,
@@ -104,10 +104,12 @@ export const TeacherManagement: React.FC = () => {
   useEffect(() => {
     loadData();
 
+    if (isFirestoreQuotaExhausted()) return;
+
     // Real-time listener for Firestore 'teachers' collection
     let unsub: (() => void) | undefined;
     try {
-      unsub = onSnapshot(
+      unsub = safeOnSnapshot(
         collection(db, 'teachers'),
         (snapshot) => {
           if (!snapshot.empty) {
