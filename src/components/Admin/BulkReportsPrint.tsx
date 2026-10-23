@@ -267,7 +267,13 @@ export const BulkReportsPrint: React.FC = () => {
       const s = rep.student;
       const rankData = classLedgerRankings.get(s?.id || '') || (s?.admissionNo ? classLedgerRankings.get(s.admissionNo) : undefined);
       const metrics = rankData?.metrics || calculateStudentReportMetrics(rep, classTotalExpectedMax);
-      const examRegNo = rep.examRegisterNo || s?.examRegisterNumbers?.[selectedExamId] || s?.rollNo || '—';
+      const examRegNo =
+        (s as any)?.examRegisterNos?.[selectedExamId] ||
+        (s as any)?.examRegNo ||
+        (s as any)?.regNo ||
+        s?.examRegisterNumbers?.[selectedExamId] ||
+        rep.examRegisterNo ||
+        '-';
       const rankStr = rankData?.isRankAwarded && rankData.rank !== null
         ? `Rank ${rankData.rank}`
         : (metrics.displayResultStatus === 'Absent' ? 'Absent' : (metrics.displayResultStatus === 'Withheld' ? 'Withheld' : '—'));
@@ -690,7 +696,13 @@ export const BulkReportsPrint: React.FC = () => {
                     const s = rep?.student;
                     const rankData = classLedgerRankings.get(s?.id || '') || (s?.admissionNo ? classLedgerRankings.get(s.admissionNo) : undefined);
                     const metrics = rankData?.metrics || calculateStudentReportMetrics(rep, classTotalExpectedMax);
-                    const examRegNo = rep.examRegisterNo || s?.examRegisterNumbers?.[selectedExamId] || s?.rollNo || '—';
+                    const examRegNo =
+                      (s as any)?.examRegisterNos?.[selectedExamId] ||
+                      (s as any)?.examRegNo ||
+                      (s as any)?.regNo ||
+                      s?.examRegisterNumbers?.[selectedExamId] ||
+                      rep.examRegisterNo ||
+                      '-';
 
                     return (
                       <tr key={s?.id || Math.random()} className="hover:bg-slate-50/80 transition group">

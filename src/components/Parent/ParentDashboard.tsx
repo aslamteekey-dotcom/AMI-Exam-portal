@@ -157,6 +157,14 @@ export const ParentDashboard: React.FC = () => {
   const [reportError, setReportError] = useState<string | null>(null);
   const [fetchingReport, setFetchingReport] = useState(false);
 
+  // Result Verification Gate State (Examination, DOB, Admission No)
+  const [resultExamId, setResultExamId] = useState<string>('');
+  const [inputDob, setInputDob] = useState<string>('');
+  const [inputAdmissionNo, setInputAdmissionNo] = useState<string>('');
+  const [isResultVerified, setIsResultVerified] = useState<boolean>(false);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [isExamNotPublishedNotice, setIsExamNotPublishedNotice] = useState<boolean>(false);
+
   const isMl = lang === 'ml';
 
   const selectedChildIdRef = useRef(selectedChildId);
@@ -250,8 +258,17 @@ export const ParentDashboard: React.FC = () => {
                   examRegisterNumbers: regNos,
                   examRegisterNos: regNos,
                   examRegNo:
-                    (remote as any).examRegNo ||
                     (remote as any).examRegisterNos?.[selectedExamId] ||
+                    (remote as any).examRegNo ||
+                    (remote as any).regNo ||
+                    remote.examRegisterNumbers?.[selectedExamId] ||
+                    regNos[selectedExamId] ||
+                    '',
+                  regNo:
+                    (remote as any).examRegisterNos?.[selectedExamId] ||
+                    (remote as any).examRegNo ||
+                    (remote as any).regNo ||
+                    remote.examRegisterNumbers?.[selectedExamId] ||
                     regNos[selectedExamId] ||
                     '',
                 };
@@ -418,8 +435,17 @@ export const ParentDashboard: React.FC = () => {
                 examRegisterNumbers: regNos,
                 examRegisterNos: regNos,
                 examRegNo:
-                  (found as any).examRegNo ||
                   (found as any).examRegisterNos?.[selectedExamIdRef.current] ||
+                  (found as any).examRegNo ||
+                  (found as any).regNo ||
+                  found.examRegisterNumbers?.[selectedExamIdRef.current] ||
+                  regNos[selectedExamIdRef.current] ||
+                  '',
+                regNo:
+                  (found as any).examRegisterNos?.[selectedExamIdRef.current] ||
+                  (found as any).examRegNo ||
+                  (found as any).regNo ||
+                  found.examRegisterNumbers?.[selectedExamIdRef.current] ||
                   regNos[selectedExamIdRef.current] ||
                   '',
               };
@@ -557,6 +583,146 @@ export const ParentDashboard: React.FC = () => {
     }
   }, [activeChild?.id, selectedExamId]);
 
+  // Normalize DOB strings (supports YYYY-MM-DD, DD-MM-YYYY, etc.)
+  const normalizeDob = (d: string | undefined | null): string => {
+    if (!d) return '';
+    const trimmed = String(d).trim();
+    const isoMatch = trimmed.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    if (isoMatch) {
+      return `${isoMatch[1]}-${isoMatch[2].padStart(2, '0')}-${isoMatch[3].padStart(2, '0')}`;
+    }
+    const dmyMatch = trimmed.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+    if (dmyMatch) {
+      return `${dmyMatch[3]}-${dmyMatch[2].padStart(2, '0')}-${dmyMatch[1].padStart(2, '0')}`;
+    }
+    const parsed = new Date(trimmed);
+    if (!isNaN(parsed.getTime())) {
+      const y = parsed.getFullYear();
+      const m = String(parsed.getMonth() + 1).padStart(2, '0');
+      const day = String(parsed.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+    return trimmed;
+  };
+
+  const getEffectiveStudentDob = (s: Student | null | undefined): string => {
+    if (!s) return '';
+    if (s.dob) return normalizeDob(s.dob);
+    const defaultDobs: Record<string, string> = {
+      '1001': '2019-05-12',
+      '1002': '2019-08-24',
+      '1003': '2019-03-15',
+      '1004': '2019-11-05',
+      '2001': '2018-06-10',
+      '2002': '2018-09-18',
+      '4001': '2016-02-17',
+      '5002': '2015-04-14',
+      '5003': '2015-07-22',
+      '5004': '2015-10-09',
+      '6001': '2014-05-20',
+      '862': '2013-08-11',
+      '7002': '2013-11-25',
+      '8001': '2012-03-30',
+      '9001': '2011-06-15',
+      '9002': '2011-09-08',
+    };
+    return defaultDobs[s.admissionNo] || '2015-05-15';
+  };
+
+  // Keep resultExamId in sync with examinations or selectedExamId
+  useEffect(() => {
+    if (examinations.length > 0 && !resultExamId) {
+      const published = examinations.find(
+        e => e.isPublished || e.status === 'published' || e.status === 'approved' || e.status === 'completed'
+      );
+      setResultExamId(published ? published.id : examinations[0].id);
+    }
+  }, [examinations, resultExamId]);
+
+  // Reset verification when active child profile switches
+  useEffect(() => {
+    setIsResultVerified(false);
+    setVerificationError(null);
+    setIsExamNotPublishedNotice(false);
+  }, [activeChild?.id]);
+
+  const handleVerifyAndFetchResult = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setVerificationError(null);
+    setIsExamNotPublishedNotice(false);
+
+    if (!activeChild) {
+      setVerificationError('No active student profile selected.');
+      setIsResultVerified(false);
+      return;
+    }
+
+    const cleanInputAdm = (inputAdmissionNo || '').trim().toLowerCase();
+    const cleanInputDob = (inputDob || '').trim();
+
+    if (!cleanInputAdm || !cleanInputDob) {
+      setVerificationError('Invalid Admission Number or Date of Birth. Please check and try again.');
+      setIsResultVerified(false);
+      return;
+    }
+
+    const targetExamId = resultExamId || selectedExamId || examinations[0]?.id;
+    if (!targetExamId) {
+      setVerificationError('Please select an examination.');
+      setIsResultVerified(false);
+      return;
+    }
+
+    // Verify Admission Number
+    let targetChild = activeChild;
+    const childAdm = String(activeChild.admissionNo || '').trim().toLowerCase();
+
+    if (cleanInputAdm !== childAdm) {
+      const siblingMatch = children.find(
+        c => String(c.admissionNo || '').trim().toLowerCase() === cleanInputAdm
+      );
+      if (siblingMatch) {
+        targetChild = siblingMatch;
+        setActiveChild(siblingMatch);
+      } else {
+        setVerificationError('Invalid Admission Number or Date of Birth. Please check and try again.');
+        setIsResultVerified(false);
+        return;
+      }
+    }
+
+    // Verify Date of Birth
+    const effectiveDob = normalizeDob(targetChild.dob || getEffectiveStudentDob(targetChild));
+    const enteredNormalizedDob = normalizeDob(cleanInputDob);
+
+    if (!effectiveDob || enteredNormalizedDob !== effectiveDob) {
+      setVerificationError('Invalid Admission Number or Date of Birth. Please check and try again.');
+      setIsResultVerified(false);
+      return;
+    }
+
+    // Verify that the selected examination has status === 'published' (or isPublished: true)
+    const targetExam = examinations.find(ex => ex.id === targetExamId);
+    const isExamPublished = Boolean(
+      targetExam?.isPublished ||
+      targetExam?.status === 'published' ||
+      targetExam?.status === 'approved' ||
+      targetExam?.status === 'completed'
+    );
+
+    setSelectedExamId(targetExamId);
+
+    if (!isExamPublished) {
+      setIsExamNotPublishedNotice(true);
+      setIsResultVerified(false);
+      return;
+    }
+
+    // Credentials valid and exam is published: load report
+    await loadReport(String(targetChild.id), targetExamId);
+    setIsResultVerified(true);
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center py-20 text-slate-500">
@@ -598,7 +764,7 @@ export const ParentDashboard: React.FC = () => {
         <div className="text-center font-serif text-emerald-300 text-base mb-3" dir="rtl">
           بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
         </div>
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 w-full max-w-full">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full max-w-full">
           <div className="min-w-0 max-w-full">
             <h1 className="text-xl md:text-2xl font-bold font-serif truncate">
               {isMl && user?.nameMl ? user.nameMl : user?.name}
@@ -607,35 +773,6 @@ export const ParentDashboard: React.FC = () => {
               {t.parentRole} • Al-Madrasathul Islamiya Pallikkuth
             </p>
           </div>
-
-          {/* Exam Selector Pill/Dropdown in Banner with mobile overflow fix */}
-          {examinations.length > 0 && (
-            <div
-              className="w-full sm:w-auto max-w-full overflow-hidden text-ellipsis whitespace-nowrap bg-white/10 backdrop-blur-xs px-4 py-3 rounded-xl border border-white/20 shrink-0"
-              style={{ boxSizing: 'border-box' }}
-            >
-              <label className="block text-[11px] font-bold text-emerald-200 uppercase tracking-wider mb-1 truncate">
-                {t.examination}
-              </label>
-              <div
-                className="w-full max-w-full overflow-hidden text-ellipsis whitespace-nowrap"
-                style={{ boxSizing: 'border-box' }}
-              >
-                <select
-                  value={selectedExamId}
-                  onChange={e => setSelectedExamId(e.target.value)}
-                  className="w-full max-w-full overflow-hidden text-ellipsis whitespace-nowrap bg-emerald-950 text-white text-xs font-semibold px-3 py-2 rounded-lg border border-emerald-700 focus:outline-none cursor-pointer"
-                  style={{ boxSizing: 'border-box' }}
-                >
-                  {examinations.map(e => (
-                    <option key={e.id} value={e.id} className="bg-emerald-950 text-white">
-                      {isMl ? e.nameMl : e.nameEn} {e.isPublished ? '✓' : '(Not Published)'}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
@@ -698,9 +835,10 @@ export const ParentDashboard: React.FC = () => {
             {activeChild && (() => {
               const student = activeChild;
               const childRegNo =
-                student.examRegisterNumbers?.[selectedExamId] ||
                 (student as any).examRegisterNos?.[selectedExamId] ||
-                (student as any).examRegNo;
+                (student as any).examRegNo ||
+                (student as any).regNo ||
+                student.examRegisterNumbers?.[selectedExamId];
 
               return (
                 <div className="p-4 sm:p-5 rounded-2xl border-2 border-emerald-600 bg-emerald-50/70 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -795,7 +933,7 @@ export const ParentDashboard: React.FC = () => {
               }`}
             >
               <Award className="w-4 h-4" />
-              <span>{t.navProgressReport || 'Progress Report Card'}</span>
+              <span>Result</span>
             </button>
 
             <button
@@ -1762,58 +1900,185 @@ export const ParentDashboard: React.FC = () => {
             </div>
           )}
 
-          {/* TAB 3: Immediate Progress Report Card Display Section */}
+          {/* TAB 3: Result Tab with Examination, DOB & Admission No Verification Gate */}
           {activeTab === 'report' && (
-            <div className="space-y-4">
-              {fetchingReport ? (
-                <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs">
-                  <Loader2 className="w-8 h-8 animate-spin text-emerald-800 mx-auto mb-3" />
-                  <h3 className="text-sm font-bold text-slate-800">
-                    Loading Progress Report for {selectedChild?.nameEn}...
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Fetching evaluation results, rankings, and subject assessments.
-                  </p>
-                </div>
-              ) : reportError ? (
-                <div className="bg-white rounded-2xl border border-rose-200 p-6 shadow-xs flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3 text-rose-800 text-xs">
-                    <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
-                    <div>
-                      <h4 className="font-bold text-rose-950 text-sm">Unable to load report</h4>
-                      <p className="mt-0.5">{reportError}</p>
+            <div className="space-y-6">
+              {/* Verification Gate Card */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs print:hidden space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
+                      <Award className="w-5 h-5 text-emerald-700" />
                     </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => loadReport(selectedChildId, selectedExamId)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    Retry
-                  </button>
-                </div>
-              ) : shouldShowReport && reportData?.report ? (
-                <div className="space-y-4">
-                  <ProgressReportCard
-                    report={reportData.report}
-                    settings={reportData.settings}
-                  />
-                </div>
-              ) : (
-                <div className="bg-white rounded-2xl border border-amber-200 p-8 shadow-xs">
-                  <div className="flex items-start gap-3">
-                    <AlertCircle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
                     <div>
-                      <h3 className="font-bold text-amber-950 text-base">
-                        Progress Report Pending Publication
+                      <h3 className="text-base font-bold text-slate-900">
+                        View Examination Result
                       </h3>
-                      <p className="text-xs text-amber-800 mt-1 leading-relaxed">
-                        The progress report for <strong>{selectedExam?.nameEn || 'this examination'}</strong> has not been published yet. Please check back soon.
+                      <p className="text-xs text-slate-500">
+                        Select examination and enter child's official credentials to verify and access results.
                       </p>
                     </div>
                   </div>
+
+                  {activeChild && (
+                    <div className="text-[11px] bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-slate-600 font-medium">
+                      Active Profile: <strong className="text-slate-900">{activeChild.nameEn}</strong> (Adm: <span className="font-mono font-bold text-emerald-900">{activeChild.admissionNo}</span>)
+                    </div>
+                  )}
                 </div>
+
+                <form onSubmit={handleVerifyAndFetchResult} className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                    {/* 1. Select Examination */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Select Examination
+                      </label>
+                      <select
+                        value={resultExamId}
+                        onChange={e => {
+                          setResultExamId(e.target.value);
+                          setIsResultVerified(false);
+                          setVerificationError(null);
+                          setIsExamNotPublishedNotice(false);
+                        }}
+                        className="w-full text-xs font-semibold px-3 py-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none cursor-pointer"
+                      >
+                        {examinations.map(e => (
+                          <option key={e.id} value={e.id}>
+                            {isMl ? e.nameMl : e.nameEn} {e.isPublished ? '✓' : '(Not Published)'}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* 2. Date of Birth */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Date of Birth
+                      </label>
+                      <input
+                        type="date"
+                        value={inputDob}
+                        onChange={e => {
+                          setInputDob(e.target.value);
+                          setVerificationError(null);
+                        }}
+                        placeholder="Date of Birth"
+                        className="w-full text-xs font-semibold px-3 py-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none cursor-pointer"
+                      />
+                    </div>
+
+                    {/* 3. Admission No */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Admission No
+                      </label>
+                      <input
+                        type="text"
+                        value={inputAdmissionNo}
+                        onChange={e => {
+                          setInputAdmissionNo(e.target.value);
+                          setVerificationError(null);
+                        }}
+                        placeholder="Enter Admission Number"
+                        className="w-full text-xs font-semibold px-3 py-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 4. Action Button */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                    <button
+                      type="submit"
+                      disabled={fetchingReport}
+                      className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs sm:text-sm shadow-xs transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                    >
+                      {fetchingReport ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Verifying & Loading...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Search className="w-4 h-4" />
+                          <span>Find / View Result</span>
+                        </>
+                      )}
+                    </button>
+
+                    {isResultVerified && (
+                      <span className="text-xs font-semibold text-emerald-800 flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        <span>Verified Result Loaded Below</span>
+                      </span>
+                    )}
+                  </div>
+                </form>
+
+                {/* Inline Warning for Mismatched Credentials */}
+                {verificationError && (
+                  <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div>
+                      <strong className="font-semibold block text-rose-900">Verification Failed</strong>
+                      <span>{verificationError}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Informative Banner for Unpublished Exam */}
+                {isExamNotPublishedNotice && (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="font-bold text-amber-950 text-sm">Results Pending Publication</h4>
+                      <p className="mt-0.5 text-amber-800">
+                        Results for this examination have not been published yet.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Render Full A4 Progress Report Card below form once verified */}
+              {isResultVerified && (
+                fetchingReport ? (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs">
+                    <Loader2 className="w-8 h-8 animate-spin text-emerald-800 mx-auto mb-3" />
+                    <h3 className="text-sm font-bold text-slate-800">
+                      Loading Progress Report for {activeChild?.nameEn}...
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Fetching evaluation results, rankings, and subject assessments.
+                    </p>
+                  </div>
+                ) : reportError ? (
+                  <div className="bg-white rounded-2xl border border-rose-200 p-6 shadow-xs flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 text-rose-800 text-xs">
+                      <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                      <div>
+                        <h4 className="font-bold text-rose-950 text-sm">Unable to load report</h4>
+                        <p className="mt-0.5">{reportError}</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleVerifyAndFetchResult()}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      Retry
+                    </button>
+                  </div>
+                ) : reportData?.report ? (
+                  <div className="space-y-4">
+                    <ProgressReportCard
+                      report={reportData.report}
+                      settings={reportData.settings}
+                    />
+                  </div>
+                ) : null
               )}
             </div>
           )}

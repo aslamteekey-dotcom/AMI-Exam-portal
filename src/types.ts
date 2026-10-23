@@ -111,6 +111,7 @@ export interface Student {
   examRegisterNumbers?: Record<string, string>; // examinationId -> exam register number
   examRegisterNos?: Record<string, string>; // examinationId -> exam register number (cloud persistence schema alias)
   examRegNo?: string; // current active exam register number (cloud persistence schema alias)
+  regNo?: string; // register number alias
   attendance?: {
     daysAttended: number;
     totalWorkingDays: number;
@@ -468,7 +469,7 @@ export function assignClassSequentialRollNumbers<T extends { id?: string; gender
  * Re-sequences both roll numbers and exam register numbers for class students
  * according to updated gender: all boys A-Z first, then all girls A-Z.
  */
-export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gender?: string; nameEn?: string; name?: string; rollNo?: number; classId?: string; examRegisterNumbers?: Record<string, string>; examRegisterNos?: Record<string, string>; examRegNo?: string }>(
+export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gender?: string; nameEn?: string; name?: string; rollNo?: number; classId?: string; examRegisterNumbers?: Record<string, string>; examRegisterNos?: Record<string, string>; examRegNo?: string; regNo?: string }>(
   classStudents: T[],
   className?: string
 ): T[] {
@@ -478,7 +479,7 @@ export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gend
   // Gather all exam IDs that have register numbers across this class
   const examIds = new Set<string>();
   sorted.forEach(s => {
-    const regMap = s.examRegisterNumbers || (s as any).examRegisterNos || {};
+    const regMap = (s as any).examRegisterNos || s.examRegisterNumbers || {};
     Object.keys(regMap).forEach(eId => examIds.add(eId));
   });
 
@@ -495,7 +496,7 @@ export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gend
     let hasCustomGirl = false;
 
     classStudents.forEach(s => {
-      const reg = s.examRegisterNumbers?.[eId] || (s as any).examRegisterNos?.[eId] || '';
+      const reg = (s as any).examRegisterNos?.[eId] || s.examRegisterNumbers?.[eId] || (s as any).examRegNo || (s as any).regNo || '';
       const num = parseInt(reg, 10);
       if (!isNaN(num)) {
         if (isBoyStudent(s.gender)) {
@@ -510,8 +511,17 @@ export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gend
     let girlCounter = minGirlReg;
 
     updated.forEach(s => {
-      const existingReg = s.examRegisterNumbers?.[eId] || (s as any).examRegisterNos?.[eId];
-      if (existingReg !== undefined || hasCustomBoy || hasCustomGirl) {
+      const existingReg = (s as any).examRegisterNos?.[eId] || s.examRegisterNumbers?.[eId] || (s as any).examRegNo || (s as any).regNo;
+      if (existingReg) {
+        // PRESERVE the existing / manually set register number
+        const cleanReg = String(existingReg).trim();
+        if (!s.examRegisterNumbers) s.examRegisterNumbers = {};
+        s.examRegisterNumbers[eId] = cleanReg;
+        if (!(s as any).examRegisterNos) (s as any).examRegisterNos = {};
+        (s as any).examRegisterNos[eId] = cleanReg;
+        (s as any).examRegNo = cleanReg;
+        (s as any).regNo = cleanReg;
+      } else if (hasCustomBoy || hasCustomGirl) {
         const isBoy = isBoyStudent(s.gender);
         const newReg = isBoy ? String(boyCounter++) : String(girlCounter++);
         if (!s.examRegisterNumbers) s.examRegisterNumbers = {};
@@ -519,6 +529,7 @@ export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gend
         if (!(s as any).examRegisterNos) (s as any).examRegisterNos = {};
         (s as any).examRegisterNos[eId] = newReg;
         (s as any).examRegNo = newReg;
+        (s as any).regNo = newReg;
       }
     });
   });

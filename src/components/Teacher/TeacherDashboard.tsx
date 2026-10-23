@@ -90,6 +90,7 @@ import {
   Edit2,
   Trash2,
   Award,
+  BarChart2,
   ArrowRight,
   User as UserIcon,
   Search,
@@ -246,6 +247,9 @@ export const TeacherDashboard: React.FC = () => {
   // Mark Entry Sub-tab Segment: 'my_class' (Class In-charge) vs 'other_class' (All other classes)
   const [markEntrySegment, setMarkEntrySegment] = useState<'my_class' | 'other_class'>('my_class');
 
+  // View mode switcher in "My Class": 'students' (Students List) vs 'marksheet' (Class Marksheet)
+  const [myClassViewMode, setMyClassViewMode] = useState<'students' | 'marksheet'>('students');
+
   // Student Edit Modal State in "My Class"
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [isSavingStudent, setIsSavingStudent] = useState(false);
@@ -259,6 +263,7 @@ export const TeacherDashboard: React.FC = () => {
     schoolClass: '',
     parentNameEn: '',
     parentPhone: '',
+    examRegNo: '',
   });
 
   // News State with Create Capability
@@ -1829,6 +1834,16 @@ export const TeacherDashboard: React.FC = () => {
   // Student Edit Handlers in "My Class"
   const handleOpenEditStudent = (st: Student) => {
     setEditingStudent(st);
+    const activeExamKey = selectedExamId || 'exam_half_yearly_2026_27';
+    const currentReg =
+      (st as any).examRegisterNos?.[activeExamKey] ||
+      (st as any).examRegNo ||
+      (st as any).regNo ||
+      st.examRegisterNumbers?.[activeExamKey] ||
+      Object.values((st as any).examRegisterNos || {})[0] ||
+      Object.values(st.examRegisterNumbers || {})[0] ||
+      '';
+
     setStudentFormData({
       nameEn: st.nameEn || '',
       nameMl: st.nameMl || '',
@@ -1839,6 +1854,7 @@ export const TeacherDashboard: React.FC = () => {
       schoolClass: st.schoolClass || '',
       parentNameEn: st.parentNameEn || '',
       parentPhone: st.parentPhone || '',
+      examRegNo: String(currentReg || ''),
     });
   };
 
@@ -1859,7 +1875,20 @@ export const TeacherDashboard: React.FC = () => {
 
     setIsSavingStudent(true);
     try {
-      const updateData: Partial<Student> = {
+      const trimmedExamReg = (studentFormData.examRegNo || '').trim();
+      const activeExamId = selectedExamId || 'exam_half_yearly_2026_27';
+      const updatedExamRegNos = {
+        ...((editingStudent as any).examRegisterNos || {}),
+        ...(editingStudent.examRegisterNumbers || {}),
+        [activeExamId]: trimmedExamReg,
+      };
+      if (trimmedExamReg) {
+        Object.keys(updatedExamRegNos).forEach(k => {
+          updatedExamRegNos[k] = trimmedExamReg;
+        });
+      }
+
+      const updateData: Partial<Student> & Record<string, any> = {
         nameEn: studentFormData.nameEn.trim(),
         nameMl: studentFormData.nameMl.trim() || studentFormData.nameEn.trim(),
         rollNo: Number(studentFormData.rollNo) || editingStudent.rollNo,
@@ -1869,20 +1898,56 @@ export const TeacherDashboard: React.FC = () => {
         schoolClass: studentFormData.schoolClass.trim() || undefined,
         parentNameEn: studentFormData.parentNameEn.trim(),
         parentPhone: studentFormData.parentPhone.trim(),
+        examRegNo: trimmedExamReg || undefined,
+        regNo: trimmedExamReg || undefined,
+        examRegisterNos: updatedExamRegNos,
+        examRegisterNumbers: updatedExamRegNos,
+        updatedAt: new Date().toISOString(),
       };
 
-      // 1. Direct Firestore write for edited student
-      await setDoc(doc(db, 'students', editingStudent.id), cleanForFirestore(updateData), { merge: true });
-      if (editingStudent.admissionNo && editingStudent.admissionNo !== editingStudent.id) {
-        await setDoc(doc(db, 'students', editingStudent.admissionNo), cleanForFirestore(updateData), { merge: true }).catch(() => {});
+      // 1. Dual-Sync Exam Register Number on Edit in Firestore:
+      // Update BOTH top-level (examRegNo, regNo) and nested examination maps (examRegisterNos, examRegisterNumbers)
+      const firestorePayload = cleanForFirestore({
+        examRegNo: trimmedExamReg,
+        regNo: trimmedExamReg,
+        examRegisterNos: updatedExamRegNos,
+        examRegisterNumbers: updatedExamRegNos,
+        [`examRegisterNos.${activeExamId}`]: trimmedExamReg,
+        [`examRegisterNumbers.${activeExamId}`]: trimmedExamReg,
+        ...updateData,
+        updatedAt: new Date().toISOString(),
+      });
+
+      try {
+        await updateDoc(doc(db, 'students', editingStudent.id), firestorePayload);
+      } catch {
+        await setDoc(doc(db, 'students', editingStudent.id), firestorePayload, { merge: true });
       }
+
+      if (editingStudent.admissionNo && editingStudent.admissionNo !== editingStudent.id) {
+        try {
+          await updateDoc(doc(db, 'students', editingStudent.admissionNo), firestorePayload);
+        } catch {
+          await setDoc(doc(db, 'students', editingStudent.admissionNo), firestorePayload, { merge: true }).catch(() => {});
+        }
+      }
+
+      // Mutate editingStudent directly
+      Object.assign(editingStudent, updateData);
 
       // 2. Auto-recalculate sequential roll numbers and exam register numbers for this class (Boys A-Z first, then Girls A-Z)
       const targetClassId = editingStudent.classId;
       const targetClassName = classes.find(c => c.id === targetClassId)?.name;
       const updatedList = allStudents.map(s => {
         if (s.id === editingStudent.id || (editingStudent.admissionNo && s.admissionNo === editingStudent.admissionNo)) {
-          return { ...s, ...updateData };
+          return {
+            ...s,
+            ...updateData,
+            examRegNo: trimmedExamReg,
+            regNo: trimmedExamReg,
+            examRegisterNos: updatedExamRegNos,
+            examRegisterNumbers: updatedExamRegNos,
+          };
         }
         return s;
       });
@@ -1890,8 +1955,24 @@ export const TeacherDashboard: React.FC = () => {
       const classStudents = updatedList.filter(s => s.classId === targetClassId);
       const resequencedClass = recalculateClassRollsAndExamRegNos(classStudents, targetClassName);
 
+      // Retain explicitly edited examRegNo for the edited student
+      const finalResequencedClass = resequencedClass.map(st => {
+        if (st.id === editingStudent.id || (editingStudent.admissionNo && st.admissionNo === editingStudent.admissionNo)) {
+          return {
+            ...st,
+            ...updateData,
+            examRegNo: trimmedExamReg,
+            regNo: trimmedExamReg,
+            examRegisterNos: updatedExamRegNos,
+            examRegisterNumbers: updatedExamRegNos,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return st;
+      });
+
       // Persist all resequenced students in this class to Firestore
-      for (const st of resequencedClass) {
+      for (const st of finalResequencedClass) {
         try {
           await setDoc(doc(db, 'students', st.id), cleanForFirestore(st), { merge: true });
           if (st.admissionNo && st.admissionNo !== st.id) {
@@ -1902,8 +1983,20 @@ export const TeacherDashboard: React.FC = () => {
         }
       }
 
-      const resequencedMap = new Map(resequencedClass.map(s => [s.id, s]));
-      const finalAllStudents = updatedList.map(s => resequencedMap.get(s.id) || s);
+      const resequencedMap = new Map(finalResequencedClass.map(s => [s.id, s]));
+      const finalAllStudents = updatedList.map(s => {
+        if (s.id === editingStudent.id || (editingStudent.admissionNo && s.admissionNo === editingStudent.admissionNo)) {
+          return {
+            ...s,
+            ...updateData,
+            examRegNo: trimmedExamReg,
+            regNo: trimmedExamReg,
+            examRegisterNos: updatedExamRegNos,
+            examRegisterNumbers: updatedExamRegNos,
+          };
+        }
+        return resequencedMap.get(s.id) || s;
+      });
 
       // 3. Local API sync
       await fetchWithAuth(`/api/students/${editingStudent.id}`, {
@@ -1912,12 +2005,16 @@ export const TeacherDashboard: React.FC = () => {
         body: JSON.stringify(updateData),
       });
 
-      // 4. React state update
+      // 4. React state update - mutate and set state immediately so the card updates instantly without page reload
       setAllStudents(sortStudentsBoysFirst(finalAllStudents));
+
+      // Broadcast events so Parent Portal, Marks Entry, and Principal Portal update immediately
+      window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: finalAllStudents }));
+      window.dispatchEvent(new CustomEvent('madrasa_marks_updated'));
 
       logAuditEvent({
         action: 'STUDENT_UPDATED',
-        details: `Teacher ${user?.name || 'Class Teacher'} updated student profile for ${editingStudent.nameEn} (Adm: ${editingStudent.admissionNo}, Gender: ${studentFormData.gender}).`,
+        details: `Teacher ${user?.name || 'Class Teacher'} updated student profile for ${editingStudent.nameEn} (Adm: ${editingStudent.admissionNo}, Gender: ${studentFormData.gender}, RegNo: ${trimmedExamReg || 'N/A'}).`,
         currentUser: user,
         recordType: 'student',
         recordId: editingStudent.id,
@@ -1988,29 +2085,6 @@ export const TeacherDashboard: React.FC = () => {
     }
   };
 
-  if (activeEntry) {
-    return (
-      <MarkEntryScreen
-        classId={activeEntry.classId}
-        subjectId={activeEntry.subjectId}
-        examinationId={activeEntry.examinationId}
-        onBack={() => {
-          setActiveEntry(null);
-          loadData();
-        }}
-      />
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center py-20 text-slate-500">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-700"></div>
-        <span className="ml-3 font-medium">Loading teacher portal...</span>
-      </div>
-    );
-  }
-
   const selectedExam = examinations.find(e => e.id === selectedExamId);
 
   // In-charge class students & subjects
@@ -2023,6 +2097,142 @@ export const TeacherDashboard: React.FC = () => {
   const inChargeSubjects = inChargeClass
     ? subjects.filter(s => s.applicableClasses.includes(inChargeClass.numericGrade))
     : [];
+
+  // Consolidated class marksheet calculations with dense ranking
+  const classMarksheetData = useMemo(() => {
+    if (!inChargeClass || inChargeStudents.length === 0) return [];
+    const getSubjectMax = (s: SubjectItem) => {
+      const compSum = (s.defaultComponents || []).reduce((acc, c) => acc + (c.maxMarks || 0), 0);
+      return (s as any).maxMarks || (compSum > 0 ? compSum : 50);
+    };
+    const expectedMax = inChargeSubjects.reduce((acc, s) => acc + getSubjectMax(s), 0) || 400;
+
+    const list = inChargeStudents.map(student => {
+      let studentObtained = 0;
+      let hasAbsent = false;
+      let anyMarkEntered = false;
+      let hasFailedComponent = false;
+
+      const subjectMarksMap: Record<string, { value: number | 'AB' | '—'; isAbsent: boolean; max: number }> = {};
+
+      inChargeSubjects.forEach(sub => {
+        const ms = markSheets.find(
+          m => m.examinationId === selectedExamId && m.classId === inChargeClass.id && m.subjectId === sub.id
+        );
+        const entry = ms?.studentMarks?.[student.id];
+        const max = getSubjectMax(sub);
+
+        if (!entry) {
+          subjectMarksMap[sub.id] = { value: '—', isAbsent: false, max };
+        } else if (entry.isAbsent) {
+          hasAbsent = true;
+          anyMarkEntered = true;
+          subjectMarksMap[sub.id] = { value: 'AB', isAbsent: true, max };
+        } else {
+          anyMarkEntered = true;
+          const total =
+            typeof entry.subjectTotal === 'number' && !isNaN(entry.subjectTotal)
+              ? entry.subjectTotal
+              : entry.componentMarks
+              ? Object.values(entry.componentMarks).reduce((a, b) => a + (Number(b) || 0), 0)
+              : 0;
+
+          studentObtained += total;
+          if (total < max * 0.35) {
+            hasFailedComponent = true;
+          }
+          subjectMarksMap[sub.id] = { value: total, isAbsent: false, max };
+        }
+      });
+
+      const percentage = expectedMax > 0 ? ((studentObtained / expectedMax) * 100).toFixed(2) : '0.00';
+      const totalWorking = classAttendanceConfig?.totalWorkingDays ?? attendanceTotalWorkingDays ?? 88;
+      const daysAttended =
+        studentDaysAttendedMap[student.id] ??
+        student.attendance?.daysAttended ??
+        (student as any).daysAttended ??
+        86;
+
+      let status: 'Passed' | 'Needs Imp' | 'Absent' | 'Pending' = 'Passed';
+      if (hasAbsent) {
+        status = 'Absent';
+      } else if (hasFailedComponent || Number(percentage) < 35) {
+        status = 'Needs Imp';
+      } else if (!anyMarkEntered) {
+        status = 'Pending';
+      }
+
+      return {
+        student,
+        subjectMarksMap,
+        studentObtained,
+        expectedMax,
+        percentage,
+        daysAttended,
+        totalWorking,
+        hasAbsent,
+        status,
+        isQualifiedForRank: anyMarkEntered && !hasAbsent && status === 'Passed',
+      };
+    });
+
+    // Assign Dense Ranks: ties share identical rank without skipping rank numbers
+    const qualified = list
+      .filter(item => item.isQualifiedForRank)
+      .sort((a, b) => b.studentObtained - a.studentObtained);
+
+    const rankMap = new Map<string, number>();
+    let currentDenseRank = 1;
+    for (let i = 0; i < qualified.length; i++) {
+      if (i > 0 && qualified[i].studentObtained < qualified[i - 1].studentObtained) {
+        currentDenseRank++;
+      }
+      rankMap.set(qualified[i].student.id, currentDenseRank);
+    }
+
+    return list.map(item => {
+      const rank = rankMap.get(item.student.id);
+      let rankOrStatusText = item.status as string;
+      let badgeClass = 'bg-slate-100 text-slate-700';
+
+      if (rank !== undefined) {
+        rankOrStatusText = `Rank ${rank}`;
+        badgeClass =
+          rank === 1
+            ? 'bg-amber-100 text-amber-900 border border-amber-300 font-bold'
+            : rank === 2
+            ? 'bg-slate-200 text-slate-800 border border-slate-300 font-bold'
+            : rank === 3
+            ? 'bg-amber-50 text-amber-800 border border-amber-200 font-bold'
+            : 'bg-emerald-100 text-emerald-800 font-semibold';
+      } else if (item.status === 'Absent') {
+        rankOrStatusText = 'Absent';
+        badgeClass = 'bg-rose-100 text-rose-800 border border-rose-200 font-bold';
+      } else if (item.status === 'Needs Imp') {
+        rankOrStatusText = 'Needs Imp';
+        badgeClass = 'bg-amber-100 text-amber-800 border border-amber-200 font-bold';
+      } else {
+        rankOrStatusText = '—';
+        badgeClass = 'bg-slate-100 text-slate-500 font-medium';
+      }
+
+      return {
+        ...item,
+        rank,
+        rankOrStatusText,
+        badgeClass,
+      };
+    });
+  }, [
+    inChargeClass,
+    inChargeStudents,
+    inChargeSubjects,
+    markSheets,
+    selectedExamId,
+    classAttendanceConfig,
+    attendanceTotalWorkingDays,
+    studentDaysAttendedMap,
+  ]);
 
   // Mark Entry Segregation: "My Class" (In-charge) vs "Other Class"
   const myClassAssignments = assignments.filter(a => {
@@ -2053,6 +2263,29 @@ export const TeacherDashboard: React.FC = () => {
         rollNo: idx + 1,
       }))
     : [];
+
+  if (activeEntry) {
+    return (
+      <MarkEntryScreen
+        classId={activeEntry.classId}
+        subjectId={activeEntry.subjectId}
+        examinationId={activeEntry.examinationId}
+        onBack={() => {
+          setActiveEntry(null);
+          loadData();
+        }}
+      />
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center py-20 text-slate-500">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-700"></div>
+        <span className="ml-3 font-medium">Loading teacher portal...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -2556,7 +2789,10 @@ export const TeacherDashboard: React.FC = () => {
                       EXAM REGS
                     </span>
                     <div className="whitespace-nowrap flex items-center justify-center gap-1 text-sm sm:text-lg md:text-xl font-bold text-emerald-900 font-mono mt-1">
-                      <span>{inChargeStudents.filter(s => s.examRegisterNumbers?.[selectedExamId] || (s as any).examRegisterNos?.[selectedExamId] || (s as any).examRegNo).length}</span>
+                      <span>{inChargeStudents.filter(s => {
+                        const r = (s as any).examRegisterNos?.[selectedExamId] || (s as any).examRegNo || (s as any).regNo || s.examRegisterNumbers?.[selectedExamId];
+                        return !!r && r !== '-';
+                      }).length}</span>
                       <span className="text-emerald-500 font-normal">/</span>
                       <span>{inChargeStudents.length}</span>
                     </div>
@@ -2573,254 +2809,420 @@ export const TeacherDashboard: React.FC = () => {
                 </div>
               </div>
 
-              {/* STUDENT DATA GRID (Grid of small rectangular cards with Edit & Delete buttons) */}
-              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                      <Users className="w-4 h-4 text-emerald-800" />
-                      <span>{inChargeClass.name} Students Grid ({inChargeStudents.length})</span>
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Click the pencil icon to modify student details, or the trash icon to remove a student.
-                    </p>
-                  </div>
+              {/* View Toggle Bar: Students List vs Marksheet */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-2.5 rounded-2xl border border-slate-200 shadow-2xs">
+                <div className="flex items-center gap-1.5 p-1 bg-slate-100/90 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setMyClassViewMode('students')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      myClassViewMode === 'students'
+                        ? 'bg-emerald-800 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                    }`}
+                  >
+                    <Users className="w-4 h-4" />
+                    <span>Students List</span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                        myClassViewMode === 'students'
+                          ? 'bg-emerald-950/60 text-emerald-200'
+                          : 'bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      {inChargeStudents.length}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setMyClassViewMode('marksheet')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      myClassViewMode === 'marksheet'
+                        ? 'bg-emerald-800 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                    }`}
+                  >
+                    <BarChart2 className="w-4 h-4" />
+                    <span>Marksheet</span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                        myClassViewMode === 'marksheet'
+                          ? 'bg-emerald-950/60 text-emerald-200'
+                          : 'bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      {inChargeSubjects.length} Sub
+                    </span>
+                  </button>
                 </div>
 
-                {inChargeStudents.length === 0 ? (
-                  <div className="text-center py-12 text-slate-400 text-xs">
-                    No active students enrolled in {inChargeClass.name}.
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                    {inChargeStudents.map(st => {
-                      const regNo =
-                        st.examRegisterNumbers?.[selectedExamId] ||
-                        (st as any).examRegisterNos?.[selectedExamId] ||
-                        (st as any).examRegNo;
-                      const isDuplicate =
-                        (teacherAdmCounts.get(String(st.admissionNo || '').trim().toLowerCase()) || 0) > 1;
+                <div className="text-xs text-slate-500 pr-2 hidden sm:flex items-center gap-2 font-medium">
+                  <span className="font-bold text-slate-700">{inChargeClass.name}</span>
+                  <span>•</span>
+                  <span>{selectedExam?.nameEn || 'Active Examination'}</span>
+                </div>
+              </div>
 
-                      return (
-                        <div
-                          key={st.id}
-                          className={`${
-                            isDuplicate
-                              ? 'bg-red-50/90 rounded-xl border-2 border-red-400 p-3.5 shadow-xs transition flex flex-col justify-between relative'
-                              : 'bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs hover:shadow-xs transition flex flex-col justify-between relative group'
-                          }`}
-                        >
-                          <div>
-                            {/* Top Row: Roll No Badge, Gender Badge & Action Buttons */}
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="w-6 h-6 rounded-lg bg-emerald-800 text-white font-mono font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
-                                  {st.rollNo}
-                                </span>
-                                <span
-                                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                    st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
-                                  }`}
-                                >
-                                  {st.gender || 'M'}
-                                </span>
-                                {isDuplicate && (
-                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700 border border-red-300">
-                                    ⚠️ Duplicate Adm No
+              {/* View 1: STUDENTS LIST VIEW (Default) */}
+              {myClassViewMode === 'students' && (
+                <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                        <Users className="w-4 h-4 text-emerald-800" />
+                        <span>{inChargeClass.name} Students List ({inChargeStudents.length})</span>
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Click the pencil icon to modify student details. Boys sorted A-Z first, followed by Girls A-Z.
+                      </p>
+                    </div>
+                  </div>
+
+                  {inChargeStudents.length === 0 ? (
+                    <div className="text-center py-12 text-slate-400 text-xs">
+                      No active students enrolled in {inChargeClass.name}.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                      {inChargeStudents.map(st => {
+                        const regNo =
+                          (st as any).examRegisterNos?.[selectedExamId] ||
+                          (st as any).examRegNo ||
+                          (st as any).regNo ||
+                          st.examRegisterNumbers?.[selectedExamId] ||
+                          '-';
+                        const isDuplicate =
+                          (teacherAdmCounts.get(String(st.admissionNo || '').trim().toLowerCase()) || 0) > 1;
+
+                        return (
+                          <div
+                            key={st.id}
+                            className={`${
+                              isDuplicate
+                                ? 'bg-red-50/90 rounded-xl border-2 border-red-400 p-3.5 shadow-xs transition flex flex-col justify-between relative'
+                                : 'bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs hover:shadow-xs transition flex flex-col justify-between relative group'
+                            }`}
+                          >
+                            <div>
+                              {/* Top Row: Roll No Badge, Gender Badge & Action Buttons */}
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="w-6 h-6 rounded-lg bg-emerald-800 text-white font-mono font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
+                                    {st.rollNo}
                                   </span>
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                      st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                                    }`}
+                                  >
+                                    {st.gender || 'M'}
+                                  </span>
+                                  {isDuplicate && (
+                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700 border border-red-300">
+                                      ⚠️ Duplicate Adm No
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditStudent(st)}
+                                    className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
+                                    title={`Edit ${st.nameEn}`}
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Student Name */}
+                              <div className="font-bold text-slate-900 text-sm leading-tight truncate" title={st.nameEn}>
+                                {st.nameEn}
+                              </div>
+                              {st.nameMl && (
+                                <div className="text-[11px] text-slate-500 truncate font-ml" title={st.nameMl}>
+                                  {st.nameMl}
+                                </div>
+                              )}
+
+                              {/* Details Metadata */}
+                              <div className="mt-2.5 pt-2 border-t border-slate-100 space-y-1 text-[11px]">
+                                <div className="flex items-center justify-between text-slate-500">
+                                  <span>Adm No:</span>
+                                  <span
+                                    className={`font-mono font-bold ${
+                                      isDuplicate
+                                        ? 'text-red-700 bg-red-100 px-1 py-0.5 rounded border border-red-200'
+                                        : 'text-slate-700'
+                                    }`}
+                                  >
+                                    {st.admissionNo}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between text-slate-500">
+                                  <span>Class:</span>
+                                  <span className="font-semibold text-emerald-800">{inChargeClass.name}</span>
+                                </div>
+                                {st.schoolClass && (
+                                  <div className="flex items-center justify-between text-slate-500">
+                                    <span>School Grade:</span>
+                                    <span className="font-semibold text-indigo-700">{st.schoolClass}</span>
+                                  </div>
+                                )}
+                                {st.dob && (
+                                  <div className="flex items-center justify-between text-slate-500">
+                                    <span>DOB:</span>
+                                    <span className="font-mono text-slate-700">{st.dob}</span>
+                                  </div>
+                                )}
+                                {regNo && regNo !== '-' && (
+                                  <div className="flex items-center justify-between text-slate-500">
+                                    <span>Reg No:</span>
+                                    <span className="font-mono font-bold text-emerald-900">{regNo}</span>
+                                  </div>
+                                )}
+                                {st.parentNameEn && (
+                                  <div className="flex items-center justify-between text-slate-500 truncate">
+                                    <span>Parent:</span>
+                                    <span className="truncate max-w-[90px] text-slate-700" title={st.parentNameEn}>
+                                      {st.parentNameEn}
+                                    </span>
+                                  </div>
                                 )}
                               </div>
 
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenEditStudent(st)}
-                                  className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
-                                  title={`Edit ${st.nameEn}`}
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
+                              {isDuplicate && (
+                                <div className="w-full mt-2.5 py-1 px-2 text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg text-center">
+                                  ⚠️ Contact Principal to resolve duplicate
+                                </div>
+                              )}
                             </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
 
-                            {/* Student Name */}
-                            <div className="font-bold text-slate-900 text-sm leading-tight truncate" title={st.nameEn}>
-                              {st.nameEn}
-                            </div>
-                            {st.nameMl && (
-                              <div className="text-[11px] text-slate-500 truncate font-ml" title={st.nameMl}>
-                                {st.nameMl}
-                              </div>
-                            )}
+              {/* View 2: MARKSHEET VIEW */}
+              {myClassViewMode === 'marksheet' && (
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                  <div className="p-4 sm:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                        <BarChart2 className="w-4 h-4 text-emerald-800" />
+                        <span>{inChargeClass.name} Examination Marksheet</span>
+                        <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                          {selectedExam?.nameEn || 'Active Exam'}
+                        </span>
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Consolidated class marksheet across all {inChargeSubjects.length} subjects with dense rank, attendance, and grand totals.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600 font-medium">
+                        Max per subject: 50
+                      </span>
+                      <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 font-bold border border-emerald-200">
+                        Class Max: {inChargeSubjects.length * 50}
+                      </span>
+                    </div>
+                  </div>
 
-                            {/* Details Metadata */}
-                            <div className="mt-2.5 pt-2 border-t border-slate-100 space-y-1 text-[11px]">
-                              <div className="flex items-center justify-between text-slate-500">
-                                <span>Adm No:</span>
-                                <span
-                                  className={`font-mono font-bold ${
-                                    isDuplicate
-                                      ? 'text-red-700 bg-red-100 px-1 py-0.5 rounded border border-red-200'
-                                      : 'text-slate-700'
-                                  }`}
+                  {inChargeStudents.length === 0 ? (
+                    <div className="text-center py-12 text-slate-400 text-xs">
+                      No active students enrolled in {inChargeClass.name}.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto relative w-full scrollbar-thin">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead className="sticky top-0 bg-slate-100 z-30">
+                          <tr className="bg-slate-100 text-slate-700 uppercase tracking-wider border-b border-slate-200 font-semibold">
+                            {/* Sticky Frozen Column 1: Roll No */}
+                            <th className="py-3 px-3 w-12 text-center sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb] font-mono">
+                              Roll
+                            </th>
+                            {/* Sticky Frozen Column 2: Reg No */}
+                            <th className="py-3 px-2 w-20 text-center sticky left-12 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb] font-mono text-emerald-900 font-bold">
+                              Reg No
+                            </th>
+                            {/* Sticky Frozen Column 3: Student Name */}
+                            <th className="py-3 px-4 min-w-[170px] md:min-w-[200px] text-left sticky left-32 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                              Student Name
+                            </th>
+
+                            {/* Columns for each Subject */}
+                            {inChargeSubjects.map(sub => {
+                              const subName =
+                                inChargeClass.numericGrade === 9 && (sub.id === 'sub_history_buhuth' || sub.code === 'HST')
+                                  ? 'ബുഹൂസ്'
+                                  : sub.nameMl || sub.nameEn;
+                              return (
+                                <th key={sub.id} className="py-3 px-3 text-center min-w-[90px] border-l border-slate-200/60">
+                                  <div className="font-bold text-slate-800 whitespace-nowrap">{subName}</div>
+                                  <div className="text-[10px] text-slate-400 font-mono uppercase font-normal">{sub.code} (50)</div>
+                                </th>
+                              );
+                            })}
+
+                            {/* Summary Columns */}
+                            <th className="py-3 px-3 text-center min-w-[105px] bg-emerald-50/70 border-l border-emerald-200 font-bold text-emerald-950">
+                              Grand Total
+                              <div className="text-[10px] text-emerald-600 font-normal">/ {inChargeSubjects.length * 50}</div>
+                            </th>
+                            <th className="py-3 px-3 text-center min-w-[85px] bg-emerald-50/70 font-bold text-emerald-950">
+                              Percentage
+                              <div className="text-[10px] text-emerald-600 font-normal">%</div>
+                            </th>
+                            <th className="py-3 px-3 text-center min-w-[95px] bg-slate-100 border-l border-slate-200 font-bold text-slate-700">
+                              Attendance
+                              <div className="text-[10px] text-slate-500 font-normal">Attended / Total</div>
+                            </th>
+                            <th className="py-3 px-3 text-center min-w-[110px] bg-slate-100 border-l border-slate-200 font-bold text-slate-800">
+                              Dense Rank / Status
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-slate-800">
+                          {classMarksheetData.map((row, idx) => {
+                            const st = row.student;
+                            const regNo =
+                              (st as any).examRegisterNos?.[selectedExamId] ||
+                              (st as any).examRegNo ||
+                              (st as any).regNo ||
+                              st.examRegisterNumbers?.[selectedExamId] ||
+                              '—';
+
+                            const cellBg = row.hasAbsent
+                              ? 'bg-amber-50 group-hover:bg-amber-100'
+                              : idx % 2 === 0
+                              ? 'bg-white group-hover:bg-slate-50'
+                              : 'bg-slate-50/90 group-hover:bg-slate-100';
+
+                            return (
+                              <tr
+                                key={st.id}
+                                className={`transition group ${
+                                  row.hasAbsent
+                                    ? 'bg-amber-50/40 hover:bg-amber-100/50'
+                                    : idx % 2 === 0
+                                    ? 'bg-white hover:bg-slate-50/80'
+                                    : 'bg-slate-50/30 hover:bg-slate-50/80'
+                                }`}
+                              >
+                                {/* Sticky Column 1: Roll No */}
+                                <td
+                                  className={`py-3 px-3 w-12 text-center font-bold font-mono text-slate-600 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${cellBg}`}
                                 >
-                                  {st.admissionNo}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between text-slate-500">
-                                <span>Class:</span>
-                                <span className="font-semibold text-emerald-800">{inChargeClass.name}</span>
-                              </div>
-                              {st.schoolClass && (
-                                <div className="flex items-center justify-between text-slate-500">
-                                  <span>School Grade:</span>
-                                  <span className="font-semibold text-indigo-700">{st.schoolClass}</span>
-                                </div>
-                              )}
-                              {st.dob && (
-                                <div className="flex items-center justify-between text-slate-500">
-                                  <span>DOB:</span>
-                                  <span className="font-mono text-slate-700">{st.dob}</span>
-                                </div>
-                              )}
-                              {regNo && (
-                                <div className="flex items-center justify-between text-slate-500">
-                                  <span>Reg No:</span>
-                                  <span className="font-mono font-bold text-emerald-900">{regNo}</span>
-                                </div>
-                              )}
-                              {st.parentNameEn && (
-                                <div className="flex items-center justify-between text-slate-500 truncate">
-                                  <span>Parent:</span>
-                                  <span className="truncate max-w-[90px] text-slate-700" title={st.parentNameEn}>
-                                    {st.parentNameEn}
+                                  {st.rollNo}
+                                </td>
+
+                                {/* Sticky Column 2: Reg No */}
+                                <td
+                                  className={`py-3 px-2 w-20 text-center font-bold font-mono text-emerald-800 sticky left-12 z-20 shadow-[1px_0_0_0_#e5e7eb] ${cellBg}`}
+                                >
+                                  {regNo}
+                                </td>
+
+                                {/* Sticky Column 3: Student Name */}
+                                <td
+                                  className={`py-3 px-4 min-w-[170px] md:min-w-[200px] text-left sticky left-32 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${cellBg}`}
+                                >
+                                  <div className="font-bold text-slate-900 whitespace-nowrap">
+                                    {st.nameEn}
+                                  </div>
+                                  {st.nameMl && (
+                                    <div className="text-[11px] text-slate-500 font-ml leading-tight whitespace-nowrap">
+                                      {st.nameMl}
+                                    </div>
+                                  )}
+                                </td>
+
+                                {/* Columns for each Subject */}
+                                {inChargeSubjects.map(sub => {
+                                  const mData = row.subjectMarksMap[sub.id];
+                                  const val = mData?.value;
+                                  const isAb = mData?.isAbsent;
+
+                                  return (
+                                    <td
+                                      key={sub.id}
+                                      className="py-3 px-3 text-center whitespace-nowrap border-l border-slate-100 font-mono font-medium"
+                                    >
+                                      {isAb ? (
+                                        <span className="px-1.5 py-0.5 rounded font-bold text-rose-700 bg-rose-100 text-[11px]">
+                                          AB
+                                        </span>
+                                      ) : val === '—' ? (
+                                        <span className="text-slate-300">—</span>
+                                      ) : (
+                                        <span
+                                          className={`font-semibold ${
+                                            Number(val) < (mData?.max || 50) * 0.35
+                                              ? 'text-rose-600 font-bold'
+                                              : 'text-slate-800'
+                                          }`}
+                                        >
+                                          {val}
+                                        </span>
+                                      )}
+                                    </td>
+                                  );
+                                })}
+
+                                {/* Summary Column 1: Grand Total */}
+                                <td className="py-3 px-3 text-center whitespace-nowrap border-l border-emerald-100 bg-emerald-50/30">
+                                  <span className="font-bold font-mono text-emerald-950 text-sm">
+                                    {row.studentObtained}
                                   </span>
-                                </div>
-                              )}
-                            </div>
+                                  <span className="text-slate-400 font-normal font-mono text-[11px]">
+                                    {' '}
+                                    / {row.expectedMax}
+                                  </span>
+                                </td>
 
-                            {isDuplicate && (
-                              <div className="w-full mt-2.5 py-1 px-2 text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg text-center">
-                                ⚠️ Contact Principal to resolve duplicate
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+                                {/* Summary Column 2: Percentage */}
+                                <td className="py-3 px-3 text-center whitespace-nowrap bg-emerald-50/30">
+                                  <span
+                                    className={`font-mono font-bold ${
+                                      Number(row.percentage) >= 60
+                                        ? 'text-emerald-700'
+                                        : Number(row.percentage) >= 35
+                                        ? 'text-amber-700'
+                                        : 'text-rose-700'
+                                    }`}
+                                  >
+                                    {row.percentage}%
+                                  </span>
+                                </td>
 
-              {/* All Subjects for Assigned Class */}
-              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                      <BookOpen className="w-4 h-4 text-emerald-800" />
-                      All Subjects for {inChargeClass.name} ({inChargeSubjects.length} subjects)
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Full view &amp; edit access for all subjects in {inChargeClass.name} under {selectedExam?.nameEn || 'Active Exam'}.
-                    </p>
-                  </div>
+                                {/* Summary Column 3: Attendance */}
+                                <td className="py-3 px-3 text-center whitespace-nowrap border-l border-slate-100 font-mono text-[11px] text-slate-700">
+                                  <span className="font-bold text-slate-800">{row.daysAttended}</span>
+                                  <span className="text-slate-400"> / {row.totalWorking}</span>
+                                </td>
+
+                                {/* Summary Column 4: Dense Rank / Status */}
+                                <td className="py-3 px-3 text-center whitespace-nowrap border-l border-slate-100">
+                                  <span
+                                    className={`inline-block px-2.5 py-1 rounded-md text-[11px] font-bold ${row.badgeClass}`}
+                                  >
+                                    {row.rankOrStatusText}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {inChargeSubjects.map(sub => {
-                    const ms = markSheets.find(
-                      m =>
-                        m.examinationId === selectedExamId &&
-                        m.classId === inChargeClass.id &&
-                        m.subjectId === sub.id
-                    );
-
-                    const subDisplayName =
-                      inChargeClass.numericGrade === 9 &&
-                      (sub.id === 'sub_history_buhuth' || sub.code === 'HST')
-                        ? 'ബുഹൂസ്'
-                        : sub.nameMl || sub.nameEn;
-
-                    const status = ms?.status || 'not_started';
-
-                    return (
-                      <div
-                        key={sub.id}
-                        className="bg-slate-50/60 rounded-xl border border-slate-200 p-4 flex flex-col justify-between hover:bg-slate-50 transition"
-                      >
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] font-mono font-bold bg-white text-slate-600 px-2 py-0.5 rounded-md border border-slate-200">
-                              {sub.code}
-                            </span>
-
-                            {status === 'not_started' && (
-                              <span className="text-[10px] font-semibold text-slate-500 bg-slate-200/80 px-2 py-0.5 rounded-full">
-                                Not Started
-                              </span>
-                            )}
-                            {status === 'draft' && (
-                              <span className="text-[10px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
-                                Draft
-                              </span>
-                            )}
-                            {status === 'submitted' && (
-                              <span className="text-[10px] font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full">
-                                Submitted
-                              </span>
-                            )}
-                            {status === 'approved' && (
-                              <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
-                                Approved
-                              </span>
-                            )}
-                            {status === 'locked' && (
-                              <span className="text-[10px] font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full">
-                                Locked
-                              </span>
-                            )}
-                            {status === 'returned_for_correction' && (
-                              <span className="text-[10px] font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full">
-                                Returned
-                              </span>
-                            )}
-                          </div>
-
-                          <h4 className="font-bold text-slate-900 text-base font-ml">
-                            {subDisplayName}
-                          </h4>
-                          <span className="text-xs text-slate-500">
-                            Max Marks: 50
-                          </span>
-                        </div>
-
-                        <div className="mt-4 pt-3 border-t border-slate-200/70 flex items-center justify-between">
-                          <span className="text-[11px] text-slate-500">
-                            {ms?.studentMarks
-                              ? `${Object.keys(ms.studentMarks).length} of ${inChargeStudents.length} entered`
-                              : `0 of ${inChargeStudents.length} entered`}
-                          </span>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setActiveEntry({
-                                classId: inChargeClass.id,
-                                subjectId: sub.id,
-                                examinationId: selectedExamId,
-                              })
-                            }
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs cursor-pointer"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                            {status === 'locked' ? 'View Sheet' : 'Enter / Edit Marks'}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+              )}
             </div>
           )}
 
@@ -2885,8 +3287,8 @@ export const TeacherDashboard: React.FC = () => {
                         onChange={e => setStudentFormData({ ...studentFormData, gender: e.target.value as 'M' | 'F' })}
                         className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none font-medium"
                       >
-                        <option value="M">👦 Male (Boy)</option>
-                        <option value="F">👧 Female (Girl)</option>
+                        <option value="M">Boy</option>
+                        <option value="F">Girl</option>
                       </select>
                     </div>
                   </div>
@@ -2929,25 +3331,40 @@ export const TeacherDashboard: React.FC = () => {
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">Admission Number *</label>
-                    <input
-                      type="text"
-                      required
-                      value={studentFormData.admissionNo}
-                      onChange={e => setStudentFormData({ ...studentFormData, admissionNo: e.target.value })}
-                      className={`w-full p-2 border rounded-xl focus:ring-2 focus:outline-none font-mono ${
-                        isTeacherAdmDuplicate
-                          ? 'border-red-500 bg-red-50 text-red-900 focus:ring-red-400'
-                          : 'border-slate-300 focus:ring-emerald-700'
-                      }`}
-                    />
-                    {isTeacherAdmDuplicate && (
-                      <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-red-600">
-                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                        Admission Number [{trimmedTeacherAdm}] already exists! Please use a unique Admission Number.
-                      </p>
-                    )}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Admission Number *</label>
+                      <input
+                        type="text"
+                        required
+                        value={studentFormData.admissionNo}
+                        onChange={e => setStudentFormData({ ...studentFormData, admissionNo: e.target.value })}
+                        className={`w-full p-2 border rounded-xl focus:ring-2 focus:outline-none font-mono ${
+                          isTeacherAdmDuplicate
+                            ? 'border-red-500 bg-red-50 text-red-900 focus:ring-red-400'
+                            : 'border-slate-300 focus:ring-emerald-700'
+                        }`}
+                      />
+                      {isTeacherAdmDuplicate && (
+                        <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-red-600">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                          Admission Number [{trimmedTeacherAdm}] already exists! Please use a unique Admission Number.
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                        Exam Register Number
+                      </label>
+                      <input
+                        type="text"
+                        name="examRegNo"
+                        value={studentFormData.examRegNo || ''}
+                        onChange={e => setStudentFormData({ ...studentFormData, examRegNo: e.target.value })}
+                        placeholder="e.g. 7101"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-emerald-700 focus:outline-none font-mono bg-white"
+                      />
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
@@ -3035,7 +3452,7 @@ export const TeacherDashboard: React.FC = () => {
                       : 'bg-slate-200 text-slate-700'
                   }`}
                 >
-                  {myClassAssignments.length}
+                  {inChargeClass ? inChargeSubjects.length : 0}
                 </span>
               </button>
 
@@ -3049,7 +3466,7 @@ export const TeacherDashboard: React.FC = () => {
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
-                <span>Other Class</span>
+                <span>Other Classes</span>
                 <span
                   className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
                     markEntrySegment === 'other_class'
@@ -3064,12 +3481,12 @@ export const TeacherDashboard: React.FC = () => {
           </div>
 
           {/* Segment Content */}
-          {assignments.length === 0 ? (
+          {assignments.length === 0 && !inChargeClass ? (
             <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
               <BookOpen className="w-10 h-10 mx-auto text-slate-400 mb-2" />
               <h3 className="font-bold text-slate-800 text-sm">No Subjects Assigned</h3>
               <p className="text-xs text-slate-500 mt-1">
-                The administrator has not assigned you any individual subject slots yet. If you are a Class In-charge, switch to the "My Class" tab to manage all subjects for your class.
+                The administrator has not assigned you any individual subject slots yet. If you are a Class In-charge, switch to the "My Class" tab to view student rosters and marksheets.
               </p>
             </div>
           ) : markEntrySegment === 'my_class' ? (
@@ -3078,7 +3495,7 @@ export const TeacherDashboard: React.FC = () => {
                 <Shield className="w-10 h-10 mx-auto text-slate-400" />
                 <h3 className="font-bold text-slate-800 text-sm">No Class In-Charge Designated</h3>
                 <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  You are currently not designated as the Class In-charge for any class. Please switch to the "Other Class" segment to view and enter marks for your assigned subjects.
+                  You are currently not designated as the Class In-charge for any class. Please switch to the "Other Classes" segment to view and enter marks for your assigned subjects.
                 </p>
                 <button
                   type="button"
@@ -3086,234 +3503,271 @@ export const TeacherDashboard: React.FC = () => {
                   className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs"
                 >
                   <Layers className="w-3.5 h-3.5" />
-                  <span>Switch to Other Class ({otherClassAssignments.length})</span>
+                  <span>Switch to Other Classes ({otherClassAssignments.length})</span>
                 </button>
               </div>
-            ) : myClassAssignments.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 space-y-2">
-                <BookOpen className="w-10 h-10 mx-auto text-slate-400 mb-2" />
-                <h3 className="font-bold text-slate-800 text-sm">No Assigned Teaching Slots in {inChargeClass.name}</h3>
-                <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  You do not have individual subject teaching slots assigned directly for your in-charge class ({inChargeClass.name}). As Class In-charge, you can manage and enter marks for all subjects for this class under the "My Class" tab.
-                </p>
-              </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {myClassAssignments.map(a => {
-                  const cls = classes.find(c => c.id === a.classId);
-                  const sub = subjects.find(s => s.id === a.subjectId);
-                  const ms = markSheets.find(
-                    m => m.examinationId === selectedExamId && m.classId === a.classId && m.subjectId === a.subjectId
-                  );
+              /* All Subjects for Class [X] (Moved from "My Class" tab to "Mark Entry" -> "My Class" segment) */
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-emerald-800" />
+                      <span>All Subjects for {inChargeClass.name} ({inChargeSubjects.length} subjects)</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Full view &amp; edit access for all subjects in {inChargeClass.name} under {selectedExam?.nameEn || 'Active Exam'}.
+                    </p>
+                  </div>
+                  <span className="self-start sm:self-auto px-2.5 py-1 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-lg flex items-center gap-1.5">
+                    <Shield className="w-3.5 h-3.5 text-emerald-700" />
+                    Class In-charge Authority
+                  </span>
+                </div>
 
-                  const subDisplayName =
-                    cls?.numericGrade === 9 && (sub?.id === 'sub_history_buhuth' || sub?.code === 'HST')
-                      ? 'ബുഹൂസ്'
-                      : sub?.nameMl || sub?.nameEn || '—';
+                {inChargeSubjects.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400 text-xs">
+                    No subjects configured for {inChargeClass.name}.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {inChargeSubjects.map(sub => {
+                      const ms = markSheets.find(
+                        m =>
+                          m.examinationId === selectedExamId &&
+                          m.classId === inChargeClass.id &&
+                          m.subjectId === sub.id
+                      );
 
-                  const status = ms?.status || 'not_started';
+                      const subDisplayName =
+                        inChargeClass.numericGrade === 9 &&
+                        (sub.id === 'sub_history_buhuth' || sub.code === 'HST')
+                          ? 'ബുഹൂസ്'
+                          : sub.nameMl || sub.nameEn;
 
-                  return (
-                    <div
-                      key={a.id}
-                      className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:shadow-md transition flex flex-col justify-between"
-                    >
-                      <div>
-                        <div className="flex items-center justify-between mb-3">
-                          <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900">
-                            {isMl ? cls?.nameMl : cls?.name}
-                          </span>
+                      const status = ms?.status || 'not_started';
 
-                          {status === 'not_started' && (
-                            <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                              {t.not_started}
-                            </span>
-                          )}
-                          {status === 'draft' && (
-                            <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {t.draft}
-                            </span>
-                          )}
-                          {status === 'submitted' && (
-                            <span className="text-[11px] font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              Awaiting Approval
-                            </span>
-                          )}
-                          {status === 'approved' && (
-                            <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <CheckCircle className="w-3 h-3" />
-                              {t.approved}
-                            </span>
-                          )}
-                          {status === 'locked' && (
-                            <span className="text-[11px] font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <Lock className="w-3 h-3" />
-                              {t.locked}
-                            </span>
-                          )}
-                          {status === 'returned_for_correction' && (
-                            <span className="text-[11px] font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <AlertCircle className="w-3 h-3" />
-                              Returned
-                            </span>
-                          )}
-                        </div>
-
-                        <h3 className="font-bold text-slate-900 text-base mb-1">
-                          {subDisplayName}
-                        </h3>
-                        <p className="text-xs text-slate-500">
-                          Maximum Marks: 50
-                        </p>
-
-                        {status === 'returned_for_correction' && ms?.returnedReason && (
-                          <div className="mt-3 p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800">
-                            <strong>Principal note:</strong> {ms.returnedReason}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
-                        <span className="text-[11px] text-slate-400">
-                          {ms?.studentMarks ? `${Object.keys(ms.studentMarks).length} entered` : '0 entered'}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setActiveEntry({
-                              classId: a.classId,
-                              subjectId: a.subjectId,
-                              examinationId: selectedExamId,
-                            })
-                          }
-                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs cursor-pointer"
+                      return (
+                        <div
+                          key={sub.id}
+                          className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:shadow-md transition flex flex-col justify-between"
                         >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          {status === 'submitted' || status === 'approved' || status === 'locked'
-                            ? 'View Sheet'
-                            : t.navEnterMarks}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                          <div>
+                            <div className="flex items-center justify-between mb-3">
+                              <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200">
+                                {sub.code}
+                              </span>
+
+                              {status === 'not_started' && (
+                                <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                                  {t.not_started}
+                                </span>
+                              )}
+                              {status === 'draft' && (
+                                <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />
+                                  {t.draft}
+                                </span>
+                              )}
+                              {status === 'submitted' && (
+                                <span className="text-[11px] font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />
+                                  Awaiting Approval
+                                </span>
+                              )}
+                              {status === 'approved' && (
+                                <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <CheckCircle className="w-3 h-3" />
+                                  {t.approved}
+                                </span>
+                              )}
+                              {status === 'locked' && (
+                                <span className="text-[11px] font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <Lock className="w-3 h-3" />
+                                  {t.locked}
+                                </span>
+                              )}
+                              {status === 'returned_for_correction' && (
+                                <span className="text-[11px] font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <AlertCircle className="w-3 h-3" />
+                                  Returned
+                                </span>
+                              )}
+                            </div>
+
+                            <h4 className="font-bold text-slate-900 text-base mb-1 font-ml">
+                              {subDisplayName}
+                            </h4>
+                            <p className="text-xs text-slate-500">
+                              Maximum Marks: 50
+                            </p>
+
+                            {status === 'returned_for_correction' && ms?.returnedReason && (
+                              <div className="mt-3 p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800">
+                                <strong>Principal note:</strong> {ms.returnedReason}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
+                            <span className="text-[11px] text-slate-500">
+                              {ms?.studentMarks
+                                ? `${Object.keys(ms.studentMarks).length} of ${inChargeStudents.length} entered`
+                                : `0 of ${inChargeStudents.length} entered`}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setActiveEntry({
+                                  classId: inChargeClass.id,
+                                  subjectId: sub.id,
+                                  examinationId: selectedExamId,
+                                })
+                              }
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs cursor-pointer"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              {status === 'submitted' || status === 'approved' || status === 'locked'
+                                ? 'View Sheet'
+                                : t.navEnterMarks}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )
           ) : (
-            otherClassAssignments.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 space-y-2">
-                <Layers className="w-10 h-10 mx-auto text-slate-400 mb-2" />
-                <h3 className="font-bold text-slate-800 text-sm">No Subjects in Other Classes</h3>
-                <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  All of your assigned subjects belong to your in-charge class.
-                </p>
+            /* Other Teaching Classes Segment */
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-emerald-800" />
+                    <span>Other Teaching Classes ({otherClassAssignments.length})</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Assigned teaching subjects across other classes under {selectedExam?.nameEn || 'Active Exam'}.
+                  </p>
+                </div>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {otherClassAssignments.map(a => {
-                  const cls = classes.find(c => c.id === a.classId);
-                  const sub = subjects.find(s => s.id === a.subjectId);
-                  const ms = markSheets.find(
-                    m => m.examinationId === selectedExamId && m.classId === a.classId && m.subjectId === a.subjectId
-                  );
 
-                  const subDisplayName =
-                    cls?.numericGrade === 9 && (sub?.id === 'sub_history_buhuth' || sub?.code === 'HST')
-                      ? 'ബുഹൂസ്'
-                      : sub?.nameMl || sub?.nameEn || '—';
+              {otherClassAssignments.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 space-y-2">
+                  <Layers className="w-10 h-10 mx-auto text-slate-400 mb-2" />
+                  <h3 className="font-bold text-slate-800 text-sm">No Subjects in Other Classes</h3>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    All of your assigned subjects belong to your in-charge class.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {otherClassAssignments.map(a => {
+                    const cls = classes.find(c => c.id === a.classId);
+                    const sub = subjects.find(s => s.id === a.subjectId);
+                    const ms = markSheets.find(
+                      m => m.examinationId === selectedExamId && m.classId === a.classId && m.subjectId === a.subjectId
+                    );
 
-                  const status = ms?.status || 'not_started';
+                    const subDisplayName =
+                      cls?.numericGrade === 9 && (sub?.id === 'sub_history_buhuth' || sub?.code === 'HST')
+                        ? 'ബുഹൂസ്'
+                        : sub?.nameMl || sub?.nameEn || '—';
 
-                  return (
-                    <div
-                      key={a.id}
-                      className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:shadow-md transition flex flex-col justify-between"
-                    >
-                      <div>
-                        <div className="flex items-center justify-between mb-3">
-                          <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900">
-                            {isMl ? cls?.nameMl : cls?.name}
-                          </span>
+                    const status = ms?.status || 'not_started';
 
-                          {status === 'not_started' && (
-                            <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                              {t.not_started}
+                    return (
+                      <div
+                        key={a.id}
+                        className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:shadow-md transition flex flex-col justify-between"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900">
+                              {isMl ? cls?.nameMl : cls?.name}
                             </span>
-                          )}
-                          {status === 'draft' && (
-                            <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {t.draft}
-                            </span>
-                          )}
-                          {status === 'submitted' && (
-                            <span className="text-[11px] font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              Awaiting Approval
-                            </span>
-                          )}
-                          {status === 'approved' && (
-                            <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <CheckCircle className="w-3 h-3" />
-                              {t.approved}
-                            </span>
-                          )}
-                          {status === 'locked' && (
-                            <span className="text-[11px] font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <Lock className="w-3 h-3" />
-                              {t.locked}
-                            </span>
-                          )}
-                          {status === 'returned_for_correction' && (
-                            <span className="text-[11px] font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <AlertCircle className="w-3 h-3" />
-                              Returned
-                            </span>
+
+                            {status === 'not_started' && (
+                              <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                                {t.not_started}
+                              </span>
+                            )}
+                            {status === 'draft' && (
+                              <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <Clock className="w-3 h-3" />
+                                {t.draft}
+                              </span>
+                            )}
+                            {status === 'submitted' && (
+                              <span className="text-[11px] font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <Clock className="w-3 h-3" />
+                                Awaiting Approval
+                              </span>
+                            )}
+                            {status === 'approved' && (
+                              <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <CheckCircle className="w-3 h-3" />
+                                {t.approved}
+                              </span>
+                            )}
+                            {status === 'locked' && (
+                              <span className="text-[11px] font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <Lock className="w-3 h-3" />
+                                {t.locked}
+                              </span>
+                            )}
+                            {status === 'returned_for_correction' && (
+                              <span className="text-[11px] font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <AlertCircle className="w-3 h-3" />
+                                Returned
+                              </span>
+                            )}
+                          </div>
+
+                          <h3 className="font-bold text-slate-900 text-base mb-1">
+                            {subDisplayName}
+                          </h3>
+                          <p className="text-xs text-slate-500">
+                            Maximum Marks: 50
+                          </p>
+
+                          {status === 'returned_for_correction' && ms?.returnedReason && (
+                            <div className="mt-3 p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800">
+                              <strong>Principal note:</strong> {ms.returnedReason}
+                            </div>
                           )}
                         </div>
 
-                        <h3 className="font-bold text-slate-900 text-base mb-1">
-                          {subDisplayName}
-                        </h3>
-                        <p className="text-xs text-slate-500">
-                          Maximum Marks: 50
-                        </p>
-
-                        {status === 'returned_for_correction' && ms?.returnedReason && (
-                          <div className="mt-3 p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800">
-                            <strong>Principal note:</strong> {ms.returnedReason}
-                          </div>
-                        )}
+                        <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
+                          <span className="text-[11px] text-slate-400">
+                            {ms?.studentMarks ? `${Object.keys(ms.studentMarks).length} entered` : '0 entered'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveEntry({
+                                classId: a.classId,
+                                subjectId: a.subjectId,
+                                examinationId: selectedExamId,
+                              })
+                            }
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs cursor-pointer"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            {status === 'submitted' || status === 'approved' || status === 'locked'
+                              ? 'View Sheet'
+                              : t.navEnterMarks}
+                          </button>
+                        </div>
                       </div>
-
-                      <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
-                        <span className="text-[11px] text-slate-400">
-                          {ms?.studentMarks ? `${Object.keys(ms.studentMarks).length} entered` : '0 entered'}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setActiveEntry({
-                              classId: a.classId,
-                              subjectId: a.subjectId,
-                              examinationId: selectedExamId,
-                            })
-                          }
-                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs cursor-pointer"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          {status === 'submitted' || status === 'approved' || status === 'locked'
-                            ? 'View Sheet'
-                            : t.navEnterMarks}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -4870,9 +5324,10 @@ export const TeacherDashboard: React.FC = () => {
                         });
                       const count = paidMonths.size;
                       const regNo =
-                        st.examRegisterNumbers?.[selectedExamId] ||
                         (st as any).examRegisterNos?.[selectedExamId] ||
                         (st as any).examRegNo ||
+                        (st as any).regNo ||
+                        st.examRegisterNumbers?.[selectedExamId] ||
                         '—';
 
                       return (

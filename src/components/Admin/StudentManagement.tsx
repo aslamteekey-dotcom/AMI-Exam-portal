@@ -4,7 +4,7 @@ import { Student, ClassItem, sortStudentsBoysFirst, assignClassSequentialRollNum
 import { db, handleFirestoreError, OperationType, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
-import { collection, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { logAuditEvent } from '../../services/auditLogger';
 import {
   Users,
@@ -35,6 +35,7 @@ export const StudentManagement: React.FC = () => {
   // Add / Edit Modal
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const [activeExamId, setActiveExamId] = useState<string>('exam_half_yearly_2026_27');
   const [formData, setFormData] = useState({
     admissionNo: '',
     rollNo: '',
@@ -46,6 +47,7 @@ export const StudentManagement: React.FC = () => {
     gender: 'M' as 'M' | 'F',
     dob: '',
     schoolClass: '',
+    examRegNo: '',
   });
 
   // CSV Import Modal
@@ -63,12 +65,17 @@ export const StudentManagement: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [resCls, resStd] = await Promise.all([
+      const [resCls, resStd, resSettings] = await Promise.all([
         fetchWithAuth('/api/classes'),
         fetchWithAuth('/api/students'),
+        fetchWithAuth('/api/settings').catch(() => null),
       ]);
       const clsData = await resCls.json();
       const stdData: Student[] = await resStd.json();
+      if (resSettings && resSettings.ok) {
+        const sData = await resSettings.json().catch(() => null);
+        if (sData?.activeExamId) setActiveExamId(sData.activeExamId);
+      }
       setClasses(clsData);
       const filtered = (stdData || []).filter(
         st =>
@@ -169,12 +176,22 @@ export const StudentManagement: React.FC = () => {
       gender: 'M',
       dob: '',
       schoolClass: '',
+      examRegNo: '',
     });
     setShowAddModal(true);
   };
 
   const handleOpenEdit = (student: Student) => {
     setEditingStudent(student);
+    const existingRegNo =
+      (student as any).examRegisterNos?.[activeExamId] ||
+      student.examRegNo ||
+      (student as any).regNo ||
+      student.examRegisterNumbers?.[activeExamId] ||
+      Object.values((student as any).examRegisterNos || {})[0] ||
+      Object.values(student.examRegisterNumbers || {})[0] ||
+      '';
+
     setFormData({
       admissionNo: student.admissionNo,
       rollNo: String(student.rollNo),
@@ -186,6 +203,7 @@ export const StudentManagement: React.FC = () => {
       gender: (student.gender as 'M' | 'F') || 'M',
       dob: student.dob || '',
       schoolClass: student.schoolClass || '',
+      examRegNo: String(existingRegNo || ''),
     });
     setShowAddModal(true);
   };
@@ -212,8 +230,22 @@ export const StudentManagement: React.FC = () => {
         return;
       }
 
+      const trimmedExamReg = (formData.examRegNo || '').trim();
+      const targetExamKey = activeExamId || 'exam_half_yearly_2026_27';
+
       if (editingStudent) {
-        const updateData: Partial<Student> = {
+        const updatedExamRegNos = {
+          ...((editingStudent as any).examRegisterNos || {}),
+          ...(editingStudent.examRegisterNumbers || {}),
+          [targetExamKey]: trimmedExamReg,
+        };
+        if (trimmedExamReg) {
+          Object.keys(updatedExamRegNos).forEach(k => {
+            updatedExamRegNos[k] = trimmedExamReg;
+          });
+        }
+
+        const updateData: Partial<Student> & Record<string, any> = {
           admissionNo: trimmedAdmission,
           rollNo: Number(formData.rollNo) || editingStudent.rollNo,
           nameEn: formData.nameEn.trim(),
@@ -224,20 +256,42 @@ export const StudentManagement: React.FC = () => {
           gender: formData.gender,
           dob: formData.dob.trim() || undefined,
           schoolClass: formData.schoolClass.trim() || undefined,
+          examRegNo: trimmedExamReg || undefined,
+          regNo: trimmedExamReg || undefined,
+          examRegisterNos: updatedExamRegNos,
+          examRegisterNumbers: updatedExamRegNos,
+          updatedAt: new Date().toISOString(),
         };
 
-        // 1. Persistent Firestore write for edited student
+        // 1. Dual-Sync Exam Register Number on Edit in Firestore:
+        // Update BOTH top-level (examRegNo, regNo) and nested examination maps (examRegisterNos, examRegisterNumbers)
+        const firestorePayload = cleanForFirestore({
+          examRegNo: trimmedExamReg,
+          regNo: trimmedExamReg,
+          examRegisterNos: updatedExamRegNos,
+          examRegisterNumbers: updatedExamRegNos,
+          [`examRegisterNos.${targetExamKey}`]: trimmedExamReg,
+          [`examRegisterNumbers.${targetExamKey}`]: trimmedExamReg,
+          ...updateData,
+          updatedAt: new Date().toISOString(),
+        });
+
         try {
-          await setDoc(doc(db, 'students', editingStudent.id), cleanForFirestore(updateData), { merge: true });
-          if (editingStudent.admissionNo && editingStudent.admissionNo !== editingStudent.id) {
-            await setDoc(doc(db, 'students', editingStudent.admissionNo), cleanForFirestore(updateData), { merge: true }).catch(() => {});
-          }
-        } catch (firestoreErr: any) {
-          console.error('Firestore write error when updating student:', firestoreErr);
-          handleFirestoreError(firestoreErr, OperationType.WRITE, `students/${editingStudent.id}`);
-          alert(`Firestore error: ${firestoreErr.message || 'Failed to update student in cloud database'}`);
-          return;
+          await updateDoc(doc(db, 'students', editingStudent.id), firestorePayload);
+        } catch {
+          await setDoc(doc(db, 'students', editingStudent.id), firestorePayload, { merge: true });
         }
+
+        if (editingStudent.admissionNo && editingStudent.admissionNo !== editingStudent.id) {
+          try {
+            await updateDoc(doc(db, 'students', editingStudent.admissionNo), firestorePayload);
+          } catch {
+            await setDoc(doc(db, 'students', editingStudent.admissionNo), firestorePayload, { merge: true }).catch(() => {});
+          }
+        }
+
+        // Direct in-memory mutation
+        Object.assign(editingStudent, updateData);
 
         // 2. Auto-recalculate sequential roll numbers and exam register numbers for this class (Boys A-Z first, then Girls A-Z)
         const targetClassId = formData.classId;
@@ -248,8 +302,24 @@ export const StudentManagement: React.FC = () => {
 
         const resequencedClass = recalculateClassRollsAndExamRegNos(currentClassStudents, clsName);
 
+        // Retain explicitly edited examRegNo for the edited student
+        const finalResequencedClass = resequencedClass.map(st => {
+          if (st.id === editingStudent.id || (editingStudent.admissionNo && st.admissionNo === editingStudent.admissionNo)) {
+            return {
+              ...st,
+              ...updateData,
+              examRegNo: trimmedExamReg,
+              regNo: trimmedExamReg,
+              examRegisterNos: updatedExamRegNos,
+              examRegisterNumbers: updatedExamRegNos,
+              updatedAt: new Date().toISOString(),
+            };
+          }
+          return st;
+        });
+
         // Update all resequenced students in Firestore
-        for (const st of resequencedClass) {
+        for (const st of finalResequencedClass) {
           try {
             await setDoc(doc(db, 'students', st.id), cleanForFirestore(st), { merge: true });
             if (st.admissionNo && st.admissionNo !== st.id) {
@@ -260,20 +330,26 @@ export const StudentManagement: React.FC = () => {
           }
         }
 
-        const resequencedMap = new Map(resequencedClass.map(s => [s.id, s]));
+        const resequencedMap = new Map(finalResequencedClass.map(s => [s.id, s]));
 
-        // Immediately update React state
-        setStudents(prev =>
-          prev.map(s => {
-            if (resequencedMap.has(s.id)) {
-              return resequencedMap.get(s.id)!;
-            }
-            if (s.id === editingStudent.id || (editingStudent.admissionNo && s.admissionNo === editingStudent.admissionNo)) {
-              return { ...s, ...updateData };
-            }
-            return s;
-          })
-        );
+        // Immediately update React state so the card / directory updates instantly without requiring a page reload
+        const updatedAll = students.map(s => {
+          if (s.id === editingStudent.id || (editingStudent.admissionNo && s.admissionNo === editingStudent.admissionNo)) {
+            return {
+              ...s,
+              ...updateData,
+              examRegNo: trimmedExamReg,
+              regNo: trimmedExamReg,
+              examRegisterNos: updatedExamRegNos,
+              examRegisterNumbers: updatedExamRegNos,
+            };
+          }
+          if (resequencedMap.has(s.id)) {
+            return resequencedMap.get(s.id)!;
+          }
+          return s;
+        });
+        setStudents(updatedAll);
 
         const res = await fetchWithAuth(`/api/students/${editingStudent.id}`, {
           method: 'PUT',
@@ -285,15 +361,20 @@ export const StudentManagement: React.FC = () => {
           throw new Error(err.error || 'Failed to update student');
         }
 
+        // Broadcast updates for real-time reflection across other tabs (marks entry, parent portal, etc.)
+        window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: updatedAll }));
+        window.dispatchEvent(new CustomEvent('madrasa_marks_updated'));
+
         logAuditEvent({
           action: 'STUDENT_UPDATED',
-          details: `User ${user?.name || 'Administrator'} updated student ${editingStudent.nameEn} (Adm: ${editingStudent.admissionNo}, Gender: ${formData.gender}, Class: ${formData.classId}).`,
+          details: `User ${user?.name || 'Administrator'} updated student ${editingStudent.nameEn} (Adm: ${editingStudent.admissionNo}, Gender: ${formData.gender}, RegNo: ${trimmedExamReg || 'N/A'}, Class: ${formData.classId}).`,
           currentUser: user,
           recordType: 'student',
           recordId: editingStudent.id,
         }).catch(e => console.warn('Audit log error:', e));
       } else {
         const studentId = trimmedAdmission;
+        const updatedExamRegNos = trimmedExamReg ? { [targetExamKey]: trimmedExamReg } : undefined;
         const newStudentData: Student = {
           id: studentId,
           admissionNo: studentId,
@@ -309,6 +390,10 @@ export const StudentManagement: React.FC = () => {
           gender: formData.gender || 'M',
           dob: formData.dob.trim() || undefined,
           schoolClass: formData.schoolClass.trim() || undefined,
+          examRegNo: trimmedExamReg || undefined,
+          regNo: trimmedExamReg || undefined,
+          examRegisterNumbers: updatedExamRegNos,
+          examRegisterNos: updatedExamRegNos,
         };
 
         // 1. Persistent Firestore write
@@ -998,6 +1083,22 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                       >
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-bold text-slate-900">{student.nameEn}</span>
+                          {(() => {
+                            const regNo =
+                              (student as any).examRegisterNos?.[activeExamId] ||
+                              student.examRegNo ||
+                              (student as any).regNo ||
+                              (student as any).examRegisterNumbers?.[activeExamId] ||
+                              '-';
+                            if (regNo && regNo !== '-') {
+                              return (
+                                <span className="px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold bg-emerald-50 text-emerald-800 border border-emerald-200" title="Exam Register Number">
+                                  Reg: {regNo}
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
                           {student.schoolClass && (
                             <span className="px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200" title="Regular School Grade">
                               {student.schoolClass}
@@ -1109,7 +1210,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
               {editingStudent ? 'Edit Student Details' : 'Add New Student'}
             </h3>
             <form onSubmit={handleSaveStudent} className="space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">{t.admissionNo} *</label>
                   <input
@@ -1140,8 +1241,21 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                     required
                   />
                   <p className="text-[10px] text-slate-500 mt-1">
-                    Auto-sequenced: Boys A-Z (1, 2, 3...) then Girls A-Z.
+                    Auto-sequenced: Boys A-Z, Girls A-Z.
                   </p>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">
+                    Exam Register Number
+                  </label>
+                  <input
+                    type="text"
+                    name="examRegNo"
+                    value={formData.examRegNo || ''}
+                    onChange={e => setFormData({ ...formData, examRegNo: e.target.value })}
+                    placeholder="e.g. 7101"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-700 focus:outline-none font-mono bg-white"
+                  />
                 </div>
               </div>
 
@@ -1186,38 +1300,14 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Gender *</label>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <label className={`flex items-center justify-center gap-1.5 p-2 rounded-lg border text-xs cursor-pointer transition select-none ${
-                      formData.gender === 'M'
-                        ? 'border-emerald-600 bg-emerald-50 text-emerald-950 font-bold shadow-2xs'
-                        : 'border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700'
-                    }`}>
-                      <input
-                        type="radio"
-                        name="gender"
-                        value="M"
-                        checked={formData.gender === 'M'}
-                        onChange={() => setFormData({ ...formData, gender: 'M' })}
-                        className="text-emerald-700 focus:ring-emerald-700"
-                      />
-                      <span>👦 Male (Boy)</span>
-                    </label>
-                    <label className={`flex items-center justify-center gap-1.5 p-2 rounded-lg border text-xs cursor-pointer transition select-none ${
-                      formData.gender === 'F'
-                        ? 'border-emerald-600 bg-emerald-50 text-emerald-950 font-bold shadow-2xs'
-                        : 'border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700'
-                    }`}>
-                      <input
-                        type="radio"
-                        name="gender"
-                        value="F"
-                        checked={formData.gender === 'F'}
-                        onChange={() => setFormData({ ...formData, gender: 'F' })}
-                        className="text-emerald-700 focus:ring-emerald-700"
-                      />
-                      <span>👧 Female (Girl)</span>
-                    </label>
-                  </div>
+                  <select
+                    value={formData.gender}
+                    onChange={e => setFormData({ ...formData, gender: e.target.value as 'M' | 'F' })}
+                    className="w-full p-2 border border-slate-300 rounded-lg bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-700 font-medium"
+                  >
+                    <option value="M">Boy</option>
+                    <option value="F">Girl</option>
+                  </select>
                 </div>
               </div>
 

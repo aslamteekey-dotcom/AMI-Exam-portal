@@ -141,8 +141,17 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                     examRegisterNumbers: regNos,
                     examRegisterNos: regNos,
                     examRegNo:
-                      (remote as any).examRegNo ||
                       (remote as any).examRegisterNos?.[examinationId] ||
+                      (remote as any).examRegNo ||
+                      (remote as any).regNo ||
+                      remote.examRegisterNumbers?.[examinationId] ||
+                      regNos[examinationId] ||
+                      '',
+                    regNo:
+                      (remote as any).examRegisterNos?.[examinationId] ||
+                      (remote as any).examRegNo ||
+                      (remote as any).regNo ||
+                      remote.examRegisterNumbers?.[examinationId] ||
                       regNos[examinationId] ||
                       '',
                   };
@@ -175,8 +184,17 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                 examRegisterNumbers: regNos,
                 examRegisterNos: regNos,
                 examRegNo:
-                  (found as any).examRegNo ||
                   (found as any).examRegisterNos?.[examinationId] ||
+                  (found as any).examRegNo ||
+                  (found as any).regNo ||
+                  found.examRegisterNumbers?.[examinationId] ||
+                  regNos[examinationId] ||
+                  '',
+                regNo:
+                  (found as any).examRegisterNos?.[examinationId] ||
+                  (found as any).examRegNo ||
+                  (found as any).regNo ||
+                  found.examRegisterNumbers?.[examinationId] ||
                   regNos[examinationId] ||
                   '',
               };
@@ -538,9 +556,10 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                 const isAbsent = sEntry.isAbsent;
                 const total = calculateStudentTotal(student.id);
                 const regNo =
-                  student.examRegisterNumbers?.[examinationId] ||
                   (student as any).examRegisterNos?.[examinationId] ||
                   (student as any).examRegNo ||
+                  (student as any).regNo ||
+                  student.examRegisterNumbers?.[examinationId] ||
                   '—';
 
                 return (
@@ -719,9 +738,10 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                 {students.map(s => {
                   const entry = marks[s.id];
                   const regNo =
-                    s.examRegisterNumbers?.[examinationId] ||
                     (s as any).examRegisterNos?.[examinationId] ||
                     (s as any).examRegNo ||
+                    (s as any).regNo ||
+                    s.examRegisterNumbers?.[examinationId] ||
                     '—';
                   return (
                     <tr key={s.id}>

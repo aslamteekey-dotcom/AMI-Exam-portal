@@ -232,10 +232,11 @@ export const ProgressReportCard: React.FC<Props> = ({
 
   // Exam Register Number (supports multi-portal cloud sync across schema variations)
   const examRegisterNo =
-    report.examRegisterNo ||
-    report.student?.examRegisterNumbers?.[report.examination?.id] ||
     (report.student as any)?.examRegisterNos?.[report.examination?.id] ||
     (report.student as any)?.examRegNo ||
+    (report.student as any)?.regNo ||
+    report.student?.examRegisterNumbers?.[report.examination?.id] ||
+    report.examRegisterNo ||
     report.student?.rollNo ||
     '—';
 

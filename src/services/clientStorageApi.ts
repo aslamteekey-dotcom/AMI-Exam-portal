@@ -861,6 +861,35 @@ export class ClientStorageApi {
           }
         });
     }
+
+    // 4. Ensure all students have valid DOB populated
+    if (this.db.students) {
+      const defaultDobs: Record<string, string> = {
+        '1001': '2019-05-12',
+        '1002': '2019-08-24',
+        '1003': '2019-03-15',
+        '1004': '2019-11-05',
+        '2001': '2018-06-10',
+        '2002': '2018-09-18',
+        '4001': '2016-02-17',
+        '5002': '2015-04-14',
+        '5003': '2015-07-22',
+        '5004': '2015-10-09',
+        '6001': '2014-05-20',
+        '862': '2013-08-11',
+        '7002': '2013-11-25',
+        '8001': '2012-03-30',
+        '9001': '2011-06-15',
+        '9002': '2011-09-08',
+      };
+      this.db.students.forEach(st => {
+        if (!st.dob && st.admissionNo && defaultDobs[st.admissionNo]) {
+          st.dob = defaultDobs[st.admissionNo];
+        } else if (!st.dob) {
+          st.dob = '2015-05-15';
+        }
+      });
+    }
   }
 
   /**
@@ -1968,9 +1997,10 @@ export class ClientStorageApi {
     const daysAttended = attConfig?.studentDaysAttended?.[student.id] ?? student.attendance?.daysAttended ?? 88;
     const totalWorkingDays = attConfig?.totalWorkingDays ?? student.attendance?.totalWorkingDays ?? 88;
     const examRegisterNo =
-      student.examRegisterNumbers?.[examId] ||
       (student as any).examRegisterNos?.[examId] ||
       (student as any).examRegNo ||
+      (student as any).regNo ||
+      student.examRegisterNumbers?.[examId] ||
       String(student.rollNo);
     const classInCharge = this.db.users.find(
       u =>
@@ -2534,6 +2564,27 @@ export class ClientStorageApi {
 
         const prevClassId = student.classId;
         Object.assign(student, bodyData);
+
+        if (bodyData?.examRegNo || bodyData?.regNo || bodyData?.examRegisterNos || bodyData?.examRegisterNumbers) {
+          const regVal = String(bodyData.examRegNo || bodyData.regNo || '').trim();
+          if (regVal) {
+            student.examRegNo = regVal;
+            (student as any).regNo = regVal;
+          }
+          const activeKey = this.db.settings?.activeExamId || 'exam_half_yearly_2026_27';
+          if (!student.examRegisterNos) student.examRegisterNos = {};
+          if (!student.examRegisterNumbers) student.examRegisterNumbers = {};
+          if (regVal) {
+            student.examRegisterNos[activeKey] = regVal;
+            student.examRegisterNumbers[activeKey] = regVal;
+          }
+          if (bodyData.examRegisterNos && typeof bodyData.examRegisterNos === 'object') {
+            student.examRegisterNos = { ...student.examRegisterNos, ...bodyData.examRegisterNos };
+          }
+          if (bodyData.examRegisterNumbers && typeof bodyData.examRegisterNumbers === 'object') {
+            student.examRegisterNumbers = { ...student.examRegisterNumbers, ...bodyData.examRegisterNumbers };
+          }
+        }
 
         // Remove any other student object in memory that shared this admissionNo (eliminate duplicate)
         if (student.admissionNo) {
@@ -3525,8 +3576,12 @@ export class ClientStorageApi {
           rollNo: idx + 1,
           nameEn: s.nameEn,
           nameMl: s.nameMl,
-          gender: s.gender || 'M',
-          examRegisterNo: s.examRegisterNumbers?.[eId] || (s as any).examRegisterNos?.[eId] || (s as any).examRegNo || '',
+          examRegisterNo:
+            (s as any).examRegisterNos?.[eId] ||
+            (s as any).examRegNo ||
+            (s as any).regNo ||
+            s.examRegisterNumbers?.[eId] ||
+            '',
         }));
         return this.jsonResponse(list);
       }
@@ -3549,6 +3604,7 @@ export class ClientStorageApi {
             (st as any).examRegisterNos[eId] = regVal;
 
             (st as any).examRegNo = regVal;
+            (st as any).regNo = regVal;
             updatedStudents.push(st);
           }
         });

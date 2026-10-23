@@ -180,7 +180,8 @@ export class FirestoreSyncService {
                     id: doc.id,
                     examRegisterNumbers: regNos,
                     examRegisterNos: regNos,
-                    examRegNo: data.examRegNo || Object.values(regNos)[0] || '',
+                    examRegNo: data.examRegNo || (data as any).regNo || Object.values(regNos)[0] || '',
+                    regNo: (data as any).regNo || data.examRegNo || Object.values(regNos)[0] || '',
                   } as Student;
                 })
                 .filter(
@@ -724,6 +725,7 @@ export class FirestoreSyncService {
         const regVal = String(regNo || '').trim();
         const updatePayload: Record<string, any> = {
           examRegNo: regVal,
+          regNo: regVal,
           examRegisterNumbers: {
             [examId]: regVal,
           },
@@ -732,6 +734,7 @@ export class FirestoreSyncService {
           },
           [`examRegisterNos.${examId}`]: regVal,
           [`examRegisterNumbers.${examId}`]: regVal,
+          updatedAt: new Date().toISOString(),
         };
 
         const targetIds = new Set<string>();
