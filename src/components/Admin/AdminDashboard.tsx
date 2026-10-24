@@ -14,6 +14,8 @@ import { FeeManagement } from './FeeManagement';
 import { MarkVerificationModal } from './MarkVerificationModal';
 import { StudyMaterialsManagement } from './StudyMaterialsManagement';
 import { AdminAttendanceView } from './AdminAttendanceView';
+import { db, safeOnSnapshot } from '../../services/firebase';
+import { collection } from 'firebase/firestore';
 import {
   Users,
   GraduationCap,
@@ -110,6 +112,57 @@ export const AdminDashboard: React.FC = () => {
 
   useEffect(() => {
     loadOverview();
+
+    // Listen to in-memory custom events
+    const handleStudentsUpdated = (e: any) => {
+      const list = e.detail;
+      if (Array.isArray(list)) {
+        const validList = list.filter(
+          (s: any) => s && s.status !== 'inactive' && Boolean(String(s.nameEn || s.name || '').trim()) && Boolean(String(s.admissionNo || '').trim())
+        );
+        const uniqueCount = new Map(validList.map(s => [s.admissionNo?.toString() || s.id, s])).size;
+        setOverviewData((prev: any) => ({
+          ...prev,
+          totalStudents: uniqueCount,
+        }));
+      }
+    };
+    window.addEventListener('madrasa_students_updated', handleStudentsUpdated);
+
+    // Also listen directly to Firestore students collection to ensure real-time consistency with Students tab
+    const unsubStudents = safeOnSnapshot(
+      collection(db, 'students'),
+      snapshot => {
+        if (!snapshot.empty) {
+          const validDocs = snapshot.docs.filter(d => {
+            const data = d.data();
+            const hasName = Boolean(String(data.nameEn || data.name || '').trim());
+            const hasAdmNo = Boolean(String(data.admissionNo || '').trim());
+            return hasName && hasAdmNo;
+          });
+          const uniqueByAdmission = new Map();
+          for (const docSnap of validDocs) {
+            const data = docSnap.data();
+            const admKey = String(data.admissionNo || docSnap.id).trim();
+            if (!uniqueByAdmission.has(admKey)) {
+              uniqueByAdmission.set(admKey, data);
+            }
+          }
+          setOverviewData((prev: any) => ({
+            ...prev,
+            totalStudents: uniqueByAdmission.size,
+          }));
+        }
+      },
+      err => {
+        console.warn('AdminDashboard students listener warning:', err);
+      }
+    );
+
+    return () => {
+      window.removeEventListener('madrasa_students_updated', handleStudentsUpdated);
+      if (unsubStudents) unsubStudents();
+    };
   }, []);
 
   const handleClearDemoData = async () => {

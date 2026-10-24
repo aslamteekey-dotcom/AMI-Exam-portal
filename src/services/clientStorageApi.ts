@@ -2428,6 +2428,8 @@ export class ClientStorageApi {
         let students = (this.db.students || []).filter(
           s =>
             s &&
+            Boolean(String(s.nameEn || (s as any).name || '').trim()) &&
+            Boolean(String(s.admissionNo || '').trim()) &&
             s.id !== 'st_501' &&
             s.id !== 'st_301' &&
             s.id !== 'st_903' &&
@@ -3675,9 +3677,23 @@ export class ClientStorageApi {
           (this.db.examinations || [])[0] ||
           null;
 
+        const validActiveStudents = Array.from(
+          new Map(
+            (this.db.students || [])
+              .filter(
+                s =>
+                  s &&
+                  s.status !== 'inactive' &&
+                  Boolean(String(s.nameEn || (s as any).name || '').trim()) &&
+                  Boolean(String(s.admissionNo || '').trim())
+              )
+              .map(s => [String(s.admissionNo || s.id).trim(), s])
+          ).values()
+        );
+
         return this.jsonResponse({
           activeExam,
-          totalStudents: (this.db.students || []).filter(s => s && s.status === 'active').length,
+          totalStudents: validActiveStudents.length,
           totalTeachers: (this.db.users || []).filter(u => u && u.role === 'teacher').length,
           totalClasses: (this.db.classes || []).length,
           totalSubjects: (this.db.subjects || []).length,

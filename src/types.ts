@@ -430,7 +430,7 @@ export function sortStudentsBoysFirst<T extends { gender?: string; nameEn?: stri
     }
     const nameA = String(studentA?.nameEn || studentA?.name || '').trim().toLowerCase();
     const nameB = String(studentB?.nameEn || studentB?.name || '').trim().toLowerCase();
-    const comp = nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+    const comp = nameA.localeCompare(nameB);
     if (comp !== 0) return comp;
     return (studentA?.rollNo || 0) - (studentB?.rollNo || 0);
   });

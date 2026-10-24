@@ -529,7 +529,14 @@ export const TeacherDashboard: React.FC = () => {
         collection(db, 'students'),
         snapshot => {
           if (!snapshot.empty) {
-            const remoteStu = snapshot.docs.map(d => {
+            const validDocs = snapshot.docs.filter(d => {
+              const data = d.data();
+              const hasName = Boolean(String(data.nameEn || data.name || '').trim());
+              const hasAdmNo = Boolean(String(data.admissionNo || '').trim());
+              return hasName && hasAdmNo;
+            });
+            const uniqueMap = new Map();
+            for (const d of validDocs) {
               const data = d.data();
               const regNos = {
                 ...((data as any).examRegisterNumbers || {}),
@@ -538,7 +545,7 @@ export const TeacherDashboard: React.FC = () => {
               if ((data as any).examRegNo && Object.keys(regNos).length === 0) {
                 regNos[selectedExamId || 'default'] = (data as any).examRegNo;
               }
-              return {
+              const studentObj = {
                 ...data,
                 id: d.id,
                 examRegisterNumbers: regNos,
@@ -549,8 +556,12 @@ export const TeacherDashboard: React.FC = () => {
                   regNos[selectedExamId] ||
                   '',
               } as Student;
-            });
-            setAllStudents(sortStudentsBoysFirst(remoteStu));
+              const key = String(studentObj.admissionNo || d.id).trim();
+              if (!uniqueMap.has(key)) {
+                uniqueMap.set(key, studentObj);
+              }
+            }
+            setAllStudents(sortStudentsBoysFirst(Array.from(uniqueMap.values())));
           }
         },
         error => {
@@ -563,7 +574,10 @@ export const TeacherDashboard: React.FC = () => {
       const handleStudentsUpdated = (e: any) => {
         const list = e.detail;
         if (Array.isArray(list)) {
-          setAllStudents(sortStudentsBoysFirst(list));
+          const valid = list.filter(
+            (s: any) => s && Boolean(String(s.nameEn || s.name || '').trim()) && Boolean(String(s.admissionNo || '').trim())
+          );
+          setAllStudents(sortStudentsBoysFirst(valid));
         }
       };
       window.addEventListener('madrasa_students_updated', handleStudentsUpdated);

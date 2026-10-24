@@ -78,17 +78,23 @@ export const StudentManagement: React.FC = () => {
       }
       setClasses(clsData);
       const filtered = (stdData || []).filter(
-        st =>
-          st &&
-          st.id !== 'st_501' &&
-          st.id !== 'st_301' &&
-          st.id !== 'st_903' &&
-          st.admissionNo !== '5001' &&
-          st.admissionNo !== '3001' &&
-          st.admissionNo !== '9003' &&
-          st.nameEn !== 'Ahmed Nihal' &&
-          st.nameEn !== 'Adil Mansoor' &&
-          st.nameEn !== 'Adil Ibrahim'
+        st => {
+          if (!st) return false;
+          const hasName = Boolean(String(st.nameEn || (st as any).name || '').trim());
+          const hasAdm = Boolean(String(st.admissionNo || '').trim());
+          if (!hasName || !hasAdm) return false;
+          return (
+            st.id !== 'st_501' &&
+            st.id !== 'st_301' &&
+            st.id !== 'st_903' &&
+            st.admissionNo !== '5001' &&
+            st.admissionNo !== '3001' &&
+            st.admissionNo !== '9003' &&
+            st.nameEn !== 'Ahmed Nihal' &&
+            st.nameEn !== 'Adil Mansoor' &&
+            st.nameEn !== 'Adil Ibrahim'
+          );
+        }
       );
       setStudents(assignClassSequentialRollNumbers(filtered));
       if (clsData.length > 0 && !importClassId) {
@@ -111,40 +117,58 @@ export const StudentManagement: React.FC = () => {
     try {
       unsub = safeOnSnapshot(
         collection(db, 'students'),
-        (snapshot) => {
+        async (snapshot) => {
           if (!snapshot.empty) {
             const rogueIds = ['st_501', 'st_301', 'st_903'];
             const rogueAdms = ['5001', '3001', '9003'];
             const rogueNames = ['Ahmed Nihal', 'Adil Mansoor', 'Adil Ibrahim'];
 
-            const remoteStudents = snapshot.docs
+            // One-time Firestore Auto-Cleanup: Detect and purge any corrupt ghost documents (missing name or admissionNo)
+            const corruptDocs = snapshot.docs.filter(d => {
+              const data = d.data() as any;
+              const hasName = Boolean(String(data?.nameEn || data?.name || '').trim());
+              const hasAdm = Boolean(String(data?.admissionNo || '').trim());
+              const adm = String(data?.admissionNo || '').trim();
+              const name = String(data?.nameEn || data?.name || '').trim();
+              return (
+                !hasName ||
+                !hasAdm ||
+                rogueIds.includes(d.id) ||
+                rogueAdms.includes(adm) ||
+                rogueNames.includes(name)
+              );
+            });
+
+            if (corruptDocs.length > 0) {
+              console.info(`[Auto-Cleanup] Purging ${corruptDocs.length} corrupt ghost student documents from Firestore...`);
+              corruptDocs.forEach(d => {
+                deleteDoc(doc(db, 'students', d.id)).catch(e => {
+                  console.warn(`[Auto-Cleanup] Error deleting corrupt doc ${d.id}:`, e);
+                });
+              });
+            }
+
+            const validStudents = snapshot.docs
               .filter(d => {
                 const data = d.data() as any;
+                const hasName = Boolean(String(data?.nameEn || data?.name || '').trim());
+                const hasAdm = Boolean(String(data?.admissionNo || '').trim());
+                if (!hasName || !hasAdm) return false;
                 const adm = String(data?.admissionNo || '').trim();
-                const name = String(data?.nameEn || '').trim();
+                const name = String(data?.nameEn || data?.name || '').trim();
                 return !rogueIds.includes(d.id) && !rogueAdms.includes(adm) && !rogueNames.includes(name);
               })
               .map((d) => ({
                 ...d.data(),
                 id: d.id,
-              } as Student))
-              .filter(
-                (st) =>
-                  st &&
-                  st.id !== 'st_501' &&
-                  st.id !== 'st_301' &&
-                  st.id !== 'st_903' &&
-                  st.admissionNo !== '5001' &&
-                  st.admissionNo !== '3001' &&
-                  st.admissionNo !== '9003' &&
-                  st.nameEn !== 'Ahmed Nihal' &&
-                  st.nameEn !== 'Adil Mansoor' &&
-                  st.nameEn !== 'Adil Ibrahim'
-              );
+              } as Student));
 
-            // Resequence roll numbers without suppressing duplicates so duplicates are clearly visible for resolution
-            const resequenced = assignClassSequentialRollNumbers<Student>(remoteStudents);
+            // Resequence roll numbers strictly for valid students
+            const resequenced = assignClassSequentialRollNumbers<Student>(validStudents);
             setStudents(resequenced);
+
+            // Synchronize with other tabs and Dashboard overview
+            window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: resequenced }));
           } else {
             setStudents([]);
           }
@@ -211,9 +235,14 @@ export const StudentManagement: React.FC = () => {
   const handleSaveStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const trimmedAdmission = (formData.admissionNo || '').trim();
+      const trimmedAdmission = (formData.admissionNo || '').trim().replace(/\s+/g, ' ');
+      const trimmedNameEn = (formData.nameEn || '').trim().replace(/\s+/g, ' ');
       if (!trimmedAdmission) {
         alert('Admission Number is required.');
+        return;
+      }
+      if (!trimmedNameEn) {
+        alert('Student English Name is required.');
         return;
       }
 
@@ -230,7 +259,7 @@ export const StudentManagement: React.FC = () => {
         return;
       }
 
-      const trimmedExamReg = (formData.examRegNo || '').trim();
+      const trimmedExamReg = (formData.examRegNo || '').trim().replace(/\s+/g, ' ');
       const targetExamKey = activeExamId || 'exam_half_yearly_2026_27';
 
       if (editingStudent) {
@@ -248,11 +277,11 @@ export const StudentManagement: React.FC = () => {
         const updateData: Partial<Student> & Record<string, any> = {
           admissionNo: trimmedAdmission,
           rollNo: Number(formData.rollNo) || editingStudent.rollNo,
-          nameEn: formData.nameEn.trim(),
-          nameMl: formData.nameMl.trim() || formData.nameEn.trim(),
+          nameEn: trimmedNameEn,
+          nameMl: formData.nameMl.trim().replace(/\s+/g, ' ') || trimmedNameEn,
           classId: formData.classId,
-          parentNameEn: formData.parentNameEn.trim(),
-          parentPhone: formData.parentPhone.trim(),
+          parentNameEn: (formData.parentNameEn || '').trim().replace(/\s+/g, ' '),
+          parentPhone: (formData.parentPhone || '').trim(),
           gender: formData.gender,
           dob: formData.dob.trim() || undefined,
           schoolClass: formData.schoolClass.trim() || undefined,
@@ -379,13 +408,13 @@ export const StudentManagement: React.FC = () => {
           id: studentId,
           admissionNo: studentId,
           rollNo: Number(formData.rollNo) || 1,
-          nameEn: formData.nameEn.trim(),
-          nameMl: formData.nameMl.trim() || formData.nameEn.trim(),
+          nameEn: trimmedNameEn,
+          nameMl: formData.nameMl.trim().replace(/\s+/g, ' ') || trimmedNameEn,
           classId: formData.classId,
           academicYearId: 'ay_2026_2027',
-          parentNameEn: formData.parentNameEn.trim(),
-          parentNameMl: formData.nameMl.trim() || formData.parentNameEn.trim(),
-          parentPhone: formData.parentPhone.trim(),
+          parentNameEn: (formData.parentNameEn || '').trim().replace(/\s+/g, ' '),
+          parentNameMl: formData.nameMl.trim().replace(/\s+/g, ' ') || (formData.parentNameEn || '').trim().replace(/\s+/g, ' '),
+          parentPhone: (formData.parentPhone || '').trim(),
           status: 'active',
           gender: formData.gender || 'M',
           dob: formData.dob.trim() || undefined,
@@ -859,6 +888,11 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
 
   // Filter students with strict sorting: Boys first, then Girls; alphabetical A to Z within each
   const classStudents = students.filter(student => {
+    // Exclude any ghost / corrupted record lacking name or admission number
+    const hasName = Boolean(String(student.nameEn || (student as any).name || '').trim());
+    const hasAdm = Boolean(String(student.admissionNo?.toString() || '').trim());
+    if (!hasName || !hasAdm) return false;
+
     const matchClass = selectedClassId ? student.classId === selectedClassId : true;
     const q = (searchQuery || '').toLowerCase().trim();
     if (!q) return matchClass;
@@ -866,6 +900,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
     const studentName = (student.nameEn || (student as any).name || '').toLowerCase();
     const malayalamName = (student.nameMl || '').toLowerCase();
     const admissionNo = (student.admissionNo?.toString() || '').toLowerCase();
+    const parentName = ((student.parentNameEn || (student as any).parentName || (student as any).guardianName || '').toString()).toLowerCase();
     const gender = (student.gender || '').toLowerCase();
     const schoolClass = (student.schoolClass || (student as any).class || '').toLowerCase();
     const rollNo = String(student.rollNo || '');
@@ -874,6 +909,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
       studentName.includes(q) ||
       malayalamName.includes(q) ||
       admissionNo.includes(q) ||
+      parentName.includes(q) ||
       gender.includes(q) ||
       schoolClass.includes(q) ||
       rollNo.includes(q);

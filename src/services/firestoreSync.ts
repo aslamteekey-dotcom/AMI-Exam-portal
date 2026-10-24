@@ -126,7 +126,13 @@ export class FirestoreSyncService {
               snapshot.docs.forEach(d => {
                 const data = d.data() as any;
                 const adm = String(data?.admissionNo || '').trim();
-                const name = String(data?.nameEn || '').trim();
+                const name = String(data?.nameEn || data?.name || '').trim();
+
+                // Purge corrupted ghost documents lacking valid name AND admission number
+                if (!name || !adm) {
+                  duplicateDocIdsToDelete.push(d.id);
+                  return;
+                }
 
                 // Rogue mock students removal
                 if (
@@ -697,15 +703,27 @@ export class FirestoreSyncService {
   public async syncStudent(student: Student): Promise<void> {
     if (isFirestoreQuotaExhausted()) return;
     try {
-      const canonicalId = student.id || String(student.admissionNo).trim();
+      const name = String(student.nameEn || (student as any).name || '').trim().replace(/\s+/g, ' ');
+      const adm = String(student.admissionNo || '').trim().replace(/\s+/g, ' ');
+      // Strict guard: Never write corrupt student document without valid name AND admission number
+      if (!name || !adm) {
+        console.warn('[syncStudent] Skipped syncing corrupted student record:', student);
+        return;
+      }
+      const canonicalId = student.id || adm;
       if (!canonicalId) return;
-      const cleanData = cleanForFirestore({ ...student, id: canonicalId });
+      const cleanData = cleanForFirestore({
+        ...student,
+        id: canonicalId,
+        admissionNo: adm,
+        nameEn: name,
+        nameMl: student.nameMl ? String(student.nameMl).trim().replace(/\s+/g, ' ') : name,
+      });
       await setDoc(doc(db, 'students', canonicalId), cleanData, { merge: true });
 
       // Clean up legacy alias doc if student ID and admission number differed, so duplicate docs are not kept in Firestore
-      const admKey = String(student.admissionNo || '').trim();
-      if (admKey && admKey !== canonicalId && canonicalId.startsWith('st_')) {
-        deleteDoc(doc(db, 'students', admKey)).catch(() => {});
+      if (adm && adm !== canonicalId && canonicalId.startsWith('st_')) {
+        deleteDoc(doc(db, 'students', adm)).catch(() => {});
       }
     } catch (e) {
       this.handleWriteError(e, OperationType.WRITE, `students/${student.id || student.admissionNo}`);
