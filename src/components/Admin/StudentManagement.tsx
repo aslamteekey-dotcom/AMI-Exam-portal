@@ -211,7 +211,7 @@ export const StudentManagement: React.FC = () => {
   const handleSaveStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const trimmedAdmission = formData.admissionNo.trim();
+      const trimmedAdmission = (formData.admissionNo || '').trim();
       if (!trimmedAdmission) {
         alert('Admission Number is required.');
         return;
@@ -222,7 +222,7 @@ export const StudentManagement: React.FC = () => {
         if (editingStudent && (s.id === editingStudent.id || s.admissionNo === editingStudent.admissionNo)) {
           return false;
         }
-        return String(s.admissionNo || '').trim().toLowerCase() === trimmedAdmission.toLowerCase();
+        return (s.admissionNo?.toString() || '').trim().toLowerCase() === trimmedAdmission.toLowerCase();
       });
 
       if (conflict) {
@@ -827,7 +827,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
   const admFrequency = useMemo(() => {
     const counts = new Map<string, number>();
     students.forEach(s => {
-      const adm = String(s.admissionNo || '').trim().toLowerCase();
+      const adm = (s.admissionNo?.toString() || '').trim().toLowerCase();
       if (adm) {
         counts.set(adm, (counts.get(adm) || 0) + 1);
       }
@@ -844,28 +844,39 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
   }, [admFrequency]);
 
   // Immediate validation check for Add / Edit Student modal
-  const trimmedAdmissionNo = formData.admissionNo.trim();
+  const trimmedAdmissionNo = (formData.admissionNo || '').trim();
   const duplicateAdmissionConflict = useMemo(() => {
     if (!trimmedAdmissionNo) return null;
     return students.find(s => {
       if (editingStudent && (s.id === editingStudent.id || s.admissionNo === editingStudent.admissionNo)) {
         return false;
       }
-      return String(s.admissionNo || '').trim().toLowerCase() === trimmedAdmissionNo.toLowerCase();
+      return (s.admissionNo?.toString() || '').trim().toLowerCase() === trimmedAdmissionNo.toLowerCase();
     });
   }, [trimmedAdmissionNo, students, editingStudent]);
 
   const isAdmissionNumberDuplicate = Boolean(duplicateAdmissionConflict);
 
   // Filter students with strict sorting: Boys first, then Girls; alphabetical A to Z within each
-  const classStudents = students.filter(s => {
-    const matchClass = selectedClassId ? s.classId === selectedClassId : true;
-    const q = searchQuery.toLowerCase();
+  const classStudents = students.filter(student => {
+    const matchClass = selectedClassId ? student.classId === selectedClassId : true;
+    const q = (searchQuery || '').toLowerCase().trim();
+    if (!q) return matchClass;
+
+    const studentName = (student.nameEn || (student as any).name || '').toLowerCase();
+    const malayalamName = (student.nameMl || '').toLowerCase();
+    const admissionNo = (student.admissionNo?.toString() || '').toLowerCase();
+    const gender = (student.gender || '').toLowerCase();
+    const schoolClass = (student.schoolClass || (student as any).class || '').toLowerCase();
+    const rollNo = String(student.rollNo || '');
+
     const matchSearch =
-      s.nameEn.toLowerCase().includes(q) ||
-      (s.nameMl && s.nameMl.includes(q)) ||
-      (s.admissionNo && s.admissionNo.toLowerCase().includes(q)) ||
-      String(s.rollNo).includes(q);
+      studentName.includes(q) ||
+      malayalamName.includes(q) ||
+      admissionNo.includes(q) ||
+      gender.includes(q) ||
+      schoolClass.includes(q) ||
+      rollNo.includes(q);
     return matchClass && matchSearch;
   });
 
@@ -1058,7 +1069,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                 filteredStudents.map(student => {
                   const cls = classes.find(c => c.id === student.classId);
                   const isDuplicate =
-                    (admFrequency.get(String(student.admissionNo || '').trim().toLowerCase()) || 0) > 1;
+                    (admFrequency.get((student.admissionNo?.toString() || '').trim().toLowerCase()) || 0) > 1;
 
                   return (
                     <tr
@@ -1082,7 +1093,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                         }`}
                       >
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-bold text-slate-900">{student.nameEn}</span>
+                          <span className="font-bold text-slate-900">{student.nameEn || (student as any).name || '—'}</span>
                           {(() => {
                             const regNo =
                               (student as any).examRegisterNos?.[activeExamId] ||

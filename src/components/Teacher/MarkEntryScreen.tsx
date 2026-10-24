@@ -415,6 +415,50 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
       ];
   const subjectMaxMarks = compTotal > 0 ? compTotal : effectiveComponents.reduce((sum, c) => sum + c.maxMarks, 0);
 
+  // Subject evaluation status based strictly on OMR + OCR marks (excluding CIE from 35% threshold)
+  const calculateStudentSubjectStatus = (studentId: string) => {
+    const entry = marks[studentId];
+    if (!entry) return { isAbsent: false, total: 0, writtenTotal: 0, maxWritten: 0, cieMark: 0, maxCie: 0, isFail: false, hasAny: false };
+    if (entry.isAbsent) return { isAbsent: true, total: 'Absent', writtenTotal: 0, maxWritten: 0, cieMark: 0, maxCie: 0, isFail: true, hasAny: true };
+
+    let writtenTotal = 0;
+    let maxWritten = 0;
+    let cieMark = 0;
+    let maxCie = 0;
+    let hasAny = false;
+
+    effectiveComponents.forEach((comp, idx) => {
+      const k = (comp.componentKey || '').toLowerCase();
+      const val = entry.componentMarks[comp.componentKey];
+      const numVal = val !== '' && val !== undefined && !isNaN(Number(val)) ? Number(val) : 0;
+      if (val !== '' && val !== undefined) hasAny = true;
+
+      const isCie = k === 'ce' || k === 'diary' || k.includes('ce') || k.includes('cie') || (effectiveComponents.length === 3 && idx === 2);
+      if (isCie) {
+        cieMark += numVal;
+        maxCie += comp.maxMarks || 10;
+      } else {
+        writtenTotal += numVal;
+        maxWritten += comp.maxMarks || 20;
+      }
+    });
+
+    const grandTotal = writtenTotal + cieMark;
+    // The 35% passing mark applies STRICTLY to writtenTotal out of maxWritten
+    const isFail = maxWritten > 0 && writtenTotal < (maxWritten * 0.35);
+
+    return {
+      isAbsent: false,
+      total: hasAny ? grandTotal : '—',
+      writtenTotal,
+      maxWritten,
+      cieMark,
+      maxCie,
+      isFail,
+      hasAny,
+    };
+  };
+
   return (
     <div className="space-y-6">
       {/* Header Bar */}
@@ -554,7 +598,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
               {students.map((student, idx) => {
                 const sEntry = marks[student.id] || { isAbsent: false, componentMarks: {}, remarks: '' };
                 const isAbsent = sEntry.isAbsent;
-                const total = calculateStudentTotal(student.id);
+                const statusInfo = calculateStudentSubjectStatus(student.id);
                 const regNo =
                   (student as any).examRegisterNos?.[examinationId] ||
                   (student as any).examRegNo ||
@@ -659,8 +703,8 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                           Absent
                         </span>
                       ) : (
-                        <span className={typeof total === 'number' && total < subjectMaxMarks * 0.4 ? 'text-rose-600' : 'text-emerald-900'}>
-                          {total}
+                        <span className={statusInfo.isFail ? 'text-red-600 font-bold' : 'text-emerald-900 font-bold'}>
+                          {statusInfo.total}
                         </span>
                       )}
                     </td>
@@ -753,9 +797,14 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                           {entry?.isAbsent ? 'Absent' : entry?.componentMarks[c.componentKey] || '—'}
                         </td>
                       ))}
-                      <td className="p-2 text-center font-mono font-bold">
-                        {calculateStudentTotal(s.id)}
-                      </td>
+                      {(() => {
+                        const sStatus = calculateStudentSubjectStatus(s.id);
+                        return (
+                          <td className={`p-2 text-center font-mono font-bold ${sStatus.isFail ? 'text-red-600 font-bold' : 'text-emerald-950'}`}>
+                            {sStatus.total}
+                          </td>
+                        );
+                      })()}
                     </tr>
                   );
                 })}

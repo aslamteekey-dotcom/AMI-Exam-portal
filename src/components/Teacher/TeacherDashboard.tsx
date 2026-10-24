@@ -2112,8 +2112,12 @@ export const TeacherDashboard: React.FC = () => {
       let hasAbsent = false;
       let anyMarkEntered = false;
       let hasFailedComponent = false;
+      let hasWithheld = false;
 
-      const subjectMarksMap: Record<string, { value: number | 'AB' | '—'; isAbsent: boolean; max: number }> = {};
+      const subjectMarksMap: Record<
+        string,
+        { value: number | 'AB' | '—'; isAbsent: boolean; max: number; isFail: boolean; isWithheld: boolean }
+      > = {};
 
       inChargeSubjects.forEach(sub => {
         const ms = markSheets.find(
@@ -2123,25 +2127,80 @@ export const TeacherDashboard: React.FC = () => {
         const max = getSubjectMax(sub);
 
         if (!entry) {
-          subjectMarksMap[sub.id] = { value: '—', isAbsent: false, max };
+          subjectMarksMap[sub.id] = { value: '—', isAbsent: false, max, isFail: false, isWithheld: false };
         } else if (entry.isAbsent) {
           hasAbsent = true;
           anyMarkEntered = true;
-          subjectMarksMap[sub.id] = { value: 'AB', isAbsent: true, max };
+          subjectMarksMap[sub.id] = { value: 'AB', isAbsent: true, max, isFail: true, isWithheld: false };
         } else {
           anyMarkEntered = true;
-          const total =
-            typeof entry.subjectTotal === 'number' && !isNaN(entry.subjectTotal)
-              ? entry.subjectTotal
-              : entry.componentMarks
-              ? Object.values(entry.componentMarks).reduce((a, b) => a + (Number(b) || 0), 0)
-              : 0;
+          const compMarks = entry.componentMarks || {};
+          const configuredComponents =
+            sub.defaultComponents && sub.defaultComponents.length > 0
+              ? sub.defaultComponents
+              : [
+                  { componentKey: 'written', labelEn: 'OMR', maxMarks: 20 },
+                  { componentKey: 'oral', labelEn: 'OCR', maxMarks: 20 },
+                  { componentKey: 'ce', labelEn: 'CIE', maxMarks: 10 },
+                ];
+
+          let writtenTotal = 0;
+          let maxWritten = 0;
+          let cieMark = 0;
+          let maxCie = 0;
+          let hasCie = false;
+
+          configuredComponents.forEach((c, idx) => {
+            const k = (c.componentKey || '').toLowerCase();
+            const val = compMarks[c.componentKey];
+            const numVal = (val as any) !== '' && val !== undefined && !isNaN(Number(val)) ? Number(val) : 0;
+            const isCie =
+              k === 'ce' ||
+              k === 'diary' ||
+              k.includes('ce') ||
+              k.includes('cie') ||
+              (configuredComponents.length === 3 && idx === 2);
+
+            if (isCie) {
+              cieMark += numVal;
+              maxCie += c.maxMarks || 10;
+              if ((val as any) !== '' && val !== undefined) hasCie = true;
+            } else {
+              writtenTotal += numVal;
+              maxWritten += c.maxMarks || 20;
+            }
+          });
+
+          // Subject Grand Total = writtenTotal + CIE
+          const hasComponentEntries = Object.keys(compMarks).length > 0;
+          const total = hasComponentEntries
+            ? writtenTotal + cieMark
+            : typeof entry.subjectTotal === 'number' && !isNaN(entry.subjectTotal)
+            ? entry.subjectTotal
+            : 0;
 
           studentObtained += total;
-          if (total < max * 0.35) {
+
+          // 35% passing mark applies STRICTLY to writtenTotal out of maxWritten (excluding CIE)
+          const isFail = maxWritten > 0 ? writtenTotal < maxWritten * 0.35 : total < max * 0.35;
+
+          // Withheld Status (CIE = 0): If a student has CIE marks equal to 0 (or unsubmitted internal work) in any subject
+          const isSubWithheld = maxCie > 0 && ((hasCie && cieMark === 0) || !hasCie || (entry as any).hasMissingCe);
+
+          if (isFail) {
             hasFailedComponent = true;
           }
-          subjectMarksMap[sub.id] = { value: total, isAbsent: false, max };
+          if (isSubWithheld) {
+            hasWithheld = true;
+          }
+
+          subjectMarksMap[sub.id] = {
+            value: total,
+            isAbsent: false,
+            max,
+            isFail,
+            isWithheld: isSubWithheld,
+          };
         }
       });
 
@@ -2153,9 +2212,11 @@ export const TeacherDashboard: React.FC = () => {
         (student as any).daysAttended ??
         86;
 
-      let status: 'Passed' | 'Needs Imp' | 'Absent' | 'Pending' = 'Passed';
+      let status: 'Passed' | 'Needs Imp' | 'Withheld' | 'Absent' | 'Pending' = 'Passed';
       if (hasAbsent) {
         status = 'Absent';
+      } else if (hasWithheld) {
+        status = 'Withheld';
       } else if (hasFailedComponent || Number(percentage) < 35) {
         status = 'Needs Imp';
       } else if (!anyMarkEntered) {
@@ -2171,8 +2232,9 @@ export const TeacherDashboard: React.FC = () => {
         daysAttended,
         totalWorking,
         hasAbsent,
+        hasWithheld,
         status,
-        isQualifiedForRank: anyMarkEntered && !hasAbsent && status === 'Passed',
+        isQualifiedForRank: anyMarkEntered && !hasAbsent && !hasWithheld && status === 'Passed',
       };
     });
 
@@ -2208,9 +2270,12 @@ export const TeacherDashboard: React.FC = () => {
       } else if (item.status === 'Absent') {
         rankOrStatusText = 'Absent';
         badgeClass = 'bg-rose-100 text-rose-800 border border-rose-200 font-bold';
+      } else if (item.status === 'Withheld') {
+        rankOrStatusText = 'Withheld';
+        badgeClass = 'bg-amber-100 text-amber-900 border border-amber-300 font-bold';
       } else if (item.status === 'Needs Imp') {
-        rankOrStatusText = 'Needs Imp';
-        badgeClass = 'bg-amber-100 text-amber-800 border border-amber-200 font-bold';
+        rankOrStatusText = 'Need Improvement';
+        badgeClass = 'bg-rose-100 text-rose-800 border border-rose-200 font-bold';
       } else {
         rankOrStatusText = '—';
         badgeClass = 'bg-slate-100 text-slate-500 font-medium';
@@ -3162,8 +3227,8 @@ export const TeacherDashboard: React.FC = () => {
                                       ) : (
                                         <span
                                           className={`font-semibold ${
-                                            Number(val) < (mData?.max || 50) * 0.35
-                                              ? 'text-rose-600 font-bold'
+                                            mData?.isFail
+                                              ? 'text-red-600 font-bold'
                                               : 'text-slate-800'
                                           }`}
                                         >

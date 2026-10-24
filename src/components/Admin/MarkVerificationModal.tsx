@@ -474,6 +474,28 @@ export const MarkVerificationModal: React.FC<Props> = ({
                 const admissionNo = entry?.admissionNo ?? student?.admissionNo ?? '—';
                 const isAbsent = entry?.isAbsent;
 
+                let writtenTotal = 0;
+                let maxWritten = 0;
+                let cieMark = 0;
+                let maxCie = 0;
+                components.forEach((c: SubjectAssessmentRule, cIdx: number) => {
+                  const k = (c.componentKey || '').toLowerCase();
+                  const val = entry?.componentMarks?.[c.componentKey];
+                  const numVal = val !== '' && val !== undefined && !isNaN(Number(val)) ? Number(val) : 0;
+                  const isCie = k === 'ce' || k === 'diary' || k.includes('ce') || k.includes('cie') || (components.length === 3 && cIdx === 2);
+                  if (isCie) {
+                    cieMark += numVal;
+                    maxCie += c.maxMarks || 10;
+                  } else {
+                    writtenTotal += numVal;
+                    maxWritten += c.maxMarks || 20;
+                  }
+                });
+                const isFail = !isAbsent && maxWritten > 0 && writtenTotal < (maxWritten * 0.35);
+                const grandTotal = (entry?.subjectTotal !== undefined && entry?.subjectTotal !== null && !isNaN(Number(entry?.subjectTotal)))
+                  ? entry.subjectTotal
+                  : (writtenTotal + cieMark);
+
                 return (
                   <tr key={entry?.studentId || student?.id || index} className={`transition group ${isAbsent ? 'bg-amber-50/50 hover:bg-amber-100/50' : 'hover:bg-slate-50'}`}>
                     <td className={`p-2.5 text-center font-mono font-bold text-slate-600 w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${isAbsent ? 'bg-amber-50 group-hover:bg-amber-100' : 'bg-white group-hover:bg-slate-50'}`}>
@@ -505,7 +527,9 @@ export const MarkVerificationModal: React.FC<Props> = ({
                           Absent
                         </span>
                       ) : (
-                        <span className="text-emerald-950">{entry?.subjectTotal ?? '—'}</span>
+                        <span className={isFail ? 'text-red-600 font-bold' : 'text-emerald-950 font-bold'}>
+                          {grandTotal ?? '—'}
+                        </span>
                       )}
                     </td>
 

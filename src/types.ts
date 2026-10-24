@@ -420,17 +420,19 @@ export function isBoyStudent(gender?: string): boolean {
  * 2. Secondary Sort: Alphabetical order by Student Name (A to Z) within each gender group
  */
 export function sortStudentsBoysFirst<T extends { gender?: string; nameEn?: string; name?: string; rollNo?: number }>(students: T[]): T[] {
-  return [...students].sort((a, b) => {
-    const isBoyA = isBoyStudent(a.gender);
-    const isBoyB = isBoyStudent(b.gender);
+  return [...students].sort((studentA, studentB) => {
+    const genderA = (studentA?.gender || 'Boy').toLowerCase();
+    const genderB = (studentB?.gender || 'Boy').toLowerCase();
+    const isBoyA = isBoyStudent(genderA);
+    const isBoyB = isBoyStudent(genderB);
     if (isBoyA !== isBoyB) {
       return isBoyA ? -1 : 1; // Boys first (-1), Girls second (1)
     }
-    const nameA = String(a.nameEn || a.name || '').trim().toLowerCase();
-    const nameB = String(b.nameEn || b.name || '').trim().toLowerCase();
+    const nameA = String(studentA?.nameEn || studentA?.name || '').trim().toLowerCase();
+    const nameB = String(studentB?.nameEn || studentB?.name || '').trim().toLowerCase();
     const comp = nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
     if (comp !== 0) return comp;
-    return (a.rollNo || 0) - (b.rollNo || 0);
+    return (studentA?.rollNo || 0) - (studentB?.rollNo || 0);
   });
 }
 

@@ -594,7 +594,7 @@ export const ParentManagement: React.FC = () => {
     const matchesClass = filterClassId
       ? linked.some(s => s.classId === filterClassId)
       : true;
-    const q = searchQuery.toLowerCase().trim();
+    const q = (searchQuery || '').toLowerCase().trim();
     if (!q) return matchesClass;
     const matchesQuery =
       (parent.name && parent.name.toLowerCase().includes(q)) ||
@@ -603,9 +603,9 @@ export const ParentManagement: React.FC = () => {
       (parent.phone && parent.phone.toLowerCase().includes(q)) ||
       linked.some(
         s =>
-          s.nameEn.toLowerCase().includes(q) ||
-          (s.nameMl && s.nameMl.toLowerCase().includes(q)) ||
-          s.admissionNo.toLowerCase().includes(q)
+          (s.nameEn || (s as any).name || '').toLowerCase().includes(q) ||
+          (s.nameMl || '').toLowerCase().includes(q) ||
+          (s.admissionNo?.toString() || '').toLowerCase().includes(q)
       );
     return matchesClass && matchesQuery;
   });
@@ -1223,13 +1223,14 @@ export const ParentManagement: React.FC = () => {
               <div className="border border-slate-200 rounded-xl p-2 max-h-64 overflow-y-auto space-y-1">
                 {students
                   .filter(s => {
-                    const q = linkSearchQuery.toLowerCase();
+                    const q = (linkSearchQuery || '').toLowerCase().trim();
+                    if (!q) return true;
                     const cls = classes.find(c => c.id === s.classId);
                     return (
-                      s.nameEn.toLowerCase().includes(q) ||
-                      (s.nameMl && s.nameMl.includes(q)) ||
-                      s.admissionNo.toLowerCase().includes(q) ||
-                      (cls && cls.name.toLowerCase().includes(q))
+                      (s.nameEn || (s as any).name || '').toLowerCase().includes(q) ||
+                      (s.nameMl || '').toLowerCase().includes(q) ||
+                      (s.admissionNo?.toString() || '').toLowerCase().includes(q) ||
+                      (cls && (cls.name || '').toLowerCase().includes(q))
                     );
                   })
                   .map(s => {

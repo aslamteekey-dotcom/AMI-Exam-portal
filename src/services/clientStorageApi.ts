@@ -1563,9 +1563,10 @@ export class ClientStorageApi {
         (s.parentNameEn && s.parentNameEn.toLowerCase() === user?.name.toLowerCase())
       );
       for (const k of userKids) {
+        const kAdm = String(k.admissionNo || '').trim().toLowerCase();
         if (
-          `admn@${k.admissionNo.toLowerCase()}` === trimmedPass.toLowerCase() ||
-          k.admissionNo.toLowerCase() === trimmedPass.toLowerCase()
+          `admn@${kAdm}` === trimmedPass.toLowerCase() ||
+          kAdm === trimmedPass.toLowerCase()
         ) {
           isPasswordMatch = true;
           user.plainPassword = `Admn@${k.admissionNo}`;
@@ -1898,9 +1899,10 @@ export class ClientStorageApi {
         };
       }
 
-      const hasCeComponent = configuredComponents.some(c => c.componentKey === 'ce');
-      const ceVal = entry.componentMarks?.['ce'];
-      const isCeMissing = hasCeComponent && (ceVal === undefined || ceVal === null || String(ceVal).trim() === '');
+      const hasCeComponent = configuredComponents.some(c => c.componentKey === 'ce' || c.componentKey.includes('ce') || c.componentKey.includes('cie'));
+      const ceComp = configuredComponents.find(c => c.componentKey === 'ce' || c.componentKey.includes('ce') || c.componentKey.includes('cie'));
+      const ceVal = ceComp ? entry.componentMarks?.[ceComp.componentKey] : undefined;
+      const isCeMissing = hasCeComponent && (ceVal === undefined || ceVal === null || String(ceVal).trim() === '' || Number(ceVal) === 0);
 
       if (isCeMissing) {
         hasWithheldCe = true;
@@ -1924,7 +1926,8 @@ export class ClientStorageApi {
       let subNonCeMax = 0;
       let subNonCeObtained = 0;
       configuredComponents.forEach(c => {
-        if (c.componentKey !== 'ce' && c.componentKey !== 'diary') {
+        const k = c.componentKey.toLowerCase();
+        if (k !== 'ce' && k !== 'diary' && !k.includes('ce') && !k.includes('cie')) {
           subNonCeMax += c.maxMarks;
           const mark = Number(entry.componentMarks?.[c.componentKey]) || 0;
           subNonCeObtained += mark;
@@ -1932,15 +1935,15 @@ export class ClientStorageApi {
         }
       });
 
-      // Pass threshold: 35% of non-CE/Diary max
+      // Pass threshold: 35% of non-CE/Diary max (OMR + OCR exclusive)
       const passThreshold = subNonCeMax * 0.35;
       const isSubjectPassed = subNonCeObtained >= passThreshold;
       if (!isSubjectPassed) {
         anySubjectFailed = true;
       }
 
-      let statusTextEn = isSubjectPassed ? 'Pass' : 'Needs Improvement';
-      let statusTextMl = isSubjectPassed ? 'Pass' : 'Needs Improvement';
+      let statusTextEn = isSubjectPassed ? 'Pass' : 'Fail';
+      let statusTextMl = isSubjectPassed ? 'Pass' : 'Fail';
       if (isCeMissing) {
         statusTextEn = 'Withheld';
         statusTextMl = 'Withheld';
@@ -2910,9 +2913,9 @@ export class ClientStorageApi {
           importedCount++;
         });
 
-        // Re-evaluate elder child admission number password for each affected parent
         this.db.users.filter(u => u.role === 'parent').forEach(parent => {
-          const children = this.db.students.filter(s => s.parentUserId === parent.id || s.parentNameEn.toLowerCase() === parent.name.toLowerCase());
+          const pName = String(parent.name || '').trim().toLowerCase();
+          const children = this.db.students.filter(s => s.parentUserId === parent.id || (pName && String(s.parentNameEn || '').trim().toLowerCase() === pName));
           if (children.length > 0) {
             const elder = getElderChild(children, this.db.classes);
             if (elder) {
@@ -2943,8 +2946,9 @@ export class ClientStorageApi {
         const parents = this.db.users
           .filter(u => u.role === 'parent')
           .map(p => {
+            const pName = String(p.name || '').trim().toLowerCase();
             const linkedStudents = this.db.students.filter(
-              s => s.parentUserId === p.id || s.parentNameEn.toLowerCase() === p.name.toLowerCase()
+              s => s.parentUserId === p.id || (pName && String(s.parentNameEn || '').trim().toLowerCase() === pName)
             );
             return {
               ...p,
@@ -4203,7 +4207,8 @@ export class ClientStorageApi {
         const parentIdsToRemove = new Set<string>();
 
         this.db.users.filter(u => u.role === 'parent').forEach(p => {
-          const linked = this.db.students.filter(s => s.parentUserId === p.id || s.parentNameEn.toLowerCase() === p.name.toLowerCase());
+          const pName = String(p.name || '').trim().toLowerCase();
+          const linked = this.db.students.filter(s => s.parentUserId === p.id || (pName && String(s.parentNameEn || '').trim().toLowerCase() === pName));
           if (linked.some(s => classStudentIds.has(s.id))) {
             parentIdsToRemove.add(p.id);
           }

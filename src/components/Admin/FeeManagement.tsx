@@ -215,11 +215,11 @@ export const FeeManagement: React.FC = () => {
   const filteredStudents = sortStudentsBoysFirst(
     students.filter(s => {
       const matchClass = selectedClassId ? s.classId === selectedClassId : true;
-      const q = searchQuery.toLowerCase().trim();
+      const q = (searchQuery || '').toLowerCase().trim();
       if (!q) return matchClass;
       const matchQuery =
-        s.nameEn.toLowerCase().includes(q) ||
-        s.admissionNo.toLowerCase().includes(q) ||
+        (s.nameEn || (s as any).name || '').toLowerCase().includes(q) ||
+        (s.admissionNo?.toString() || '').toLowerCase().includes(q) ||
         (s.parentNameEn && s.parentNameEn.toLowerCase().includes(q));
       return matchClass && matchQuery;
     })
@@ -227,12 +227,12 @@ export const FeeManagement: React.FC = () => {
 
   const filteredPayments = payments.filter(p => {
     const matchClass = selectedClassId ? p.classId === selectedClassId : true;
-    const q = searchQuery.toLowerCase().trim();
+    const q = (searchQuery || '').toLowerCase().trim();
     if (!q) return matchClass;
     const matchQuery =
-      p.receiptNo.toLowerCase().includes(q) ||
-      p.studentName.toLowerCase().includes(q) ||
-      p.admissionNo.toLowerCase().includes(q);
+      (p.receiptNo?.toString() || '').toLowerCase().includes(q) ||
+      (p.studentName || '').toLowerCase().includes(q) ||
+      (p.admissionNo?.toString() || '').toLowerCase().includes(q);
     return matchClass && matchQuery;
   });
 

@@ -493,7 +493,7 @@ export const ProgressReportCard: React.FC<Props> = ({
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {(report?.subjects || []).map((sub, idx) => {
-                    const { omrVal, ocrVal, cieVal, omrMax, ocrMax } = extractColumns(sub.components || []);
+                    const { omrVal, ocrVal, cieVal, omrMax, ocrMax, cieMax } = extractColumns(sub.components || []);
                     const isSubAbsent = sub.isAbsent;
                     const numOmr = typeof omrVal === 'number' ? omrVal : 0;
                     const numOcr = typeof ocrVal === 'number' ? ocrVal : 0;
@@ -504,14 +504,15 @@ export const ProgressReportCard: React.FC<Props> = ({
                       : (numOmr + numOcr + numCie);
                     const teMax = omrMax + ocrMax;
                     const teObtained = numOmr + numOcr;
-                    const isCeZero = (typeof cieVal === 'number' && cieVal === 0) || sub.hasMissingCe;
+                    const isCeZero = (typeof cieVal === 'number' && cieVal === 0 && cieMax > 0) || (cieVal === '—' && cieMax > 0) || sub.hasMissingCe;
+                    const isSubFailed = teMax > 0 && teObtained < teMax * 0.35;
 
                     // Subject Result logic:
-                    // A. Passed: If (OMR + OCR) >= 35% of TE Max marks AND CIE > 0.
-                    // B. Need Improvement: If (OMR + OCR) < 35% of TE Max marks.
-                    // C. Withheld: If CIE === 0.
-                    // Absent: If student was absent.
-                    let subjectResult = 'Passed';
+                    // - Pass: If (OMR + OCR) >= 35% of maxWritten (TE Max marks)
+                    // - Fail: If (OMR + OCR) < 35% of maxWritten (displayed in RED)
+                    // - Withheld: If CIE === 0
+                    // - Absent: If student was absent
+                    let subjectResult = 'Pass';
                     let subjectBadgeStyle = 'bg-emerald-100 text-emerald-800';
 
                     if (isSubAbsent) {
@@ -520,11 +521,11 @@ export const ProgressReportCard: React.FC<Props> = ({
                     } else if (isCeZero) {
                       subjectResult = 'Withheld';
                       subjectBadgeStyle = 'bg-amber-100 text-amber-900';
-                    } else if (teMax > 0 && teObtained < teMax * 0.35) {
-                      subjectResult = 'Need Improvement';
+                    } else if (isSubFailed) {
+                      subjectResult = 'Fail';
                       subjectBadgeStyle = 'bg-rose-100 text-rose-800';
                     } else {
-                      subjectResult = 'Passed';
+                      subjectResult = 'Pass';
                       subjectBadgeStyle = 'bg-emerald-100 text-emerald-800';
                     }
 
@@ -557,11 +558,13 @@ export const ProgressReportCard: React.FC<Props> = ({
                             cieVal
                           )}
                         </td>
-                        <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-center font-bold font-mono text-emerald-950 whitespace-nowrap">
+                        <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-center font-bold font-mono whitespace-nowrap">
                           {isSubAbsent ? (
                             <span className="text-amber-800 font-bold text-[11px]">Absent</span>
                           ) : (
-                            subTotal
+                            <span className={isSubFailed ? 'text-red-600 font-bold' : 'text-emerald-950 font-bold'}>
+                              {subTotal}
+                            </span>
                           )}
                         </td>
                         <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-center whitespace-nowrap">

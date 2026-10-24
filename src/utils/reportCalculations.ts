@@ -109,7 +109,7 @@ export function calculateStudentReportMetrics(
       if (teMax > 0 && teObtained < teMax * 0.35) {
         hasFailedWritten = true;
       }
-      if ((typeof cieVal === 'number' && cieVal === 0 && cieMax > 0) || sub.hasMissingCe) {
+      if ((typeof cieVal === 'number' && cieVal === 0 && cieMax > 0) || (cieVal === '—' && cieMax > 0) || sub.hasMissingCe) {
         hasWithheld = true;
       }
     }

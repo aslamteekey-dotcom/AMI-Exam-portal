@@ -98,13 +98,14 @@ export const BulkReportsPrint: React.FC = () => {
 
         // Sort: Boys first, then alphabetical by student English name
         const sortedReports = [...uniqueReports].sort((a, b) => {
-          const isGirlA = (a.student?.gender || 'M').toUpperCase().startsWith('F');
-          const isGirlB = (b.student?.gender || 'M').toUpperCase().startsWith('F');
+          const genderA = (a.student?.gender || 'Boy').toLowerCase();
+          const genderB = (b.student?.gender || 'Boy').toLowerCase();
+          const isGirlA = genderA.startsWith('f') || genderA.startsWith('gir');
+          const isGirlB = genderB.startsWith('f') || genderB.startsWith('gir');
           if (isGirlA !== isGirlB) return isGirlA ? 1 : -1;
-          return (a.student?.nameEn || '')
-            .trim()
-            .toLowerCase()
-            .localeCompare((b.student?.nameEn || '').trim().toLowerCase());
+          const nameA = String(a.student?.nameEn || (a.student as any)?.name || '').trim().toLowerCase();
+          const nameB = String(b.student?.nameEn || (b.student as any)?.name || '').trim().toLowerCase();
+          return nameA.localeCompare(nameB);
         }).map((r, idx) => ({
           ...r,
           student: {
