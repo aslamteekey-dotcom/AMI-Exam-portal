@@ -14,6 +14,7 @@ import {
   MarkSheet,
   StudentMarkEntry,
   sortStudentsBoysFirst,
+  determineStudentGender,
 } from '../../types';
 import {
   Save,
@@ -74,9 +75,10 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
       const uniqueRaw = Array.from(
         new Map((data.students || []).map((s: Student) => [s.admissionNo?.toString() || s.id, s])).values()
       ) as Student[];
-      const sortedStudents = sortStudentsBoysFirst<Student>(uniqueRaw).map((s, idx) => ({
+      const sortedStudents = sortStudentsBoysFirst<Student>(uniqueRaw, examinationId).map((s, idx) => ({
         ...s,
         rollNo: idx + 1,
+        gender: determineStudentGender(s, examinationId),
       }));
       setStudents(sortedStudents);
       setMarkSheet(data.markSheet);
@@ -126,8 +128,8 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
         unsub = safeOnSnapshot(collection(db, 'students'), (snapshot: any) => {
           if (!snapshot.empty) {
             const remoteList: Student[] = snapshot.docs.map((d: any) => ({ ...d.data(), id: d.id } as Student));
-            setStudents(prev =>
-              prev.map(p => {
+            setStudents(prev => {
+              const updated = prev.map(p => {
                 const remote = remoteList.find((r: Student) => r.id === p.id || r.admissionNo === p.admissionNo);
                 if (remote) {
                   const regNos = {
@@ -138,6 +140,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                   return {
                     ...p,
                     ...remote,
+                    gender: determineStudentGender(remote, examinationId),
                     examRegisterNumbers: regNos,
                     examRegisterNos: regNos,
                     examRegNo:
@@ -157,8 +160,9 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                   };
                 }
                 return p;
-              })
-            );
+              });
+              return sortStudentsBoysFirst(updated, examinationId).map((s, idx) => ({ ...s, rollNo: idx + 1 }));
+            });
           }
         });
       } catch (e) {
@@ -169,8 +173,8 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
     const handleStudentsUpdated = (e: any) => {
       const list = e.detail;
       if (Array.isArray(list)) {
-        setStudents(prev =>
-          prev.map(p => {
+        setStudents(prev => {
+          const updated = prev.map(p => {
             const found = list.find((s: Student) => s.id === p.id || s.admissionNo === p.admissionNo);
             if (found) {
               const regNos = {
@@ -181,6 +185,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
               return {
                 ...p,
                 ...found,
+                gender: determineStudentGender(found, examinationId),
                 examRegisterNumbers: regNos,
                 examRegisterNos: regNos,
                 examRegNo:
@@ -200,8 +205,9 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
               };
             }
             return p;
-          })
-        );
+          });
+          return sortStudentsBoysFirst(updated, examinationId).map((s, idx) => ({ ...s, rollNo: idx + 1 }));
+        });
       }
     };
     window.addEventListener('madrasa_students_updated', handleStudentsUpdated);
@@ -459,6 +465,9 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
     };
   };
 
+  const teacherBoysCount = students.filter(s => determineStudentGender(s, examinationId) === 'Boy').length;
+  const teacherGirlsCount = students.filter(s => determineStudentGender(s, examinationId) === 'Girl').length;
+
   return (
     <div className="space-y-6">
       {/* Header Bar */}
@@ -483,7 +492,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                {isMl ? exam?.nameMl : exam?.nameEn} • Max Marks: {subjectMaxMarks}
+                {isMl ? exam?.nameMl : exam?.nameEn} • Max Marks: {subjectMaxMarks} • ({students.length} Students: {teacherBoysCount} Boys, {teacherGirlsCount} Girls)
               </p>
             </div>
           </div>
@@ -579,6 +588,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                 <th className="py-3 px-3 w-12 text-center sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb] font-mono">Roll</th>
                 <th className="py-3 px-2 w-20 text-center sticky left-12 bg-slate-100 z-40 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)] font-mono text-emerald-900 font-bold">Reg No</th>
                 <th className="py-3 px-4 min-w-[160px] md:min-w-[200px] text-left">Student Name</th>
+                <th className="py-3 px-2 w-16 text-center">Gender</th>
                 <th className="py-3 px-3 w-24 text-center">Status</th>
                 {effectiveComponents.map(comp => (
                   <th key={comp.componentKey} className="py-3 px-3 text-center min-w-[100px]">
@@ -605,6 +615,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                   (student as any).regNo ||
                   student.examRegisterNumbers?.[examinationId] ||
                   '—';
+                const studentGender = determineStudentGender(student, examinationId);
 
                 return (
                   <tr
@@ -645,6 +656,17 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                           {student.nameMl}
                         </div>
                       )}
+                    </td>
+
+                    {/* Non-clickable Gender Badge */}
+                    <td className="py-3 px-2 text-center whitespace-nowrap">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        studentGender === 'Girl'
+                          ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                          : 'bg-blue-50 text-blue-700 border border-blue-200'
+                      }`}>
+                        {studentGender}
+                      </span>
                     </td>
 
                     {/* Present / Absent Toggle Button */}
@@ -770,6 +792,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                   <th className="p-2 text-center w-12 font-mono">Roll</th>
                   <th className="p-2 text-center font-mono w-20">Reg No</th>
                   <th className="p-2 text-left">Student Name</th>
+                  <th className="p-2 text-center w-16">Gender</th>
                   {components.map(c => (
                     <th key={c.componentKey} className="p-2 text-center">
                       {c.labelEn} ({c.maxMarks})
@@ -787,11 +810,21 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                     (s as any).regNo ||
                     s.examRegisterNumbers?.[examinationId] ||
                     '—';
+                  const sGender = determineStudentGender(s, examinationId);
                   return (
                     <tr key={s.id}>
                       <td className="p-2 text-center font-mono">{s.rollNo}</td>
                       <td className="p-2 text-center font-mono font-bold text-emerald-950">{regNo}</td>
                       <td className="p-2 font-medium">{s.nameEn}</td>
+                      <td className="p-2 text-center whitespace-nowrap">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          sGender === 'Girl'
+                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                            : 'bg-blue-50 text-blue-700 border border-blue-200'
+                        }`}>
+                          {sGender}
+                        </span>
+                      </td>
                       {components.map(c => (
                         <td key={c.componentKey} className="p-2 text-center font-mono">
                           {entry?.isAbsent ? 'Absent' : entry?.componentMarks[c.componentKey] || '—'}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Student, ClassItem, sortStudentsBoysFirst, assignClassSequentialRollNumbers, recalculateClassRollsAndExamRegNos } from '../../types';
+import { Student, ClassItem, sortStudentsBoysFirst, assignClassSequentialRollNumbers, recalculateClassRollsAndExamRegNos, normalizeGender, determineStudentGender } from '../../types';
 import { db, handleFirestoreError, OperationType, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
@@ -44,7 +44,7 @@ export const StudentManagement: React.FC = () => {
     classId: '',
     parentNameEn: '',
     parentPhone: '',
-    gender: 'M' as 'M' | 'F',
+    gender: 'Boy' as 'Boy' | 'Girl',
     dob: '',
     schoolClass: '',
     examRegNo: '',
@@ -77,8 +77,8 @@ export const StudentManagement: React.FC = () => {
         if (sData?.activeExamId) setActiveExamId(sData.activeExamId);
       }
       setClasses(clsData);
-      const filtered = (stdData || []).filter(
-        st => {
+      const filtered = (stdData || [])
+        .filter(st => {
           if (!st) return false;
           const hasName = Boolean(String(st.nameEn || (st as any).name || '').trim());
           const hasAdm = Boolean(String(st.admissionNo || '').trim());
@@ -94,9 +94,12 @@ export const StudentManagement: React.FC = () => {
             st.nameEn !== 'Adil Mansoor' &&
             st.nameEn !== 'Adil Ibrahim'
           );
-        }
-      );
-      setStudents(assignClassSequentialRollNumbers(filtered));
+        })
+        .map(st => ({
+          ...st,
+          gender: determineStudentGender(st, activeExamId),
+        }));
+      setStudents(assignClassSequentialRollNumbers(filtered, activeExamId));
       if (clsData.length > 0 && !importClassId) {
         setImportClassId(clsData[0].id);
       }
@@ -158,10 +161,22 @@ export const StudentManagement: React.FC = () => {
                 const name = String(data?.nameEn || data?.name || '').trim();
                 return !rogueIds.includes(d.id) && !rogueAdms.includes(adm) && !rogueNames.includes(name);
               })
-              .map((d) => ({
-                ...d.data(),
-                id: d.id,
-              } as Student));
+              .map((d) => {
+                const data = d.data() as any;
+                const determinedGen = determineStudentGender(data, activeExamId);
+                // Permanent Firestore sync: if raw doc had legacy 'M' / 'F' / 'Boy' (for female) or un-normalized, update in Firestore
+                if (data.gender !== determinedGen) {
+                  updateDoc(doc(db, 'students', d.id), { gender: determinedGen }).catch(() => {});
+                  if (data.admissionNo && data.admissionNo !== d.id) {
+                    updateDoc(doc(db, 'students', String(data.admissionNo).trim()), { gender: determinedGen }).catch(() => {});
+                  }
+                }
+                return {
+                  ...data,
+                  id: d.id,
+                  gender: determinedGen,
+                } as Student;
+              });
 
             // Resequence roll numbers strictly for valid students
             const resequenced = assignClassSequentialRollNumbers<Student>(validStudents);
@@ -197,7 +212,7 @@ export const StudentManagement: React.FC = () => {
       classId: selectedClassId || classes[0]?.id || '',
       parentNameEn: '',
       parentPhone: '',
-      gender: 'M',
+      gender: 'Boy',
       dob: '',
       schoolClass: '',
       examRegNo: '',
@@ -224,7 +239,7 @@ export const StudentManagement: React.FC = () => {
       classId: student.classId,
       parentNameEn: student.parentNameEn || '',
       parentPhone: student.parentPhone || '',
-      gender: (student.gender as 'M' | 'F') || 'M',
+      gender: determineStudentGender(student, activeExamId),
       dob: student.dob || '',
       schoolClass: student.schoolClass || '',
       examRegNo: String(existingRegNo || ''),
@@ -282,7 +297,7 @@ export const StudentManagement: React.FC = () => {
           classId: formData.classId,
           parentNameEn: (formData.parentNameEn || '').trim().replace(/\s+/g, ' '),
           parentPhone: (formData.parentPhone || '').trim(),
-          gender: formData.gender,
+          gender: normalizeGender(formData.gender),
           dob: formData.dob.trim() || undefined,
           schoolClass: formData.schoolClass.trim() || undefined,
           examRegNo: trimmedExamReg || undefined,
@@ -416,7 +431,7 @@ export const StudentManagement: React.FC = () => {
           parentNameMl: formData.nameMl.trim().replace(/\s+/g, ' ') || (formData.parentNameEn || '').trim().replace(/\s+/g, ' '),
           parentPhone: (formData.parentPhone || '').trim(),
           status: 'active',
-          gender: formData.gender || 'M',
+          gender: normalizeGender(formData.gender),
           dob: formData.dob.trim() || undefined,
           schoolClass: formData.schoolClass.trim() || undefined,
           examRegNo: trimmedExamReg || undefined,
@@ -668,10 +683,10 @@ export const StudentManagement: React.FC = () => {
 
   const handleDownloadSampleCsv = () => {
     const sample = `Admission No, Name, Class, Gender, Parent Name, Phone
-ADM-2026-001, Muhammed Bilal, Class 1, M, Shamsudheen, 9447123456
-ADM-2026-002, Fathima Zahra, Class 2, F, Abdul Kareem, 9447654321
-ADM-2026-003, Rayan Ahmed, Class 5, M, Moideen Kutty, 9846112233
-ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
+ADM-2026-001, Muhammed Bilal, Class 1, Boy, Shamsudheen, 9447123456
+ADM-2026-002, Fathima Zahra, Class 2, Girl, Abdul Kareem, 9447654321
+ADM-2026-003, Rayan Ahmed, Class 5, Boy, Moideen Kutty, 9846112233
+ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
     const blob = new Blob([sample], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -782,7 +797,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                 parentNameEn: student.parentNameEn ? String(student.parentNameEn).trim() : '',
                 parentNameMl: student.parentNameMl ? String(student.parentNameMl).trim() : (student.parentNameEn ? String(student.parentNameEn).trim() : ''),
                 parentPhone: student.parentPhone ? String(student.parentPhone).trim() : '',
-                gender: (student.gender || 'M').toUpperCase().startsWith('F') ? 'F' : 'M',
+                gender: normalizeGender(student.gender),
                 status: 'active',
               });
 
@@ -819,7 +834,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
       const rows = filteredStudents.map(s => {
         const cls = classes.find(c => c.id === s.classId);
         const cName = cls?.name || 'Class 1';
-        return `"${s.admissionNo}","${s.nameEn}","${cName}","${s.gender || 'M'}","${s.parentNameEn || ''}","${s.parentPhone || ''}"`;
+        return `"${s.admissionNo}","${s.nameEn}","${cName}","${normalizeGender(s.gender)}","${s.parentNameEn || ''}","${s.parentPhone || ''}"`;
       });
       const csvContent = ['Admission No, Name, Class, Gender, Parent Name, Phone', ...rows].join('\n');
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -916,18 +931,24 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
     return matchClass && matchSearch;
   });
 
-  const sortedStudents = sortStudentsBoysFirst(classStudents);
+  const sortedStudents = sortStudentsBoysFirst(classStudents, activeExamId);
   const filteredStudents = sortedStudents.map((s, idx) => ({
     ...s,
+    gender: determineStudentGender(s, activeExamId),
     rollNo: idx + 1,
   }));
+
+  const boysCount = filteredStudents.filter(s => determineStudentGender(s, activeExamId) === 'Boy').length;
+  const girlsCount = filteredStudents.filter(s => determineStudentGender(s, activeExamId) === 'Girl').length;
 
   return (
     <div className="space-y-6">
       {/* Header and Actions */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">{t.navStudents} ({students.length})</h2>
+          <h2 className="text-lg font-bold text-slate-900">
+            {t.navStudents} ({filteredStudents.length} Students: {boysCount} Boys, {girlsCount} Girls)
+          </h2>
           <p className="text-xs text-slate-500">
             Maintain student admissions, roll numbers, class enrollments, and parent links.
           </p>
@@ -1191,12 +1212,12 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                       <td className="p-3 text-center whitespace-nowrap">
                         <span
                           className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                            student.gender === 'F'
+                            determineStudentGender(student, activeExamId) === 'Girl'
                               ? 'bg-pink-100 text-pink-800 border border-pink-200'
                               : 'bg-blue-100 text-blue-800 border border-blue-200'
                           }`}
                         >
-                          {student.gender || 'M'}
+                          {determineStudentGender(student, activeExamId)}
                         </span>
                       </td>
                       <td className="p-3 min-w-[140px] whitespace-nowrap">
@@ -1348,12 +1369,12 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Gender *</label>
                   <select
-                    value={formData.gender}
-                    onChange={e => setFormData({ ...formData, gender: e.target.value as 'M' | 'F' })}
+                    value={normalizeGender(formData.gender)}
+                    onChange={e => setFormData({ ...formData, gender: normalizeGender(e.target.value) })}
                     className="w-full p-2 border border-slate-300 rounded-lg bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-700 font-medium"
                   >
-                    <option value="M">Boy</option>
-                    <option value="F">Girl</option>
+                    <option value="Boy">Boy</option>
+                    <option value="Girl">Girl</option>
                   </select>
                 </div>
               </div>
@@ -1551,7 +1572,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, F, Hamza Haji, 9745112233`;
                           <td className="p-2 font-mono">{r.admissionNo}</td>
                           <td className="p-2 font-medium">{r.nameEn}</td>
                           <td className="p-2 font-medium text-emerald-800">{r.className || 'Class 1'}</td>
-                          <td className="p-2 font-bold">{r.gender || 'M'}</td>
+                          <td className="p-2 font-bold">{normalizeGender(r.gender)}</td>
                           <td className="p-2">
                             {r.isValid ? (
                               <span className="text-emerald-700 font-bold">Valid</span>

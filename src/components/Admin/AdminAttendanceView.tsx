@@ -20,6 +20,8 @@ import {
   isClassMatch,
   AttendanceEditRequest,
   sortStudentsBoysFirst,
+  normalizeGender,
+  determineStudentGender,
 } from '../../types';
 import { firestoreSync } from '../../services/firestoreSync';
 import { logAuditEvent } from '../../services/auditLogger';
@@ -411,8 +413,11 @@ export const AdminAttendanceView: React.FC = () => {
   const classStudents = useMemo(() => {
     return sortStudentsBoysFirst(
       students.filter(s => (s.classId === selectedClassId || s.classId.replace(/[^0-9]/g, '') === selectedClassId.replace(/[^0-9]/g, '')) && s.status === 'active')
-    ).map((s, idx) => ({ ...s, rollNo: idx + 1 }));
+    ).map((s, idx) => ({ ...s, gender: determineStudentGender(s), rollNo: idx + 1 }));
   }, [students, selectedClassId]);
+
+  const classBoysCount = useMemo(() => classStudents.filter(s => determineStudentGender(s) === 'Boy').length, [classStudents]);
+  const classGirlsCount = useMemo(() => classStudents.filter(s => determineStudentGender(s) === 'Girl').length, [classStudents]);
 
   const selectedClass = classes.find(c => c.id === selectedClassId);
 
@@ -2241,7 +2246,7 @@ export const AdminAttendanceView: React.FC = () => {
                   {classStudents.length}
                 </span>
                 <span className="text-[11px] text-slate-400">
-                  ({classStudents.filter(s => s.gender === 'M').length} Boys · {classStudents.filter(s => s.gender === 'F').length} Girls)
+                  ({classStudents.filter(s => normalizeGender(s.gender) === 'Boy').length} Boys · {classStudents.filter(s => normalizeGender(s.gender) === 'Girl').length} Girls)
                 </span>
               </div>
               <div className="text-[10px] text-emerald-800 font-medium">Sorted Boys A-Z then Girls A-Z</div>
@@ -2434,7 +2439,7 @@ export const AdminAttendanceView: React.FC = () => {
                 </p>
               </div>
               <div className="text-xs font-mono font-bold text-slate-600">
-                Total Students: {classStudents.length}
+                ({classStudents.length} Students: {classBoysCount} Boys, {classGirlsCount} Girls)
               </div>
             </div>
 
@@ -2490,10 +2495,10 @@ export const AdminAttendanceView: React.FC = () => {
                           <td className="py-3 px-2 text-center w-16">
                             <span
                               className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
-                                st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                                determineStudentGender(st) === 'Girl' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
                               }`}
                             >
-                              {st.gender || 'M'}
+                              {determineStudentGender(st)}
                             </span>
                           </td>
                           <td className="py-3 px-3 text-center font-mono font-bold text-emerald-800">
@@ -2826,7 +2831,7 @@ export const AdminAttendanceView: React.FC = () => {
             <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
               <div>
                 <span className="text-xs font-bold text-slate-700">
-                  Enrolled Students in {selectedClass?.name} ({classStudents.length})
+                  Enrolled Students in {selectedClass?.name} ({classStudents.length} Students: {classBoysCount} Boys, {classGirlsCount} Girls)
                 </span>
                 <span className="text-[11px] text-slate-400 block sm:inline sm:ml-2">
                   {isDailyHoliday
@@ -2935,10 +2940,10 @@ export const AdminAttendanceView: React.FC = () => {
                           <td className="py-3 px-2 text-center w-16">
                             <span
                               className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
-                                st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                                normalizeGender(st.gender) === 'Girl' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
                               }`}
                             >
-                              {st.gender || 'M'}
+                              {normalizeGender(st.gender)}
                             </span>
                           </td>
                           <td className="py-3 px-4 text-center">
@@ -3011,10 +3016,10 @@ export const AdminAttendanceView: React.FC = () => {
                             <span className="whitespace-nowrap">{st.nameEn}</span>
                             <span
                               className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
-                                st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                                normalizeGender(st.gender) === 'Girl' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
                               }`}
                             >
-                              {st.gender || 'M'}
+                              {normalizeGender(st.gender)}
                             </span>
                           </div>
                           <div className="text-[11px] text-slate-500 whitespace-nowrap">

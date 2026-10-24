@@ -106,7 +106,7 @@ export interface Student {
   parentUserId?: string;
   status: 'active' | 'inactive';
   dob?: string;
-  gender?: 'M' | 'F';
+  gender?: 'Boy' | 'Girl' | 'M' | 'F' | string;
   schoolClass?: string; // Regular school grade/class (e.g., 'Class 1' to 'Class 10', 'Plus Two')
   examRegisterNumbers?: Record<string, string>; // examinationId -> exam register number
   examRegisterNos?: Record<string, string>; // examinationId -> exam register number (cloud persistence schema alias)
@@ -402,31 +402,136 @@ export interface ClassAttendanceConfig {
 }
 
 /**
- * Helper to determine if a student is male/boy.
- * Handles 'M', 'male', 'boy', 'Male', 'Boy', etc.
+ * Accurate Gender Determination (Strictly Rule A & Rule B, NO name guessing):
+ * Rule A (Stored Gender Value):
+ * Check all gender fields on the student record (student.gender, student.sex).
+ * If the value (case-insensitive, trimmed) is 'f', 'female', 'girl', or 'g', return 'Girl'.
+ * If 'm', 'male', 'boy', or 'b', return 'Boy'.
+ *
+ * Rule B (Exam Register Number Series Check):
+ * Check the student's assigned Exam Register Number (student.examRegNo, student.regNo,
+ * student.examRegisterNos[activeExamId], student.examRegisterNumbers[activeExamId], or candidate registers).
+ * Because Boys start from X101 (e.g. 1101, 4101, 5101, 7101) and Girls start from X201 (e.g. 1201, 4201, 5201, 7201):
+ * - If the 4-digit register number has '2' as its second digit (matches /^[1-9]2\d{2}$/), strictly classify the student as 'Girl'.
+ * - If the 4-digit register number has '1' as its second digit (matches /^[1-9]1\d{2}$/), strictly classify the student as 'Boy'.
+ *
+ * Strictly NO name-based heuristics or guessing.
  */
-export function isBoyStudent(gender?: string): boolean {
-  if (!gender) return true;
-  const g = String(gender).trim().toLowerCase();
-  if (g === 'f' || g === 'female' || g === 'girl' || g.startsWith('fem') || g.startsWith('gir')) {
-    return false;
+export function determineStudentGender(studentOrGender: any, activeExamId?: string): 'Boy' | 'Girl' {
+  if (!studentOrGender) return 'Boy';
+
+  // If a string / primitive value is passed directly
+  if (typeof studentOrGender === 'string') {
+    const val = studentOrGender.trim().toLowerCase();
+    if (val === 'f' || val === 'female' || val === 'girl' || val === 'g' || val.startsWith('fem') || val.startsWith('gir')) {
+      return 'Girl';
+    }
+    if (val === 'm' || val === 'male' || val === 'boy' || val === 'b') {
+      return 'Boy';
+    }
+    return 'Boy';
   }
-  return true;
+
+  // 1. Gather all candidate register numbers from the student object
+  const regCandidates: string[] = [];
+  if (studentOrGender.examRegNo) regCandidates.push(String(studentOrGender.examRegNo).trim());
+  if (studentOrGender.regNo) regCandidates.push(String(studentOrGender.regNo).trim());
+  if (studentOrGender.examRegisterNo) regCandidates.push(String(studentOrGender.examRegisterNo).trim());
+
+  if (activeExamId) {
+    if (studentOrGender.examRegisterNos?.[activeExamId]) {
+      regCandidates.push(String(studentOrGender.examRegisterNos[activeExamId]).trim());
+    }
+    if (studentOrGender.examRegisterNumbers?.[activeExamId]) {
+      regCandidates.push(String(studentOrGender.examRegisterNumbers[activeExamId]).trim());
+    }
+  }
+
+  if (studentOrGender.examRegisterNos && typeof studentOrGender.examRegisterNos === 'object') {
+    Object.values(studentOrGender.examRegisterNos).forEach(v => {
+      if (v) regCandidates.push(String(v).trim());
+    });
+  }
+  if (studentOrGender.examRegisterNumbers && typeof studentOrGender.examRegisterNumbers === 'object') {
+    Object.values(studentOrGender.examRegisterNumbers).forEach(v => {
+      if (v) regCandidates.push(String(v).trim());
+    });
+  }
+
+  // Rule B Check:
+  // If the 4-digit register number has '2' as its second digit (matches /^[1-9]2\d{2}$/), strictly classify as 'Girl'
+  const hasGirlRegSeries = regCandidates.some(r => /^[1-9]2\d{2}$/.test(r));
+  if (hasGirlRegSeries) {
+    return 'Girl';
+  }
+
+  // Rule A (Stored Gender Value):
+  // Check all gender fields on the student record (student.gender, student.sex)
+  const storedValues = [studentOrGender.gender, studentOrGender.sex]
+    .filter(g => g !== undefined && g !== null && typeof g === 'string')
+    .map(g => String(g).trim().toLowerCase());
+
+  const hasFemaleStored = storedValues.some(v => v === 'f' || v === 'female' || v === 'girl' || v === 'g' || v.startsWith('fem') || v.startsWith('gir'));
+  if (hasFemaleStored) {
+    return 'Girl';
+  }
+
+  // If the 4-digit register number has '1' as its second digit (matches /^[1-9]1\d{2}$/), strictly classify as 'Boy'
+  const hasBoyRegSeries = regCandidates.some(r => /^[1-9]1\d{2}$/.test(r));
+  if (hasBoyRegSeries) {
+    return 'Boy';
+  }
+
+  const hasMaleStored = storedValues.some(v => v === 'm' || v === 'male' || v === 'boy' || v === 'b');
+  if (hasMaleStored) {
+    return 'Boy';
+  }
+
+  return 'Boy';
+}
+
+/**
+ * Universal Gender Normalizer:
+ * Standardizes any gender representation into 'Boy' or 'Girl' using determineStudentGender.
+ */
+export const normalizeGender = (g: any, studentObj?: any, activeExamId?: string): 'Boy' | 'Girl' => {
+  if (studentObj && typeof studentObj === 'object') {
+    return determineStudentGender(studentObj, activeExamId);
+  }
+  if (g && typeof g === 'object') {
+    return determineStudentGender(g, activeExamId);
+  }
+  return determineStudentGender(g, activeExamId);
+};
+
+/**
+ * Returns single letter abbreviation for badges ('B' for Boy, 'G' for Girl)
+ */
+export const getGenderShortBadge = (studentOrGender: any): 'B' | 'G' => {
+  return determineStudentGender(studentOrGender) === 'Girl' ? 'G' : 'B';
+};
+
+/**
+ * Helper to determine if a student is male/boy.
+ */
+export function isBoyStudent(studentOrGender?: any, activeExamId?: string): boolean {
+  return determineStudentGender(studentOrGender, activeExamId) === 'Boy';
 }
 
 /**
  * Unified Student Sorting Order:
- * 1. Primary Sort: Gender — Boys ('male' / 'boy' / 'M') first, followed by Girls ('female' / 'girl' / 'F')
+ * 1. Primary Sort: Gender — Boys first, followed by Girls
  * 2. Secondary Sort: Alphabetical order by Student Name (A to Z) within each gender group
  */
-export function sortStudentsBoysFirst<T extends { gender?: string; nameEn?: string; name?: string; rollNo?: number }>(students: T[]): T[] {
+export function sortStudentsBoysFirst<T extends { gender?: any; nameEn?: string; name?: string; rollNo?: number; examRegNo?: string; regNo?: string; examRegisterNos?: Record<string, string>; examRegisterNumbers?: Record<string, string> }>(
+  students: T[],
+  activeExamId?: string
+): T[] {
   return [...students].sort((studentA, studentB) => {
-    const genderA = (studentA?.gender || 'Boy').toLowerCase();
-    const genderB = (studentB?.gender || 'Boy').toLowerCase();
-    const isBoyA = isBoyStudent(genderA);
-    const isBoyB = isBoyStudent(genderB);
-    if (isBoyA !== isBoyB) {
-      return isBoyA ? -1 : 1; // Boys first (-1), Girls second (1)
+    const genderA = determineStudentGender(studentA, activeExamId);
+    const genderB = determineStudentGender(studentB, activeExamId);
+    if (genderA !== genderB) {
+      return genderA === 'Boy' ? -1 : 1; // Boys first (-1), Girls second (1)
     }
     const nameA = String(studentA?.nameEn || studentA?.name || '').trim().toLowerCase();
     const nameB = String(studentB?.nameEn || studentB?.name || '').trim().toLowerCase();
@@ -443,7 +548,10 @@ export function sortStudentsBoysFirst<T extends { gender?: string; nameEn?: stri
  * followed directly by all girls alphabetically: Roll n+1, n+2...).
  * Does not use random, admission-based, or non-sequential roll numbers.
  */
-export function assignClassSequentialRollNumbers<T extends { id?: string; gender?: string; nameEn?: string; name?: string; rollNo?: number; classId?: string }>(students: T[]): T[] {
+export function assignClassSequentialRollNumbers<T extends { id?: string; gender?: string; nameEn?: string; name?: string; rollNo?: number; classId?: string; examRegNo?: string; regNo?: string; examRegisterNos?: Record<string, string>; examRegisterNumbers?: Record<string, string> }>(
+  students: T[],
+  activeExamId?: string
+): T[] {
   const classMap = new Map<string, T[]>();
   students.forEach(s => {
     const cId = s.classId || 'default';
@@ -455,10 +563,11 @@ export function assignClassSequentialRollNumbers<T extends { id?: string; gender
 
   const updatedStudents: T[] = [];
   classMap.forEach(classStudents => {
-    const sorted = sortStudentsBoysFirst(classStudents);
+    const sorted = sortStudentsBoysFirst(classStudents, activeExamId);
     sorted.forEach((student, index) => {
       updatedStudents.push({
         ...student,
+        gender: determineStudentGender(student, activeExamId),
         rollNo: index + 1,
       });
     });
@@ -473,9 +582,10 @@ export function assignClassSequentialRollNumbers<T extends { id?: string; gender
  */
 export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gender?: string; nameEn?: string; name?: string; rollNo?: number; classId?: string; examRegisterNumbers?: Record<string, string>; examRegisterNos?: Record<string, string>; examRegNo?: string; regNo?: string }>(
   classStudents: T[],
-  className?: string
+  className?: string,
+  activeExamId?: string
 ): T[] {
-  const sorted = sortStudentsBoysFirst(classStudents);
+  const sorted = sortStudentsBoysFirst(classStudents, activeExamId);
   const classNumeral = (className || '').replace(/[^0-9]/g, '') || (sorted[0]?.classId ? sorted[0].classId.replace(/[^0-9]/g, '') : '') || '7';
 
   // Gather all exam IDs that have register numbers across this class
@@ -487,6 +597,7 @@ export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gend
 
   const updated: T[] = sorted.map((student, index) => ({
     ...student,
+    gender: determineStudentGender(student, activeExamId),
     rollNo: index + 1,
   }));
 
@@ -501,7 +612,7 @@ export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gend
       const reg = (s as any).examRegisterNos?.[eId] || s.examRegisterNumbers?.[eId] || (s as any).examRegNo || (s as any).regNo || '';
       const num = parseInt(reg, 10);
       if (!isNaN(num)) {
-        if (isBoyStudent(s.gender)) {
+        if (isBoyStudent(s, eId)) {
           if (!hasCustomBoy || num < minBoyReg) { minBoyReg = num; hasCustomBoy = true; }
         } else {
           if (!hasCustomGirl || num < minGirlReg) { minGirlReg = num; hasCustomGirl = true; }
@@ -524,7 +635,7 @@ export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gend
         (s as any).examRegNo = cleanReg;
         (s as any).regNo = cleanReg;
       } else if (hasCustomBoy || hasCustomGirl) {
-        const isBoy = isBoyStudent(s.gender);
+        const isBoy = isBoyStudent(s, eId);
         const newReg = isBoy ? String(boyCounter++) : String(girlCounter++);
         if (!s.examRegisterNumbers) s.examRegisterNumbers = {};
         s.examRegisterNumbers[eId] = newReg;

@@ -22,6 +22,7 @@ import {
   DEFAULT_NEWS_ITEMS,
   ALL_STANDARD_CLASSES,
   mergeClassesWithStandard,
+  normalizeGender,
 } from '../../types';
 import { MarkEntryScreen } from './MarkEntryScreen';
 import { useHorizontalScroll, handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
@@ -258,7 +259,7 @@ export const TeacherDashboard: React.FC = () => {
     nameMl: '',
     rollNo: '',
     admissionNo: '',
-    gender: 'M' as 'M' | 'F',
+    gender: 'Boy' as 'Boy' | 'Girl',
     dob: '',
     schoolClass: '',
     parentNameEn: '',
@@ -545,9 +546,14 @@ export const TeacherDashboard: React.FC = () => {
               if ((data as any).examRegNo && Object.keys(regNos).length === 0) {
                 regNos[selectedExamId || 'default'] = (data as any).examRegNo;
               }
+              const normalizedGender = normalizeGender((data as any).gender);
+              if ((data as any).gender && (data as any).gender !== normalizedGender) {
+                updateDoc(doc(db, 'students', d.id), { gender: normalizedGender }).catch(() => {});
+              }
               const studentObj = {
                 ...data,
                 id: d.id,
+                gender: normalizedGender,
                 examRegisterNumbers: regNos,
                 examRegisterNos: regNos,
                 examRegNo:
@@ -576,7 +582,10 @@ export const TeacherDashboard: React.FC = () => {
         if (Array.isArray(list)) {
           const valid = list.filter(
             (s: any) => s && Boolean(String(s.nameEn || s.name || '').trim()) && Boolean(String(s.admissionNo || '').trim())
-          );
+          ).map((s: any) => ({
+            ...s,
+            gender: normalizeGender(s.gender),
+          }));
           setAllStudents(sortStudentsBoysFirst(valid));
         }
       };
@@ -1863,7 +1872,7 @@ export const TeacherDashboard: React.FC = () => {
       nameMl: st.nameMl || '',
       rollNo: String(st.rollNo || ''),
       admissionNo: st.admissionNo || '',
-      gender: (st.gender as 'M' | 'F') || 'M',
+      gender: normalizeGender(st.gender),
       dob: st.dob || '',
       schoolClass: st.schoolClass || '',
       parentNameEn: st.parentNameEn || '',
@@ -1907,7 +1916,7 @@ export const TeacherDashboard: React.FC = () => {
         nameMl: studentFormData.nameMl.trim() || studentFormData.nameEn.trim(),
         rollNo: Number(studentFormData.rollNo) || editingStudent.rollNo,
         admissionNo: trimmedAdm,
-        gender: studentFormData.gender,
+        gender: normalizeGender(studentFormData.gender),
         dob: studentFormData.dob.trim() || undefined,
         schoolClass: studentFormData.schoolClass.trim() || undefined,
         parentNameEn: studentFormData.parentNameEn.trim(),
@@ -2992,10 +3001,10 @@ export const TeacherDashboard: React.FC = () => {
                                   </span>
                                   <span
                                     className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                      st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                                      normalizeGender(st.gender) === 'Girl' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
                                     }`}
                                   >
-                                    {st.gender || 'M'}
+                                    {normalizeGender(st.gender)}
                                   </span>
                                   {isDuplicate && (
                                     <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700 border border-red-300">
@@ -3362,12 +3371,12 @@ export const TeacherDashboard: React.FC = () => {
                     <div>
                       <label className="block font-bold text-slate-700 mb-1">Gender *</label>
                       <select
-                        value={studentFormData.gender}
-                        onChange={e => setStudentFormData({ ...studentFormData, gender: e.target.value as 'M' | 'F' })}
+                        value={normalizeGender(studentFormData.gender)}
+                        onChange={e => setStudentFormData({ ...studentFormData, gender: normalizeGender(e.target.value) })}
                         className="w-full p-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none font-medium"
                       >
-                        <option value="M">Boy</option>
-                        <option value="F">Girl</option>
+                        <option value="Boy">Boy</option>
+                        <option value="Girl">Girl</option>
                       </select>
                     </div>
                   </div>
@@ -4475,10 +4484,10 @@ export const TeacherDashboard: React.FC = () => {
                                   <td className="py-3 px-2 text-center w-16">
                                     <span
                                       className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
-                                        st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                                        normalizeGender(st.gender) === 'Girl' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
                                       }`}
                                     >
-                                      {st.gender || 'M'}
+                                      {normalizeGender(st.gender)}
                                     </span>
                                   </td>
                                   <td className="py-3 px-4 text-center">
@@ -4574,10 +4583,10 @@ export const TeacherDashboard: React.FC = () => {
                                     )}
                                     <span
                                       className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
-                                        st.gender === 'F' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                                        normalizeGender(st.gender) === 'Girl' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
                                       }`}
                                     >
-                                      {st.gender || 'M'}
+                                      {normalizeGender(st.gender)}
                                     </span>
                                   </div>
                                   <div className="text-[11px] text-slate-500 whitespace-nowrap">

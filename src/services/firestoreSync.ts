@@ -10,7 +10,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType, isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, isQuotaError } from './firebase';
-import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination, FeePayment, ClassAttendanceConfig, InstitutionHoliday, SpecialWorkingDay, AuditLog, InstitutionSettings, assignClassSequentialRollNumbers } from '../types';
+import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination, FeePayment, ClassAttendanceConfig, InstitutionHoliday, SpecialWorkingDay, AuditLog, InstitutionSettings, assignClassSequentialRollNumbers, normalizeGender, determineStudentGender } from '../types';
 
 /**
  * Removes undefined fields from objects before saving to Firestore,
@@ -167,8 +167,8 @@ export class FirestoreSyncService {
 
               const rawStudents = snapshot.docs
                 .filter(d => !duplicateDocIdsToDelete.includes(d.id))
-                .map(doc => {
-                  const data = doc.data() as any;
+                .map(docSnap => {
+                  const data = docSnap.data() as any;
                   const regNos: Record<string, string> = {
                     ...(data.examRegisterNumbers || {}),
                     ...(data.examRegisterNos || {}),
@@ -181,9 +181,24 @@ export class FirestoreSyncService {
                       }
                     }
                   });
+                  const determinedGender = determineStudentGender({
+                    ...data,
+                    examRegisterNumbers: regNos,
+                    examRegisterNos: regNos,
+                  });
+
+                  // Permanent Firestore sync: if raw doc was un-normalized or female student had 'Boy' / missing / 'F'
+                  if (data.gender !== determinedGender) {
+                    setDoc(docSnap.ref, { gender: determinedGender }, { merge: true }).catch(() => {});
+                    if (data.admissionNo && data.admissionNo !== docSnap.id) {
+                      setDoc(doc(db, 'students', String(data.admissionNo).trim()), { gender: determinedGender }, { merge: true }).catch(() => {});
+                    }
+                  }
+
                   return {
                     ...data,
-                    id: doc.id,
+                    id: docSnap.id,
+                    gender: determinedGender,
                     examRegisterNumbers: regNos,
                     examRegisterNos: regNos,
                     examRegNo: data.examRegNo || (data as any).regNo || Object.values(regNos)[0] || '',
@@ -712,12 +727,14 @@ export class FirestoreSyncService {
       }
       const canonicalId = student.id || adm;
       if (!canonicalId) return;
+      const determinedGen = determineStudentGender(student);
       const cleanData = cleanForFirestore({
         ...student,
         id: canonicalId,
         admissionNo: adm,
         nameEn: name,
         nameMl: student.nameMl ? String(student.nameMl).trim().replace(/\s+/g, ' ') : name,
+        gender: determinedGen,
       });
       await setDoc(doc(db, 'students', canonicalId), cleanData, { merge: true });
 
@@ -741,9 +758,19 @@ export class FirestoreSyncService {
       for (const [sId, regNo] of Object.entries(registerNumbers)) {
         const targetStudent = students.find(s => s.id === sId || s.admissionNo === sId);
         const regVal = String(regNo || '').trim();
+        const candidateStudent = {
+          ...(targetStudent || {}),
+          examRegNo: regVal,
+          regNo: regVal,
+          examRegisterNos: { [examId]: regVal },
+          examRegisterNumbers: { [examId]: regVal },
+        };
+        const determinedGender = determineStudentGender(candidateStudent, examId);
+
         const updatePayload: Record<string, any> = {
           examRegNo: regVal,
           regNo: regVal,
+          gender: determinedGender,
           examRegisterNumbers: {
             [examId]: regVal,
           },

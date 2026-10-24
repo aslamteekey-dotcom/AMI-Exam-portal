@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Hash, Sparkles, Check, X, Loader2, GripHorizontal, Users, CheckCircle, AlertCircle } from 'lucide-react';
-import { sortStudentsBoysFirst, isBoyStudent } from '../../types';
+import { sortStudentsBoysFirst, isBoyStudent, determineStudentGender } from '../../types';
 import { firestoreSync } from '../../services/firestoreSync';
 import { logAuditEvent } from '../../services/auditLogger';
 
@@ -20,8 +20,13 @@ interface StudentRegItem {
   rollNo: number;
   nameEn: string;
   nameMl: string;
-  gender?: 'M' | 'F' | string;
+  gender?: string;
+  sex?: string;
   examRegisterNo: string;
+  examRegisterNos?: Record<string, string>;
+  examRegisterNumbers?: Record<string, string>;
+  examRegNo?: string;
+  regNo?: string;
 }
 
 export const ExamRegisterModal: React.FC<Props> = ({
@@ -109,9 +114,10 @@ export const ExamRegisterModal: React.FC<Props> = ({
         const unique = Array.from(
           new Map((data || []).map(s => [s.admissionNo?.toString() || s.studentId, s])).values()
         );
-        // Strict Unified Sort: Boys (male/boy) A-Z first, then Girls (female/girl) A-Z
-        const sorted = sortStudentsBoysFirst(unique).map((s, idx) => ({
+        // Strict Unified Sort: Boys A-Z first, then Girls A-Z using determineStudentGender
+        const sorted = sortStudentsBoysFirst(unique, examinationId).map((s, idx) => ({
           ...s,
+          gender: determineStudentGender(s, examinationId),
           rollNo: idx + 1,
         }));
 
@@ -145,10 +151,10 @@ export const ExamRegisterModal: React.FC<Props> = ({
     const newMap: Record<string, string> = { ...regMap };
 
     // Strictly sort students: Boys A-Z first, then Girls A-Z
-    const sorted = sortStudentsBoysFirst(students);
+    const sorted = sortStudentsBoysFirst(students, examinationId);
 
     sorted.forEach((student) => {
-      if (isBoyStudent(student.gender)) {
+      if (determineStudentGender(student, examinationId) === 'Boy') {
         newMap[student.studentId] = boyCounter.toString();
         boyCounter++;
       } else {
@@ -164,11 +170,16 @@ export const ExamRegisterModal: React.FC<Props> = ({
     setSaving(true);
     setError(null);
     try {
-      // 1. Direct Cloud Persistence to Firestore
+      // 1. Direct Cloud Persistence to Firestore with determined gender
       await firestoreSync.updateExamRegisterNumbers(
         examinationId,
         regMap,
-        students.map(s => ({ id: s.studentId, admissionNo: s.admissionNo, classId } as any))
+        students.map(s => ({
+          id: s.studentId,
+          admissionNo: s.admissionNo,
+          classId,
+          gender: determineStudentGender(s, examinationId),
+        } as any))
       );
 
       // 2. Also execute through API to update local state and broadcast
@@ -206,8 +217,8 @@ export const ExamRegisterModal: React.FC<Props> = ({
     }
   };
 
-  const boysCount = students.filter(s => !(s.gender || 'M').toUpperCase().startsWith('F')).length;
-  const girlsCount = students.filter(s => (s.gender || 'M').toUpperCase().startsWith('F')).length;
+  const boysCount = students.filter(s => determineStudentGender(s, examinationId) === 'Boy').length;
+  const girlsCount = students.filter(s => determineStudentGender(s, examinationId) === 'Girl').length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
@@ -333,7 +344,7 @@ export const ExamRegisterModal: React.FC<Props> = ({
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {students.map((student) => {
-                  const isGirl = !isBoyStudent(student.gender);
+                  const isGirl = determineStudentGender(student, examinationId) === 'Girl';
                   return (
                     <tr key={student.studentId} className="hover:bg-slate-50">
                       <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-600">

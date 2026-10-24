@@ -17,6 +17,8 @@ import {
   assignClassSequentialRollNumbers,
   recalculateClassRollsAndExamRegNos,
   isBoyStudent,
+  normalizeGender,
+  determineStudentGender,
   FeePayment,
   ClassAttendanceConfig,
   InstitutionHoliday,
@@ -760,8 +762,32 @@ export class ClientStorageApi {
     );
     this.performJune24Class5Cleanup();
     this.performRestoredHolidaysCleanup();
+    this.performGenderClassificationSync();
     this.saveDB();
     this.initFirestoreSync();
+  }
+
+  /**
+   * Permanent Gender Classification Sync:
+   * Restores accurate Boy/Girl classification using Rule A and Rule B (no name guessing).
+   * Ensures female students with 5200-series (or 1200, 4200, 7200 series) reg numbers or stored 'F'/'Girl'
+   * are cleanly classified as 'Girl' and synced permanently to Firestore.
+   */
+  public performGenderClassificationSync(): void {
+    if (!this.db.students || this.db.students.length === 0) return;
+    let anyChanged = false;
+    const activeExamId = this.db.settings?.activeExamId;
+    this.db.students.forEach(st => {
+      const determined = determineStudentGender(st, activeExamId);
+      if (st.gender !== determined) {
+        st.gender = determined;
+        anyChanged = true;
+        firestoreSync.syncStudent(st).catch(() => {});
+      }
+    });
+    if (anyChanged) {
+      this.saveDB();
+    }
   }
 
   /**
@@ -888,6 +914,7 @@ export class ClientStorageApi {
         } else if (!st.dob) {
           st.dob = '2015-05-15';
         }
+        st.gender = normalizeGender(st.gender);
       });
     }
   }
@@ -2444,7 +2471,7 @@ export class ClientStorageApi {
           students = students.filter(s => s.classId === classId);
         }
         const uniqueStudents = Array.from(
-          new Map(students.map(s => [s.admissionNo?.toString() || s.id, s])).values()
+          new Map(students.map(s => [s.admissionNo?.toString() || s.id, { ...s, gender: determineStudentGender(s) }])).values()
         );
         const resequenced = assignClassSequentialRollNumbers(uniqueStudents);
         return this.jsonResponse(sortStudentsBoysFirst(resequenced));
@@ -2493,7 +2520,7 @@ export class ClientStorageApi {
           parentPhone: bodyData.parentPhone?.trim() || '',
           status: 'active',
           dob: bodyData.dob,
-          gender: bodyData.gender,
+          gender: normalizeGender(bodyData.gender),
           schoolClass: bodyData.schoolClass,
         };
 
@@ -2738,8 +2765,8 @@ export class ClientStorageApi {
               const finalClass = resolvedClass || this.db.classes[0] || { id: 'cls_1', name: 'Class 1' };
 
               // Gender
-              const rawGender = rowObj['gender'] || rowObj['sex'] || rawCols[3] || 'M';
-              const gender = String(rawGender).trim().toUpperCase().startsWith('F') ? 'F' : 'M';
+              const rawGender = rowObj['gender'] || rowObj['sex'] || rawCols[3] || 'Boy';
+              const gender = normalizeGender(rawGender);
 
               // Parent name & phone
               const parentName = rowObj['parent name'] || rowObj['parent_name'] || rowObj['guardian_name'] || rowObj['parent'] || rawCols[4] || '';
@@ -2807,7 +2834,7 @@ export class ClientStorageApi {
                 parentNameEn: String(row.parentNameEn || row['Parent Name'] || row['Guardian'] || '').trim(),
                 parentNameMl: String(row.parentNameMl || '').trim(),
                 parentPhone: String(row.parentPhone || row['Phone'] || row['Mobile'] || '').trim(),
-                gender: (row.gender || row['Gender'] || 'M').toUpperCase().startsWith('F') ? 'F' : 'M',
+                gender: normalizeGender(row.gender || row['Gender'] || 'Boy'),
                 isValid: true,
               };
               validRows.push(rec);
@@ -2909,7 +2936,7 @@ export class ClientStorageApi {
               parentPhone: item.parentPhone ? String(item.parentPhone).trim() : '',
               parentUserId,
               status: 'active',
-              gender: item.gender === 'F' ? 'F' : 'M',
+              gender: normalizeGender(item.gender),
             });
           }
           importedCount++;
@@ -3575,13 +3602,14 @@ export class ClientStorageApi {
         const uniqueClassStudents = Array.from(
           new Map(rawClassStudents.map(s => [s.admissionNo?.toString() || s.id, s])).values()
         );
-        const students = sortStudentsBoysFirst(uniqueClassStudents);
+        const students = sortStudentsBoysFirst(uniqueClassStudents, eId);
         const list = students.map((s, idx) => ({
           studentId: s.id,
           admissionNo: s.admissionNo,
           rollNo: idx + 1,
           nameEn: s.nameEn,
           nameMl: s.nameMl,
+          gender: determineStudentGender(s, eId),
           examRegisterNo:
             (s as any).examRegisterNos?.[eId] ||
             (s as any).examRegNo ||
@@ -3611,6 +3639,7 @@ export class ClientStorageApi {
 
             (st as any).examRegNo = regVal;
             (st as any).regNo = regVal;
+            st.gender = determineStudentGender(st, eId);
             updatedStudents.push(st);
           }
         });

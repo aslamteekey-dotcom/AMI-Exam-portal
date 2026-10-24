@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { db } from '../../services/firebase';
 import { doc, setDoc } from 'firebase/firestore';
-import { MarkSheet, SubjectAssessmentRule, Student, StudentMarkEntry, sortStudentsBoysFirst } from '../../types';
+import { MarkSheet, SubjectAssessmentRule, Student, StudentMarkEntry, sortStudentsBoysFirst, determineStudentGender } from '../../types';
 import { logAuditEvent } from '../../services/auditLogger';
 import {
   CheckCircle,
@@ -56,9 +56,10 @@ export const MarkVerificationModal: React.FC<Props> = ({
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.students)) {
-          data.students = sortStudentsBoysFirst(data.students).map((s: any, idx: number) => ({
+          data.students = sortStudentsBoysFirst(data.students, examinationId).map((s: any, idx: number) => ({
             ...s,
             rollNo: idx + 1,
+            gender: determineStudentGender(s, examinationId),
           }));
         }
         setSheetData(data);
@@ -315,22 +316,32 @@ export const MarkVerificationModal: React.FC<Props> = ({
   }
 
   // Build marks array safely
+  const rawSortedStudents = Array.isArray(sheetData?.students) ? sortStudentsBoysFirst(sheetData.students, examinationId) : [];
   const marksList = Array.isArray(sheetData?.marks)
     ? sheetData.marks
-    : Array.isArray(sheetData?.students)
-      ? sortStudentsBoysFirst(sheetData.students).map((st: any, idx: number) => {
-          const studentId = st?.id;
-          const entry = markSheet?.studentMarks?.[studentId] || {};
-          return {
-            student: st,
-            studentId,
-            studentName: st?.nameEn || st?.name,
-            rollNo: idx + 1,
-            admissionNo: st?.admissionNo,
-            ...entry,
-          };
-        })
-      : [];
+    : rawSortedStudents.map((st: any, idx: number) => {
+        const studentId = st?.id;
+        const entry = markSheet?.studentMarks?.[studentId] || {};
+        return {
+          student: st,
+          studentId,
+          studentName: st?.nameEn || st?.name,
+          rollNo: idx + 1,
+          admissionNo: st?.admissionNo,
+          gender: determineStudentGender(st, examinationId),
+          ...entry,
+        };
+      });
+
+  const validMarksList = marksList.filter(Boolean);
+  const sheetBoysCount = validMarksList.filter((m: any) => {
+    const st = m?.student || studentMap[m?.studentId] || {};
+    return determineStudentGender(st, examinationId) === 'Boy';
+  }).length;
+  const sheetGirlsCount = validMarksList.filter((m: any) => {
+    const st = m?.student || studentMap[m?.studentId] || {};
+    return determineStudentGender(st, examinationId) === 'Girl';
+  }).length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
@@ -347,7 +358,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
               </h2>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              {isMl ? (exam?.nameMl || exam?.nameEn) : (exam?.nameEn || exam?.nameMl)} • Teacher: <span className="font-semibold text-slate-700">{teacherHeader}</span> • Al-Madrasathul Islamiya Pallikkuth
+              {isMl ? (exam?.nameMl || exam?.nameEn) : (exam?.nameEn || exam?.nameMl)} • Teacher: <span className="font-semibold text-slate-700">{teacherHeader}</span> • ({validMarksList.length} Students: {sheetBoysCount} Boys, {sheetGirlsCount} Girls) • Al-Madrasathul Islamiya Pallikkuth
             </p>
           </div>
 
@@ -456,6 +467,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
               <tr>
                 <th className="p-2.5 text-center w-12 whitespace-nowrap sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
                 <th className="p-2.5 whitespace-nowrap sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[180px] md:min-w-[220px]">Student Name</th>
+                <th className="p-2.5 text-center w-16 whitespace-nowrap">Gender</th>
                 {components.map((c: SubjectAssessmentRule) => (
                   <th key={c.componentKey} className="p-2.5 text-center whitespace-nowrap">
                     {c.labelEn} ({c.maxMarks})
@@ -473,6 +485,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
                 const rollNo = entry?.rollNo ?? student?.rollNo ?? (index + 1);
                 const admissionNo = entry?.admissionNo ?? student?.admissionNo ?? '—';
                 const isAbsent = entry?.isAbsent;
+                const studentGender = determineStudentGender(student, examinationId);
 
                 let writtenTotal = 0;
                 let maxWritten = 0;
@@ -507,6 +520,15 @@ export const MarkVerificationModal: React.FC<Props> = ({
                         <div className="text-[11px] text-slate-500 font-ml">{bilingualName}</div>
                       )}
                       <div className="text-[11px] text-slate-400 font-mono">Adm: {admissionNo}</div>
+                    </td>
+                    <td className="p-2.5 text-center whitespace-nowrap">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        studentGender === 'Girl'
+                          ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                          : 'bg-blue-50 text-blue-700 border border-blue-200'
+                      }`}>
+                        {studentGender}
+                      </span>
                     </td>
 
                     {components.map((c: SubjectAssessmentRule) => (

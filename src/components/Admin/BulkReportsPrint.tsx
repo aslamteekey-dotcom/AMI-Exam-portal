@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { ClassItem, Examination, StudentProgressReport, InstitutionSettings, sortStudentsBoysFirst } from '../../types';
+import { ClassItem, Examination, StudentProgressReport, InstitutionSettings, sortStudentsBoysFirst, normalizeGender, determineStudentGender } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
 import { computeClassLedgerRankings, calculateStudentReportMetrics } from '../../utils/reportCalculations';
 import { handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
@@ -98,11 +98,9 @@ export const BulkReportsPrint: React.FC = () => {
 
         // Sort: Boys first, then alphabetical by student English name
         const sortedReports = [...uniqueReports].sort((a, b) => {
-          const genderA = (a.student?.gender || 'Boy').toLowerCase();
-          const genderB = (b.student?.gender || 'Boy').toLowerCase();
-          const isGirlA = genderA.startsWith('f') || genderA.startsWith('gir');
-          const isGirlB = genderB.startsWith('f') || genderB.startsWith('gir');
-          if (isGirlA !== isGirlB) return isGirlA ? 1 : -1;
+          const genderA = determineStudentGender(a.student, eId);
+          const genderB = determineStudentGender(b.student, eId);
+          if (genderA !== genderB) return genderA === 'Boy' ? -1 : 1;
           const nameA = String(a.student?.nameEn || (a.student as any)?.name || '').trim().toLowerCase();
           const nameB = String(b.student?.nameEn || (b.student as any)?.name || '').trim().toLowerCase();
           return nameA.localeCompare(nameB);
@@ -111,6 +109,7 @@ export const BulkReportsPrint: React.FC = () => {
           student: {
             ...r.student,
             rollNo: idx + 1,
+            gender: determineStudentGender(r.student, eId),
           },
         }));
 
@@ -176,18 +175,20 @@ export const BulkReportsPrint: React.FC = () => {
     return sortStudentsBoysFirst(
       rawReports.map(r => ({
         ...r,
-        gender: r.student?.gender,
+        gender: determineStudentGender(r.student, selectedExamId),
         nameEn: r.student?.nameEn,
         name: (r.student as any)?.name,
-      }))
+      })),
+      selectedExamId
     ).map((r, idx) => ({
       ...r,
       student: {
         ...r.student,
         rollNo: idx + 1,
+        gender: determineStudentGender(r.student, selectedExamId),
       },
     }));
-  }, [rawReports]);
+  }, [rawReports, selectedExamId]);
 
   // Determine consistent total maximum marks for the class (e.g. 8 subjects * 50 = 400)
   const classTotalExpectedMax = useMemo(() => {
@@ -227,6 +228,9 @@ export const BulkReportsPrint: React.FC = () => {
       };
     });
   }, [safeReports, classLedgerRankings, classTotalExpectedMax]);
+
+  const ledgerBoysCount = enrichedReports.filter(r => determineStudentGender(r.student, selectedExamId) === 'Boy').length;
+  const ledgerGirlsCount = enrichedReports.filter(r => determineStudentGender(r.student, selectedExamId) === 'Girl').length;
 
   const handleClassChange = (cId: string) => {
     setSelectedClassId(cId);
@@ -575,7 +579,7 @@ export const BulkReportsPrint: React.FC = () => {
                     {classLabelEnglish} — {currentExam?.nameEn}
                   </h3>
                   <p className="text-[11px] text-emerald-800/80">
-                    Displaying all {enrichedReports.length} progress report cards in sequential order. Each student card is formatted strictly for a single A4 page.
+                    Displaying all {enrichedReports.length} progress report cards ({ledgerBoysCount} Boys, {ledgerGirlsCount} Girls) in sequential order. Each student card is formatted strictly for a single A4 page.
                   </p>
                 </div>
               </div>
@@ -659,7 +663,7 @@ export const BulkReportsPrint: React.FC = () => {
             <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
               <div>
                 <h3 className="text-sm font-bold text-slate-900">
-                  {classLabelEnglish} Result Ledger ({enrichedReports.length} Students)
+                  {classLabelEnglish} Result Ledger ({enrichedReports.length} Students: {ledgerBoysCount} Boys, {ledgerGirlsCount} Girls)
                 </h3>
                 <p className="text-[11px] text-slate-500">
                   Dense Ranking: ties share identical rank without skipping (1, 1, 2…); students with TE &lt; 35% require improvement.
@@ -682,6 +686,7 @@ export const BulkReportsPrint: React.FC = () => {
                   <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                     <th className="py-2.5 px-3 w-12 text-center sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
                     <th className="py-2.5 px-3 sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[180px] md:min-w-[220px]">Student Name</th>
+                    <th className="py-2.5 px-2 text-center whitespace-nowrap">Gender</th>
                     <th className="py-2.5 px-2 w-20 text-center font-mono">Reg No</th>
                     <th className="py-2.5 px-2 w-20 text-center font-mono">Adm No</th>
                     <th className="py-2.5 px-3 text-center whitespace-nowrap">Marks Obtained</th>
@@ -717,6 +722,15 @@ export const BulkReportsPrint: React.FC = () => {
                               {s.nameMl}
                             </span>
                           )}
+                        </td>
+                        <td className="py-2.5 px-2 text-center whitespace-nowrap">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            determineStudentGender(s, selectedExamId) === 'Girl'
+                              ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                              : 'bg-blue-50 text-blue-700 border border-blue-200'
+                          }`}>
+                            {determineStudentGender(s, selectedExamId)}
+                          </span>
                         </td>
                         <td className="py-2.5 px-2 font-mono font-bold text-emerald-950 w-20 text-center">
                           {examRegNo}
