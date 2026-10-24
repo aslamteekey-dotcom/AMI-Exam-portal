@@ -948,14 +948,17 @@ export class ClientStorageApi {
       ? [targetClassId]
       : Array.from(new Set(this.db.students.map(s => s.classId)));
 
+    const activeExamId = this.db.settings?.activeExamId || 'exam_half_yearly_2026_27';
     classIds.forEach(cId => {
       const classStudents = this.db.students.filter(s => s.classId === cId && s.status !== 'inactive');
-      const clsName = this.db.classes.find(c => c.id === cId)?.name;
-      const resequenced = recalculateClassRollsAndExamRegNos(classStudents, clsName);
+      // Strictly ONLY resequence class roll numbers (Roll 1, 2, 3... Boys A-Z first, then Girls A-Z)
+      // NEVER touch or recalculate exam register numbers here!
+      const resequenced = assignClassSequentialRollNumbers(classStudents, activeExamId);
       resequenced.forEach(updatedStudent => {
         const idx = this.db.students.findIndex(s => s.id === updatedStudent.id);
         if (idx !== -1) {
-          this.db.students[idx] = updatedStudent;
+          this.db.students[idx].rollNo = updatedStudent.rollNo;
+          this.db.students[idx].gender = updatedStudent.gender;
         }
       });
     });
@@ -1011,20 +1014,36 @@ export class ClientStorageApi {
                   }
                 }
               });
-              if ((st as any).examRegNo && Object.keys(regNos).length === 0) {
-                regNos[this.db.settings?.activeExamId || 'default'] = (st as any).examRegNo;
+              const activeKey = this.db.settings?.activeExamId || 'exam_half_yearly_2026_27';
+              const activeExam = this.db.examinations?.find(e => e.id === activeKey);
+              const examRegMap = (activeExam as any)?.registerNumbers || {};
+              const fromExamMap = examRegMap[st.id] || (st.admissionNo ? examRegMap[st.admissionNo] : '') || '';
+
+              const currentRegNo = String(
+                (st as any).examRegNo ||
+                (st as any).regNo ||
+                regNos[activeKey] ||
+                fromExamMap ||
+                Object.values(regNos)[0] ||
+                ''
+              ).trim();
+              if (currentRegNo) {
+                regNos[activeKey] = currentRegNo;
               }
               return {
                 ...st,
                 examRegisterNumbers: regNos,
                 examRegisterNos: regNos,
-                examRegNo: (st as any).examRegNo || Object.values(regNos)[0] || '',
+                examRegNo: currentRegNo,
+                regNo: currentRegNo,
+                isRegNoLocked: Boolean((st as any).isRegNoLocked || currentRegNo),
               };
             });
             const uniqueStudents = Array.from(
               new Map(mapped.map(s => [s.admissionNo?.toString() || s.id, s])).values()
             );
-            const resequenced = assignClassSequentialRollNumbers(uniqueStudents);
+            const activeKey = this.db.settings?.activeExamId || 'exam_half_yearly_2026_27';
+            const resequenced = assignClassSequentialRollNumbers(uniqueStudents, activeKey);
             this.db.students = resequenced;
             try {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
@@ -1282,7 +1301,37 @@ export class ClientStorageApi {
                 }
               }
             });
-            parsed.students = assignClassSequentialRollNumbers(Array.from(uniqueMap.values()));
+            const targetActiveExam = parsed.settings?.activeExamId || 'exam_half_yearly_2026_27';
+            const activeExamObj = Array.isArray(parsed.examinations)
+              ? parsed.examinations.find((e: any) => e.id === targetActiveExam)
+              : null;
+            const examRegMap = (activeExamObj as any)?.registerNumbers || {};
+
+            const normalizedList = Array.from(uniqueMap.values()).map((s: any) => {
+              const regNos = {
+                ...(s.examRegisterNumbers || {}),
+                ...(s.examRegisterNos || {}),
+              };
+              const fromExamMap = examRegMap[s.id] || (s.admissionNo ? examRegMap[s.admissionNo] : '') || '';
+              const priorityRegNo = String(
+                s.examRegNo ||
+                s.regNo ||
+                regNos[targetActiveExam] ||
+                fromExamMap ||
+                Object.values(regNos)[0] ||
+                ''
+              ).trim();
+              if (priorityRegNo) {
+                s.examRegNo = priorityRegNo;
+                s.regNo = priorityRegNo;
+                regNos[targetActiveExam] = priorityRegNo;
+                s.isRegNoLocked = true;
+              }
+              s.examRegisterNumbers = regNos;
+              s.examRegisterNos = regNos;
+              return s;
+            });
+            parsed.students = assignClassSequentialRollNumbers(normalizedList, targetActiveExam);
           } else {
             parsed.students = [];
           }
@@ -2470,11 +2519,44 @@ export class ClientStorageApi {
         if (classId) {
           students = students.filter(s => s.classId === classId);
         }
+        const activeKey = this.db.settings?.activeExamId || 'exam_half_yearly_2026_27';
+        const activeExam = this.db.examinations?.find(e => e.id === activeKey);
+        const examRegMap = (activeExam as any)?.registerNumbers || {};
+
         const uniqueStudents = Array.from(
-          new Map(students.map(s => [s.admissionNo?.toString() || s.id, { ...s, gender: determineStudentGender(s) }])).values()
+          new Map(students.map(s => {
+            const regNos = {
+              ...(s.examRegisterNumbers || {}),
+              ...((s as any).examRegisterNos || {}),
+            };
+            const fromExamMap = examRegMap[s.id] || (s.admissionNo ? examRegMap[s.admissionNo] : '') || '';
+            const priorityReg = String(
+              s.examRegNo ||
+              (s as any).regNo ||
+              regNos[activeKey] ||
+              fromExamMap ||
+              Object.values(regNos)[0] ||
+              ''
+            ).trim();
+            if (priorityReg) {
+              regNos[activeKey] = priorityReg;
+            }
+            return [
+              s.admissionNo?.toString() || s.id,
+              {
+                ...s,
+                gender: determineStudentGender(s, activeKey),
+                examRegisterNumbers: regNos,
+                examRegisterNos: regNos,
+                examRegNo: priorityReg,
+                regNo: priorityReg,
+                isRegNoLocked: Boolean(s.isRegNoLocked || priorityReg),
+              }
+            ];
+          })).values()
         );
-        const resequenced = assignClassSequentialRollNumbers(uniqueStudents);
-        return this.jsonResponse(sortStudentsBoysFirst(resequenced));
+        const resequenced = assignClassSequentialRollNumbers(uniqueStudents, activeKey);
+        return this.jsonResponse(sortStudentsBoysFirst(resequenced, activeKey));
       }
 
       if (path === '/api/students/resequence-rolls' && method === 'POST') {
@@ -2507,6 +2589,8 @@ export class ClientStorageApi {
         }
 
         const studentId = bodyData.id || `stu_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const incomingRegVal = String(bodyData.examRegNo || bodyData.regNo || '').trim();
+        const activeKey = this.db.settings?.activeExamId || 'exam_half_yearly_2026_27';
         const newStudent: Student = {
           id: studentId,
           admissionNo: incomingAdm,
@@ -2522,6 +2606,11 @@ export class ClientStorageApi {
           dob: bodyData.dob,
           gender: normalizeGender(bodyData.gender),
           schoolClass: bodyData.schoolClass,
+          examRegNo: incomingRegVal || undefined,
+          regNo: incomingRegVal || undefined,
+          examRegisterNos: incomingRegVal ? { [activeKey]: incomingRegVal } : {},
+          examRegisterNumbers: incomingRegVal ? { [activeKey]: incomingRegVal } : {},
+          isRegNoLocked: Boolean(incomingRegVal),
         };
 
         // Auto create/update parent account
@@ -2546,6 +2635,22 @@ export class ClientStorageApi {
             createdParent = parentUser;
           }
           newStudent.parentUserId = parentUser.id;
+        }
+
+        if (incomingRegVal) {
+          const activeExam = this.db.examinations?.find(e => e.id === activeKey);
+          if (activeExam) {
+            if (!(activeExam as any).registerNumbers) (activeExam as any).registerNumbers = {};
+            (activeExam as any).registerNumbers[studentId] = incomingRegVal;
+            (activeExam as any).registerNumbers[incomingAdm] = incomingRegVal;
+          }
+          firestoreSync.persistStudentExamRegisterNumber(
+            studentId,
+            incomingAdm,
+            activeKey,
+            incomingRegVal,
+            newStudent
+          ).catch(() => {});
         }
 
         this.db.students.push(newStudent);
@@ -2597,12 +2702,11 @@ export class ClientStorageApi {
         const prevClassId = student.classId;
         Object.assign(student, bodyData);
 
-        if (bodyData?.examRegNo || bodyData?.regNo || bodyData?.examRegisterNos || bodyData?.examRegisterNumbers) {
+        if (bodyData?.examRegNo !== undefined || bodyData?.regNo !== undefined || bodyData?.examRegisterNos || bodyData?.examRegisterNumbers) {
           const regVal = String(bodyData.examRegNo || bodyData.regNo || '').trim();
-          if (regVal) {
-            student.examRegNo = regVal;
-            (student as any).regNo = regVal;
-          }
+          student.examRegNo = regVal;
+          (student as any).regNo = regVal;
+          student.isRegNoLocked = true;
           const activeKey = this.db.settings?.activeExamId || 'exam_half_yearly_2026_27';
           if (!student.examRegisterNos) student.examRegisterNos = {};
           if (!student.examRegisterNumbers) student.examRegisterNumbers = {};
@@ -2615,6 +2719,19 @@ export class ClientStorageApi {
           }
           if (bodyData.examRegisterNumbers && typeof bodyData.examRegisterNumbers === 'object') {
             student.examRegisterNumbers = { ...student.examRegisterNumbers, ...bodyData.examRegisterNumbers };
+          }
+          if (bodyData.isRegNoLocked !== undefined) {
+            student.isRegNoLocked = Boolean(bodyData.isRegNoLocked);
+          }
+
+          // Also update active examination document registerNumbers map
+          const activeExam = this.db.examinations?.find(e => e.id === activeKey);
+          if (activeExam) {
+            if (!(activeExam as any).registerNumbers) (activeExam as any).registerNumbers = {};
+            (activeExam as any).registerNumbers[student.id] = regVal;
+            if (student.admissionNo) {
+              (activeExam as any).registerNumbers[student.admissionNo] = regVal;
+            }
           }
         }
 
@@ -2631,6 +2748,19 @@ export class ClientStorageApi {
           this.resequenceClassRollNumbers(prevClassId);
         }
         this.saveDB();
+
+        // Direct persistence to Firestore across all collections (students, examinations, settings) and localStorage
+        const activeExamKey = this.db.settings?.activeExamId || 'exam_half_yearly_2026_27';
+        const finalCleanReg = student.examRegNo || (student as any).regNo || '';
+        firestoreSync.persistStudentExamRegisterNumber(
+          student.id,
+          student.admissionNo,
+          activeExamKey,
+          finalCleanReg,
+          student
+        ).catch(e => {
+          console.warn('Firestore persistStudentExamRegisterNumber error on PUT:', e);
+        });
 
         const affected = this.db.students.filter(s => s.classId === student.classId || s.classId === prevClassId);
         for (const st of affected) {
@@ -3639,10 +3769,18 @@ export class ClientStorageApi {
 
             (st as any).examRegNo = regVal;
             (st as any).regNo = regVal;
+            st.isRegNoLocked = true;
             st.gender = determineStudentGender(st, eId);
             updatedStudents.push(st);
           }
         });
+
+        const activeExam = this.db.examinations?.find(e => e.id === eId);
+        if (activeExam) {
+          if (!(activeExam as any).registerNumbers) (activeExam as any).registerNumbers = {};
+          Object.assign((activeExam as any).registerNumbers, registerNumbers);
+        }
+
         this.saveDB();
 
         // 1. Immediate Firestore Cloud Persistence across schema formats

@@ -8,6 +8,7 @@ import {
   MarkSheet,
   Student,
   sortStudentsBoysFirst,
+  assignClassSequentialRollNumbers,
   recalculateClassRollsAndExamRegNos,
   TUITION_FEE_MONTHS,
   FeePayment,
@@ -150,7 +151,7 @@ export const TeacherDashboard: React.FC = () => {
   const [classes, setClasses] = useState<ClassItem[]>(ALL_STANDARD_CLASSES);
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [examinations, setExaminations] = useState<Examination[]>([]);
-  const [selectedExamId, setSelectedExamId] = useState<string>('');
+  const [selectedExamId, setSelectedExamId] = useState<string>('exam_half_yearly_2026_27');
   const [markSheets, setMarkSheets] = useState<MarkSheet[]>([]);
   const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [currentTeacherInChargeClassId, setCurrentTeacherInChargeClassId] = useState<string | undefined>(user?.inChargeClassId);
@@ -543,8 +544,29 @@ export const TeacherDashboard: React.FC = () => {
                 ...((data as any).examRegisterNumbers || {}),
                 ...((data as any).examRegisterNos || {}),
               };
-              if ((data as any).examRegNo && Object.keys(regNos).length === 0) {
-                regNos[selectedExamId || 'default'] = (data as any).examRegNo;
+              Object.keys(data).forEach(key => {
+                if (key.startsWith('examRegisterNumbers.') || key.startsWith('examRegisterNos.')) {
+                  const examId = key.substring(key.indexOf('.') + 1);
+                  if (examId && (data as any)[key]) {
+                    regNos[examId] = String((data as any)[key]).trim();
+                  }
+                }
+              });
+              const targetExamKey = selectedExamId || 'exam_half_yearly_2026_27';
+              const currentReg = String(
+                (data as any).examRegNo ||
+                (data as any).regNo ||
+                regNos[targetExamKey] ||
+                (data as any).examRegisterNos?.[targetExamKey] ||
+                (selectedExamId ? regNos[selectedExamId] : '') ||
+                Object.values(regNos)[0] ||
+                ''
+              ).trim();
+              if (currentReg) {
+                regNos[targetExamKey] = currentReg;
+                if (selectedExamId) {
+                  regNos[selectedExamId] = currentReg;
+                }
               }
               const normalizedGender = normalizeGender((data as any).gender);
               if ((data as any).gender && (data as any).gender !== normalizedGender) {
@@ -556,11 +578,9 @@ export const TeacherDashboard: React.FC = () => {
                 gender: normalizedGender,
                 examRegisterNumbers: regNos,
                 examRegisterNos: regNos,
-                examRegNo:
-                  (data as any).examRegNo ||
-                  (data as any).examRegisterNos?.[selectedExamId] ||
-                  regNos[selectedExamId] ||
-                  '',
+                examRegNo: currentReg,
+                regNo: currentReg,
+                isRegNoLocked: Boolean((data as any).isRegNoLocked || currentReg),
               } as Student;
               const key = String(studentObj.admissionNo || d.id).trim();
               if (!uniqueMap.has(key)) {
@@ -1921,46 +1941,33 @@ export const TeacherDashboard: React.FC = () => {
         schoolClass: studentFormData.schoolClass.trim() || undefined,
         parentNameEn: studentFormData.parentNameEn.trim(),
         parentPhone: studentFormData.parentPhone.trim(),
-        examRegNo: trimmedExamReg || undefined,
-        regNo: trimmedExamReg || undefined,
-        examRegisterNos: updatedExamRegNos,
-        examRegisterNumbers: updatedExamRegNos,
-        updatedAt: new Date().toISOString(),
-      };
-
-      // 1. Dual-Sync Exam Register Number on Edit in Firestore:
-      // Update BOTH top-level (examRegNo, regNo) and nested examination maps (examRegisterNos, examRegisterNumbers)
-      const firestorePayload = cleanForFirestore({
         examRegNo: trimmedExamReg,
         regNo: trimmedExamReg,
         examRegisterNos: updatedExamRegNos,
         examRegisterNumbers: updatedExamRegNos,
-        [`examRegisterNos.${activeExamId}`]: trimmedExamReg,
-        [`examRegisterNumbers.${activeExamId}`]: trimmedExamReg,
-        ...updateData,
+        isRegNoLocked: true,
         updatedAt: new Date().toISOString(),
-      });
+      };
 
-      try {
-        await updateDoc(doc(db, 'students', editingStudent.id), firestorePayload);
-      } catch {
-        await setDoc(doc(db, 'students', editingStudent.id), firestorePayload, { merge: true });
-      }
-
-      if (editingStudent.admissionNo && editingStudent.admissionNo !== editingStudent.id) {
-        try {
-          await updateDoc(doc(db, 'students', editingStudent.admissionNo), firestorePayload);
-        } catch {
-          await setDoc(doc(db, 'students', editingStudent.admissionNo), firestorePayload, { merge: true }).catch(() => {});
-        }
-      }
+      // 1. Persist to ALL storage locations:
+      // - Firestore students/{id} and students/{admissionNo}
+      // - Firestore examinations/{activeExamId} and exams/{activeExamId}
+      // - Firestore settings
+      // - Immediate localStorage cache
+      await firestoreSync.persistStudentExamRegisterNumber(
+        editingStudent.id,
+        editingStudent.admissionNo,
+        activeExamId,
+        trimmedExamReg,
+        updateData
+      );
 
       // Mutate editingStudent directly
       Object.assign(editingStudent, updateData);
 
-      // 2. Auto-recalculate sequential roll numbers and exam register numbers for this class (Boys A-Z first, then Girls A-Z)
+      // 2. Re-sequence class roll numbers strictly (Boys A-Z first: 1, 2, 3..., then Girls A-Z)
+      // NEVER auto-recalculate or overwrite existing exam register numbers!
       const targetClassId = editingStudent.classId;
-      const targetClassName = classes.find(c => c.id === targetClassId)?.name;
       const updatedList = allStudents.map(s => {
         if (s.id === editingStudent.id || (editingStudent.admissionNo && s.admissionNo === editingStudent.admissionNo)) {
           return {
@@ -1970,13 +1977,14 @@ export const TeacherDashboard: React.FC = () => {
             regNo: trimmedExamReg,
             examRegisterNos: updatedExamRegNos,
             examRegisterNumbers: updatedExamRegNos,
+            isRegNoLocked: true,
           };
         }
         return s;
       });
 
       const classStudents = updatedList.filter(s => s.classId === targetClassId);
-      const resequencedClass = recalculateClassRollsAndExamRegNos(classStudents, targetClassName);
+      const resequencedClass = assignClassSequentialRollNumbers(classStudents, activeExamId);
 
       // Retain explicitly edited examRegNo for the edited student
       const finalResequencedClass = resequencedClass.map(st => {
@@ -1988,21 +1996,24 @@ export const TeacherDashboard: React.FC = () => {
             regNo: trimmedExamReg,
             examRegisterNos: updatedExamRegNos,
             examRegisterNumbers: updatedExamRegNos,
+            isRegNoLocked: true,
             updatedAt: new Date().toISOString(),
           };
         }
         return st;
       });
 
-      // Persist all resequenced students in this class to Firestore
+      // Persist any other class students whose roll numbers changed to Firestore
       for (const st of finalResequencedClass) {
-        try {
-          await setDoc(doc(db, 'students', st.id), cleanForFirestore(st), { merge: true });
-          if (st.admissionNo && st.admissionNo !== st.id) {
-            await setDoc(doc(db, 'students', st.admissionNo), cleanForFirestore(st), { merge: true }).catch(() => {});
+        if (st.id !== editingStudent.id && st.admissionNo !== editingStudent.admissionNo) {
+          try {
+            await setDoc(doc(db, 'students', st.id), cleanForFirestore(st), { merge: true });
+            if (st.admissionNo && st.admissionNo !== st.id) {
+              await setDoc(doc(db, 'students', st.admissionNo), cleanForFirestore(st), { merge: true }).catch(() => {});
+            }
+          } catch (e) {
+            console.warn('Firestore sync resequenced student error:', e);
           }
-        } catch (e) {
-          console.warn('Firestore sync resequenced student error:', e);
         }
       }
 
@@ -2016,6 +2027,7 @@ export const TeacherDashboard: React.FC = () => {
             regNo: trimmedExamReg,
             examRegisterNos: updatedExamRegNos,
             examRegisterNumbers: updatedExamRegNos,
+            isRegNoLocked: true,
           };
         }
         return resequencedMap.get(s.id) || s;

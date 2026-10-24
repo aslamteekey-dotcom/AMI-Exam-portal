@@ -112,6 +112,7 @@ export interface Student {
   examRegisterNos?: Record<string, string>; // examinationId -> exam register number (cloud persistence schema alias)
   examRegNo?: string; // current active exam register number (cloud persistence schema alias)
   regNo?: string; // register number alias
+  isRegNoLocked?: boolean; // Flag indicating manually assigned/edited register number override
   attendance?: {
     daysAttended: number;
     totalWorkingDays: number;
@@ -580,16 +581,18 @@ export function assignClassSequentialRollNumbers<T extends { id?: string; gender
  * Re-sequences both roll numbers and exam register numbers for class students
  * according to updated gender: all boys A-Z first, then all girls A-Z.
  */
-export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gender?: string; nameEn?: string; name?: string; rollNo?: number; classId?: string; examRegisterNumbers?: Record<string, string>; examRegisterNos?: Record<string, string>; examRegNo?: string; regNo?: string }>(
+export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gender?: string; nameEn?: string; name?: string; rollNo?: number; classId?: string; examRegisterNumbers?: Record<string, string>; examRegisterNos?: Record<string, string>; examRegNo?: string; regNo?: string; isRegNoLocked?: boolean }>(
   classStudents: T[],
   className?: string,
   activeExamId?: string
 ): T[] {
-  const sorted = sortStudentsBoysFirst(classStudents, activeExamId);
+  const targetExamId = activeExamId || 'exam_half_yearly_2026_27';
+  const sorted = sortStudentsBoysFirst(classStudents, targetExamId);
   const classNumeral = (className || '').replace(/[^0-9]/g, '') || (sorted[0]?.classId ? sorted[0].classId.replace(/[^0-9]/g, '') : '') || '7';
 
   // Gather all exam IDs that have register numbers across this class
   const examIds = new Set<string>();
+  if (targetExamId) examIds.add(targetExamId);
   sorted.forEach(s => {
     const regMap = (s as any).examRegisterNos || s.examRegisterNumbers || {};
     Object.keys(regMap).forEach(eId => examIds.add(eId));
@@ -597,7 +600,7 @@ export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gend
 
   const updated: T[] = sorted.map((student, index) => ({
     ...student,
-    gender: determineStudentGender(student, activeExamId),
+    gender: determineStudentGender(student, targetExamId),
     rollNo: index + 1,
   }));
 
@@ -624,16 +627,17 @@ export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gend
     let girlCounter = minGirlReg;
 
     updated.forEach(s => {
+      const isLocked = Boolean((s as any).isRegNoLocked);
       const existingReg = (s as any).examRegisterNos?.[eId] || s.examRegisterNumbers?.[eId] || (s as any).examRegNo || (s as any).regNo;
-      if (existingReg) {
-        // PRESERVE the existing / manually set register number
-        const cleanReg = String(existingReg).trim();
-        if (!s.examRegisterNumbers) s.examRegisterNumbers = {};
-        s.examRegisterNumbers[eId] = cleanReg;
-        if (!(s as any).examRegisterNos) (s as any).examRegisterNos = {};
-        (s as any).examRegisterNos[eId] = cleanReg;
-        (s as any).examRegNo = cleanReg;
-        (s as any).regNo = cleanReg;
+      if (existingReg || isLocked) {
+        // PRESERVE the existing / manually set / locked register number
+        const cleanReg = String(existingReg || '').trim();
+        if (cleanReg) {
+          if (!s.examRegisterNumbers) s.examRegisterNumbers = {};
+          s.examRegisterNumbers[eId] = cleanReg;
+          if (!(s as any).examRegisterNos) (s as any).examRegisterNos = {};
+          (s as any).examRegisterNos[eId] = cleanReg;
+        }
       } else if (hasCustomBoy || hasCustomGirl) {
         const isBoy = isBoyStudent(s, eId);
         const newReg = isBoy ? String(boyCounter++) : String(girlCounter++);
@@ -641,10 +645,24 @@ export function recalculateClassRollsAndExamRegNos<T extends { id?: string; gend
         s.examRegisterNumbers[eId] = newReg;
         if (!(s as any).examRegisterNos) (s as any).examRegisterNos = {};
         (s as any).examRegisterNos[eId] = newReg;
-        (s as any).examRegNo = newReg;
-        (s as any).regNo = newReg;
       }
     });
+  });
+
+  // Ensure top-level examRegNo and regNo strictly prioritize activeExamId
+  updated.forEach(s => {
+    const regForActive =
+      (s as any).examRegisterNos?.[targetExamId] ||
+      s.examRegisterNumbers?.[targetExamId] ||
+      (s as any).examRegNo ||
+      (s as any).regNo ||
+      Object.values((s as any).examRegisterNos || {})[0] ||
+      Object.values(s.examRegisterNumbers || {})[0] ||
+      '';
+    if (regForActive) {
+      (s as any).examRegNo = String(regForActive).trim();
+      (s as any).regNo = String(regForActive).trim();
+    }
   });
 
   return updated;

@@ -195,14 +195,30 @@ export class FirestoreSyncService {
                     }
                   }
 
+                  // PRIORITY DISPLAY ORDER ON LOAD:
+                  // Prioritize directly edited data.examRegNo / data.regNo / regNos[activeExamId] from Firestore
+                  const targetActiveExam = 'exam_half_yearly_2026_27';
+                  const priorityRegNo = String(
+                    data.examRegNo ||
+                    (data as any).regNo ||
+                    regNos[targetActiveExam] ||
+                    Object.values(regNos)[0] ||
+                    ''
+                  ).trim();
+
+                  if (priorityRegNo && !regNos[targetActiveExam]) {
+                    regNos[targetActiveExam] = priorityRegNo;
+                  }
+
                   return {
                     ...data,
                     id: docSnap.id,
                     gender: determinedGender,
                     examRegisterNumbers: regNos,
                     examRegisterNos: regNos,
-                    examRegNo: data.examRegNo || (data as any).regNo || Object.values(regNos)[0] || '',
-                    regNo: (data as any).regNo || data.examRegNo || Object.values(regNos)[0] || '',
+                    examRegNo: priorityRegNo,
+                    regNo: priorityRegNo,
+                    isRegNoLocked: Boolean(data.isRegNoLocked || priorityRegNo),
                   } as Student;
                 })
                 .filter(
@@ -755,9 +771,17 @@ export class FirestoreSyncService {
   ): Promise<void> {
     if (isFirestoreQuotaExhausted()) return;
     try {
+      const examRegNumbersMap: Record<string, string> = {};
+
       for (const [sId, regNo] of Object.entries(registerNumbers)) {
         const targetStudent = students.find(s => s.id === sId || s.admissionNo === sId);
         const regVal = String(regNo || '').trim();
+        if (regVal) {
+          examRegNumbersMap[sId] = regVal;
+          if (targetStudent?.admissionNo) {
+            examRegNumbersMap[targetStudent.admissionNo] = regVal;
+          }
+        }
         const candidateStudent = {
           ...(targetStudent || {}),
           examRegNo: regVal,
@@ -771,6 +795,7 @@ export class FirestoreSyncService {
           examRegNo: regVal,
           regNo: regVal,
           gender: determinedGender,
+          isRegNoLocked: true,
           examRegisterNumbers: {
             [examId]: regVal,
           },
@@ -795,8 +820,180 @@ export class FirestoreSyncService {
           }
         }
       }
+
+      // Also update active examination document and settings with registerNumbers map
+      if (Object.keys(examRegNumbersMap).length > 0) {
+        const examFields: Record<string, any> = {};
+        Object.entries(examRegNumbersMap).forEach(([k, v]) => {
+          examFields[`registerNumbers.${k}`] = v;
+          examFields[`studentRegNos.${k}`] = v;
+        });
+        await Promise.allSettled([
+          setDoc(doc(db, 'examinations', examId), cleanForFirestore(examFields), { merge: true }),
+          setDoc(doc(db, 'exams', examId), cleanForFirestore(examFields), { merge: true }),
+          setDoc(doc(db, 'settings', 'institution'), cleanForFirestore(examFields), { merge: true }),
+          setDoc(doc(db, 'settings', 'profile'), cleanForFirestore(examFields), { merge: true }),
+        ]);
+      }
+
+      // Synchronize localStorage cache immediately
+      if (typeof window !== 'undefined' && window.localStorage) {
+        try {
+          const raw = localStorage.getItem('madrasa_db_storage_v2');
+          if (raw) {
+            const dbObj = JSON.parse(raw);
+            if (dbObj && Array.isArray(dbObj.students)) {
+              dbObj.students.forEach((st: any) => {
+                const matchedVal = examRegNumbersMap[st.id] || (st.admissionNo ? examRegNumbersMap[st.admissionNo] : undefined);
+                if (matchedVal) {
+                  st.examRegNo = matchedVal;
+                  st.regNo = matchedVal;
+                  st.isRegNoLocked = true;
+                  if (!st.examRegisterNos) st.examRegisterNos = {};
+                  if (!st.examRegisterNumbers) st.examRegisterNumbers = {};
+                  st.examRegisterNos[examId] = matchedVal;
+                  st.examRegisterNumbers[examId] = matchedVal;
+                }
+              });
+            }
+            if (dbObj && Array.isArray(dbObj.examinations)) {
+              const ex = dbObj.examinations.find((e: any) => e.id === examId);
+              if (ex) {
+                if (!ex.registerNumbers) ex.registerNumbers = {};
+                Object.assign(ex.registerNumbers, examRegNumbersMap);
+              }
+            }
+            localStorage.setItem('madrasa_db_storage_v2', JSON.stringify(dbObj));
+          }
+        } catch (lsErr) {
+          console.warn('localStorage update error in updateExamRegisterNumbers:', lsErr);
+        }
+      }
     } catch (e) {
       this.handleWriteError(e, OperationType.WRITE, 'students/examRegisterNumbers');
+    }
+  }
+
+  /**
+   * Persists a student's Exam Register Number across all storage locations on edit:
+   * 1. Firestore `students/{studentId}` and `students/{admissionNo}`:
+   *    - examRegNo: cleanRegNo
+   *    - regNo: cleanRegNo
+   *    - examRegisterNos: { ...(existing.examRegisterNos || {}), [activeExamId]: cleanRegNo }
+   *    - isRegNoLocked: true
+   * 2. Firestore `examinations/{activeExamId}` and `exams/{activeExamId}`:
+   *    - registerNumbers[studentId] = cleanRegNo, registerNumbers[admissionNo] = cleanRegNo
+   *    - studentRegNos[studentId] = cleanRegNo, studentRegNos[admissionNo] = cleanRegNo
+   * 3. Firestore `settings/institution` and `settings/profile`:
+   *    - registerNumbers[studentId] = cleanRegNo
+   * 4. Immediate localStorage cache ('madrasa_db_storage_v2')
+   */
+  public async persistStudentExamRegisterNumber(
+    studentId: string,
+    admissionNo: string,
+    activeExamId: string,
+    cleanRegNo: string,
+    additionalStudentData: Record<string, any> = {}
+  ): Promise<void> {
+    const regVal = String(cleanRegNo || '').trim();
+    const targetExamKey = activeExamId || 'exam_half_yearly_2026_27';
+
+    // 1. Prepare student document payload
+    const studentPayload = cleanForFirestore({
+      ...additionalStudentData,
+      id: studentId,
+      admissionNo: admissionNo || studentId,
+      examRegNo: regVal,
+      regNo: regVal,
+      isRegNoLocked: true,
+      examRegisterNos: {
+        ...(additionalStudentData.examRegisterNos || {}),
+        [targetExamKey]: regVal,
+      },
+      examRegisterNumbers: {
+        ...(additionalStudentData.examRegisterNumbers || {}),
+        [targetExamKey]: regVal,
+      },
+      [`examRegisterNos.${targetExamKey}`]: regVal,
+      [`examRegisterNumbers.${targetExamKey}`]: regVal,
+      updatedAt: new Date().toISOString(),
+    });
+
+    if (!isFirestoreQuotaExhausted()) {
+      try {
+        const targetIds = new Set<string>();
+        if (studentId) targetIds.add(studentId);
+        if (admissionNo) targetIds.add(admissionNo);
+
+        if (admissionNo) {
+          try {
+            const qSnap = await getDocs(query(collection(db, 'students'), where('admissionNo', '==', admissionNo)));
+            qSnap.docs.forEach(d => targetIds.add(d.id));
+          } catch {}
+        }
+
+        // Update student documents
+        for (const docId of targetIds) {
+          if (docId) {
+            await setDoc(doc(db, 'students', docId), studentPayload, { merge: true });
+          }
+        }
+
+        // 2. Update active examination document & settings
+        const examFields: Record<string, any> = {
+          [`registerNumbers.${studentId}`]: regVal,
+          [`studentRegNos.${studentId}`]: regVal,
+          updatedAt: new Date().toISOString(),
+        };
+        if (admissionNo && admissionNo !== studentId) {
+          examFields[`registerNumbers.${admissionNo}`] = regVal;
+          examFields[`studentRegNos.${admissionNo}`] = regVal;
+        }
+
+        await Promise.allSettled([
+          setDoc(doc(db, 'examinations', targetExamKey), cleanForFirestore(examFields), { merge: true }),
+          setDoc(doc(db, 'exams', targetExamKey), cleanForFirestore(examFields), { merge: true }),
+          setDoc(doc(db, 'settings', 'institution'), cleanForFirestore(examFields), { merge: true }),
+          setDoc(doc(db, 'settings', 'profile'), cleanForFirestore(examFields), { merge: true }),
+        ]);
+      } catch (err) {
+        console.warn('[persistStudentExamRegisterNumber] Firestore persistence warning:', err);
+      }
+    }
+
+    // 3. Update localStorage cache immediately
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const raw = localStorage.getItem('madrasa_db_storage_v2');
+        if (raw) {
+          const dbObj = JSON.parse(raw);
+          if (dbObj && Array.isArray(dbObj.students)) {
+            dbObj.students.forEach((st: any) => {
+              if (st.id === studentId || (admissionNo && st.admissionNo === admissionNo)) {
+                Object.assign(st, additionalStudentData);
+                st.examRegNo = regVal;
+                st.regNo = regVal;
+                st.isRegNoLocked = true;
+                if (!st.examRegisterNos) st.examRegisterNos = {};
+                if (!st.examRegisterNumbers) st.examRegisterNumbers = {};
+                st.examRegisterNos[targetExamKey] = regVal;
+                st.examRegisterNumbers[targetExamKey] = regVal;
+              }
+            });
+          }
+          if (dbObj && Array.isArray(dbObj.examinations)) {
+            const ex = dbObj.examinations.find((e: any) => e.id === targetExamKey);
+            if (ex) {
+              if (!ex.registerNumbers) ex.registerNumbers = {};
+              ex.registerNumbers[studentId] = regVal;
+              if (admissionNo) ex.registerNumbers[admissionNo] = regVal;
+            }
+          }
+          localStorage.setItem('madrasa_db_storage_v2', JSON.stringify(dbObj));
+        }
+      } catch (lsErr) {
+        console.warn('localStorage update error in persistStudentExamRegisterNumber:', lsErr);
+      }
     }
   }
 
