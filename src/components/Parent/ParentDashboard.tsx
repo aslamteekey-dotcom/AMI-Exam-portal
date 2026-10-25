@@ -16,6 +16,7 @@ import {
   InstitutionHoliday,
   SpecialWorkingDay,
   isClassMatch,
+  isClassResultsPublished,
 } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
 import { StudyMaterialsView } from './StudyMaterialsView';
@@ -217,11 +218,9 @@ export const ParentDashboard: React.FC = () => {
         });
       }
       if (examsData.length > 0) {
-        // Prefer published/approved exam first, otherwise first exam
+        // Prefer published exam for active student first, otherwise first exam
         const publishedExam =
-          examsData.find(
-            e => e.isPublished || e.status === 'published' || e.status === 'approved' || e.status === 'completed'
-          ) || examsData[0];
+          examsData.find(e => isClassResultsPublished(e, sortedKids[0]?.classId)) || examsData[0];
         setSelectedExamId(prev => (prev && examsData.some(e => String(e.id) === String(prev)) ? prev : publishedExam.id));
       }
     } catch (err) {
@@ -528,15 +527,11 @@ export const ParentDashboard: React.FC = () => {
         settings: finalSettings,
       });
 
-      // Flexible publication status:
-      // Status is published, approved, or completed, or isPublished is true
+      // Strict class-wise publication check:
+      const targetChildClassId = activeChild?.classId || finalReport.student?.classId;
+      const targetExam = finalReport.examination || examinations.find(e => e.id === examId);
       const isPublished = Boolean(
-        data.isPublished ||
-        finalReport.isPublished ||
-        finalReport.examination?.isPublished ||
-        finalReport.examination?.status === 'published' ||
-        finalReport.examination?.status === 'approved' ||
-        finalReport.examination?.status === 'completed'
+        data.isPublished && isClassResultsPublished(targetExam, targetChildClassId)
       );
       setIsUnpublished(!isPublished);
     } catch (err: any) {
@@ -632,12 +627,10 @@ export const ParentDashboard: React.FC = () => {
   // Keep resultExamId in sync with examinations or selectedExamId
   useEffect(() => {
     if (examinations.length > 0 && !resultExamId) {
-      const published = examinations.find(
-        e => e.isPublished || e.status === 'published' || e.status === 'approved' || e.status === 'completed'
-      );
+      const published = examinations.find(e => isClassResultsPublished(e, activeChild?.classId));
       setResultExamId(published ? published.id : examinations[0].id);
     }
-  }, [examinations, resultExamId]);
+  }, [examinations, resultExamId, activeChild?.classId]);
 
   // Reset verification when active child profile switches
   useEffect(() => {
@@ -701,18 +694,13 @@ export const ParentDashboard: React.FC = () => {
       return;
     }
 
-    // Verify that the selected examination has status === 'published' (or isPublished: true)
+    // Verify that the selected examination has been explicitly published for this specific class
     const targetExam = examinations.find(ex => ex.id === targetExamId);
-    const isExamPublished = Boolean(
-      targetExam?.isPublished ||
-      targetExam?.status === 'published' ||
-      targetExam?.status === 'approved' ||
-      targetExam?.status === 'completed'
-    );
+    const isClassExamPublished = isClassResultsPublished(targetExam, targetChild.classId);
 
     setSelectedExamId(targetExamId);
 
-    if (!isExamPublished) {
+    if (!isClassExamPublished) {
       setIsExamNotPublishedNotice(true);
       setIsResultVerified(false);
       return;
@@ -735,27 +723,14 @@ export const ParentDashboard: React.FC = () => {
   const selectedExam = examinations.find(e => e.id === selectedExamId);
 
   const activeReport = reportData?.report;
-  const isExamPublished = Boolean(
-    selectedExam?.isPublished ||
-    selectedExam?.status === 'published' ||
-    selectedExam?.status === 'approved' ||
-    selectedExam?.status === 'completed' ||
-    activeReport?.isPublished ||
-    activeReport?.examination?.isPublished ||
-    activeReport?.examination?.status === 'published' ||
-    activeReport?.examination?.status === 'approved' ||
-    activeReport?.examination?.status === 'completed'
+  // Strict publication guard: Only true if examination is explicitly published for this child's class
+  const isExamPublished = isClassResultsPublished(
+    selectedExam || activeReport?.examination,
+    activeChild?.classId
   );
 
-  const hasMarks = Boolean(
-    activeReport &&
-    (activeReport.subjects?.some(s => s.obtainedMarks !== null && s.obtainedMarks !== undefined) ||
-     (activeReport.totalObtainedMarks !== undefined && activeReport.totalObtainedMarks > 0) ||
-     (activeReport.percentage !== null && activeReport.percentage !== undefined && Number(activeReport.percentage) > 0))
-  );
-
-  // As long as published status matches OR published marks exist for this student, render immediately
-  const shouldShowReport = Boolean(activeReport && (isExamPublished || hasMarks));
+  // The A4 Progress Report is ONLY accessible if the examination for that specific class has been explicitly flagged as "Published"
+  const shouldShowReport = Boolean(activeReport && isExamPublished && !isUnpublished);
 
   return (
     <div className="space-y-6">
@@ -1944,11 +1919,14 @@ export const ParentDashboard: React.FC = () => {
                         }}
                         className="w-full text-xs font-semibold px-3 py-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none cursor-pointer"
                       >
-                        {examinations.map(e => (
-                          <option key={e.id} value={e.id}>
-                            {isMl ? e.nameMl : e.nameEn} {e.isPublished ? '✓' : '(Not Published)'}
-                          </option>
-                        ))}
+                        {examinations.map(e => {
+                          const pub = isClassResultsPublished(e, activeChild?.classId);
+                          return (
+                            <option key={e.id} value={e.id}>
+                              {isMl ? e.nameMl : e.nameEn} {pub ? '✓ (Published)' : '(Not Published)'}
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
 
@@ -2043,7 +2021,19 @@ export const ParentDashboard: React.FC = () => {
 
               {/* Render Full A4 Progress Report Card below form once verified */}
               {isResultVerified && (
-                fetchingReport ? (
+                !isExamPublished || isUnpublished ? (
+                  <div className="bg-white rounded-2xl border border-amber-200 p-8 text-center shadow-xs space-y-3">
+                    <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto">
+                      <AlertCircle className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-amber-950 text-base">Results Pending Publication</h4>
+                      <p className="mt-1 text-xs text-amber-800 max-w-md mx-auto">
+                        Results for this examination have not been published yet.
+                      </p>
+                    </div>
+                  </div>
+                ) : fetchingReport ? (
                   <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs">
                     <Loader2 className="w-8 h-8 animate-spin text-emerald-800 mx-auto mb-3" />
                     <h3 className="text-sm font-bold text-slate-800">

@@ -26,6 +26,7 @@ import {
   isClassMatch,
   AttendanceEditRequest,
   DEFAULT_ADMIN_PERMISSIONS,
+  isClassResultsPublished,
 } from '../types';
 import { firestoreSync } from './firestoreSync';
 import { isFirestoreQuotaExhausted, QUOTA_STATUS_EVENT } from './firebase';
@@ -3542,6 +3543,121 @@ export class ClientStorageApi {
         return this.jsonResponse({ success: true, exam });
       }
 
+      // Class-wise lock endpoint (Principal locks all approved marks for a specific class)
+      const classLockMatch = path.match(/^\/api\/examinations\/([^/]+)\/classes\/([^/]+)\/lock$/);
+      if (classLockMatch && method === 'POST') {
+        const [, eId, cId] = classLockMatch;
+        const exam = this.db.examinations.find(e => e.id === eId);
+        if (!exam) return this.jsonResponse({ error: 'Exam not found' }, 404);
+
+        if (!exam.lockedClasses) exam.lockedClasses = [];
+        if (!exam.lockedClasses.includes(cId)) {
+          exam.lockedClasses.push(cId);
+        }
+
+        const now = new Date().toISOString();
+        const affectedSheets = this.db.markSheets.filter(
+          s => s.examinationId === eId && s.classId === cId
+        );
+        affectedSheets.forEach(sheet => {
+          sheet.status = 'locked';
+          sheet.lockedAt = now;
+        });
+
+        this.saveDB();
+
+        firestoreSync.syncExam(exam).catch(() => {});
+        for (const sheet of affectedSheets) {
+          firestoreSync.syncMarkSheet(sheet).catch(() => {});
+        }
+
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_exams_updated', { detail: this.db.examinations }));
+          window.dispatchEvent(new CustomEvent('madrasa_marks_updated'));
+        }
+
+        return this.jsonResponse({ success: true, exam, lockedCount: affectedSheets.length });
+      }
+
+      // Class-wise unlock endpoint (Principal unlocks a class for corrections)
+      const classUnlockMatch = path.match(/^\/api\/examinations\/([^/]+)\/classes\/([^/]+)\/unlock$/);
+      if (classUnlockMatch && method === 'POST') {
+        const [, eId, cId] = classUnlockMatch;
+        const exam = this.db.examinations.find(e => e.id === eId);
+        if (!exam) return this.jsonResponse({ error: 'Exam not found' }, 404);
+
+        if (exam.lockedClasses) {
+          exam.lockedClasses = exam.lockedClasses.filter(id => id !== cId);
+        }
+
+        const affectedSheets = this.db.markSheets.filter(
+          s => s.examinationId === eId && s.classId === cId
+        );
+        affectedSheets.forEach(sheet => {
+          sheet.status = 'approved';
+        });
+
+        this.saveDB();
+
+        firestoreSync.syncExam(exam).catch(() => {});
+        for (const sheet of affectedSheets) {
+          firestoreSync.syncMarkSheet(sheet).catch(() => {});
+        }
+
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_exams_updated', { detail: this.db.examinations }));
+          window.dispatchEvent(new CustomEvent('madrasa_marks_updated'));
+        }
+
+        return this.jsonResponse({ success: true, exam });
+      }
+
+      // Class-wise publish endpoint (Principal publishes or hides results for a specific class)
+      const classPublishMatch = path.match(/^\/api\/examinations\/([^/]+)\/classes\/([^/]+)\/publish$/);
+      if (classPublishMatch && method === 'POST') {
+        const [, eId, cId] = classPublishMatch;
+        const exam = this.db.examinations.find(e => e.id === eId);
+        if (!exam) return this.jsonResponse({ error: 'Exam not found' }, 404);
+
+        const shouldPublish = bodyData?.isPublished !== undefined ? Boolean(bodyData.isPublished) : true;
+        if (!exam.publishedClasses) exam.publishedClasses = [];
+        if (!exam.classPublishStatus) exam.classPublishStatus = {};
+
+        if (shouldPublish) {
+          if (!exam.publishedClasses.includes(cId)) {
+            exam.publishedClasses.push(cId);
+          }
+          exam.classPublishStatus[cId] = true;
+        } else {
+          exam.publishedClasses = exam.publishedClasses.filter(id => id !== cId);
+          exam.classPublishStatus[cId] = false;
+        }
+
+        const allParticipating = exam.classesParticipating || this.db.classes.map(c => c.id);
+        const allPublished = allParticipating.length > 0 && allParticipating.every(id => exam.publishedClasses?.includes(id));
+        if (allPublished) {
+          exam.isPublished = true;
+          exam.status = 'published';
+          exam.publishedAt = exam.publishedAt || new Date().toISOString();
+        } else if (exam.publishedClasses.length > 0) {
+          exam.isPublished = true;
+        } else {
+          exam.isPublished = false;
+          exam.status = 'draft';
+        }
+
+        this.saveDB();
+
+        firestoreSync.syncExam(exam).catch(() => {});
+
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_exams_updated', { detail: this.db.examinations }));
+          window.dispatchEvent(new CustomEvent('madrasa_marks_updated'));
+        }
+
+        return this.jsonResponse({ success: true, exam, isPublished: shouldPublish });
+      }
+
       // 7. Mark Sheets
       if (path === '/api/mark-sheets' && method === 'GET') {
         const examId = params.get('examinationId');
@@ -3582,12 +3698,22 @@ export class ClientStorageApi {
         const students = sortStudentsBoysFirst(this.db.students.filter(s => s.classId === classId && s.status === 'active'));
         const components = this.getComponentsForClass(sub, cls.numericGrade);
 
+        const asg = this.db.teacherAssignments.find(
+          a => (a.classId === classId || (cls && a.classId === cls.id)) && a.subjectId === subjectId
+        );
+        if (asg && !sheet.assignedTeacherId) {
+          sheet.assignedTeacherId = asg.teacherId;
+        }
+        const assignedTeacher = asg ? this.db.users.find(u => u.id === asg.teacherId) : null;
+
         return this.jsonResponse({
           markSheet: sheet,
           students,
           subject: sub,
           classItem: cls,
           components,
+          assignedTeacherId: asg?.teacherId || sheet.assignedTeacherId || '',
+          assignedTeacherName: assignedTeacher?.name || '',
         });
       }
 
@@ -3625,7 +3751,13 @@ export class ClientStorageApi {
           }
         });
         sheet.studentMarks = processedMarks;
-        sheet.status = 'draft';
+        if (bodyData?.keepStatus && sheet.status) {
+          // preserve existing status (e.g. submitted or approved)
+        } else if (bodyData?.status) {
+          sheet.status = bodyData.status;
+        } else {
+          sheet.status = 'draft';
+        }
         sheet.lastUpdated = new Date().toISOString();
         this.saveDB();
 
@@ -3648,7 +3780,18 @@ export class ClientStorageApi {
         } else if (action === 'approve') {
           sheet.status = 'approved';
           sheet.verifiedAt = new Date().toISOString();
-          sheet.verifiedBy = this.getCurrentUser()?.name || 'Admin';
+          sheet.verifiedBy = this.getCurrentUser()?.name || 'Class Teacher';
+          if (bodyData?.studentMarks) {
+            const processedMarks = { ...(bodyData.studentMarks || {}) };
+            Object.keys(processedMarks).forEach(k => {
+              const entry = processedMarks[k];
+              if (entry && !entry.isAbsent && entry.componentMarks) {
+                const sum = Object.values(entry.componentMarks).reduce((s: number, v: any) => s + (Number(v) || 0), 0);
+                entry.subjectTotal = sum;
+              }
+            });
+            sheet.studentMarks = processedMarks;
+          }
         } else if (action === 'lock') {
           sheet.status = 'locked';
           sheet.lockedAt = new Date().toISOString();
@@ -3711,12 +3854,7 @@ export class ClientStorageApi {
         const report = this.generateStudentProgressReport(resolvedStudentId, eId);
         if (!report) return this.jsonResponse({ error: 'Report could not be generated' }, 404);
         const exam = this.db.examinations.find(e => e.id === eId);
-        const isExamPublished = Boolean(
-          exam?.isPublished ||
-          exam?.status === 'published' ||
-          exam?.status === 'approved' ||
-          exam?.status === 'completed'
-        );
+        const isExamPublished = isClassResultsPublished(exam, student?.classId);
         return this.jsonResponse({
           report,
           settings: this.db.settings,

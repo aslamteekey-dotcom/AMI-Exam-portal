@@ -246,8 +246,8 @@ export const TeacherDashboard: React.FC = () => {
     examinationId: string;
   } | null>(null);
 
-  // Mark Entry Sub-tab Segment: 'my_class' (Class In-charge) vs 'other_class' (All other classes)
-  const [markEntrySegment, setMarkEntrySegment] = useState<'my_class' | 'other_class'>('my_class');
+  // Mark Entry Sub-tab Segment: 'my_class' (Class In-charge) vs 'teaching_subjects' (All assigned subjects)
+  const [markEntrySegment, setMarkEntrySegment] = useState<'my_class' | 'teaching_subjects'>('my_class');
 
   // View mode switcher in "My Class": 'students' (Students List) vs 'marksheet' (Class Marksheet)
   const [myClassViewMode, setMyClassViewMode] = useState<'students' | 'marksheet'>('students');
@@ -2334,7 +2334,7 @@ export const TeacherDashboard: React.FC = () => {
     studentDaysAttendedMap,
   ]);
 
-  // Mark Entry Segregation: "My Class" (In-charge) vs "Other Class"
+  // Mark Entry Segregation: "My Class" (In-charge) vs "Teaching Subjects" (Consolidated all classes including own class)
   const myClassAssignments = assignments.filter(a => {
     if (!inChargeClass) return false;
     const cls = classes.find(c => c.id === a.classId);
@@ -2345,15 +2345,21 @@ export const TeacherDashboard: React.FC = () => {
     );
   });
 
-  const otherClassAssignments = assignments.filter(a => {
-    if (!inChargeClass) return true;
-    const cls = classes.find(c => c.id === a.classId);
-    const isMyClass =
-      a.classId === inChargeClass.id ||
-      (inChargeClassId && a.classId === inChargeClassId) ||
-      (cls && cls.numericGrade === inChargeClass.numericGrade);
-    return !isMyClass;
-  });
+  // Consolidated Teaching Subjects across all classes (including own designated class)
+  const teachingSubjects = useMemo(() => {
+    const seen = new Set<string>();
+    const list: TeacherAssignment[] = [];
+    for (const a of assignments) {
+      const key = `${a.classId}_${a.subjectId}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        list.push(a);
+      }
+    }
+    return list;
+  }, [assignments]);
+
+  const otherClassAssignments = teachingSubjects; // backwards-compatible alias
 
   // Effective fee class
   const activeFeeClass = classes.find(c => c.id === feeClassId) || inChargeClass || classes[0];
@@ -3532,7 +3538,7 @@ export const TeacherDashboard: React.FC = () => {
               </p>
             </div>
 
-            {/* Segment Toggle: My Class vs Other Class */}
+            {/* Segment Toggle: My Class vs Teaching Subjects */}
             <div className="flex items-center gap-1.5 p-1 bg-slate-100/90 border border-slate-200/80 rounded-xl self-start sm:self-auto shadow-2xs">
               <button
                 type="button"
@@ -3558,23 +3564,23 @@ export const TeacherDashboard: React.FC = () => {
 
               <button
                 type="button"
-                onClick={() => setMarkEntrySegment('other_class')}
+                onClick={() => setMarkEntrySegment('teaching_subjects')}
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  markEntrySegment === 'other_class'
+                  markEntrySegment === 'teaching_subjects'
                     ? 'bg-emerald-800 text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
-                <span>Other Classes</span>
+                <span>Teaching Subjects</span>
                 <span
                   className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
-                    markEntrySegment === 'other_class'
+                    markEntrySegment === 'teaching_subjects'
                       ? 'bg-emerald-950/60 text-emerald-200'
                       : 'bg-slate-200 text-slate-700'
                   }`}
                 >
-                  {otherClassAssignments.length}
+                  {teachingSubjects.length}
                 </span>
               </button>
             </div>
@@ -3595,15 +3601,15 @@ export const TeacherDashboard: React.FC = () => {
                 <Shield className="w-10 h-10 mx-auto text-slate-400" />
                 <h3 className="font-bold text-slate-800 text-sm">No Class In-Charge Designated</h3>
                 <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  You are currently not designated as the Class In-charge for any class. Please switch to the "Other Classes" segment to view and enter marks for your assigned subjects.
+                  You are currently not designated as the Class In-charge for any class. Please switch to the "Teaching Subjects" segment to view and enter marks for your assigned subjects.
                 </p>
                 <button
                   type="button"
-                  onClick={() => setMarkEntrySegment('other_class')}
+                  onClick={() => setMarkEntrySegment('teaching_subjects')}
                   className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs"
                 >
                   <Layers className="w-3.5 h-3.5" />
-                  <span>Switch to Other Classes ({otherClassAssignments.length})</span>
+                  <span>Switch to Teaching Subjects ({teachingSubjects.length})</span>
                 </button>
               </div>
             ) : (
@@ -3647,6 +3653,10 @@ export const TeacherDashboard: React.FC = () => {
 
                       const status = ms?.status || 'not_started';
 
+                      const isMyAssignedSubject = assignments.some(
+                        a => a.classId === inChargeClass.id && a.subjectId === sub.id
+                      );
+
                       return (
                         <div
                           key={sub.id}
@@ -3660,31 +3670,38 @@ export const TeacherDashboard: React.FC = () => {
 
                               {status === 'not_started' && (
                                 <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                                  {t.not_started}
+                                  {isMyAssignedSubject ? t.not_started : 'Not Started'}
                                 </span>
                               )}
                               {status === 'draft' && (
-                                <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                                  <Clock className="w-3 h-3" />
-                                  {t.draft}
-                                </span>
+                                isMyAssignedSubject ? (
+                                  <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                    <Clock className="w-3 h-3" />
+                                    {t.draft}
+                                  </span>
+                                ) : (
+                                  <span className="text-[11px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                    <Clock className="w-3 h-3 text-slate-500" />
+                                    Waiting for Submission
+                                  </span>
+                                )
                               )}
                               {status === 'submitted' && (
-                                <span className="text-[11px] font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                                  <Clock className="w-3 h-3" />
-                                  Awaiting Approval
+                                <span className="text-[11px] font-bold text-blue-900 bg-blue-100/90 border border-blue-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <Clock className="w-3 h-3 text-blue-700" />
+                                  Awaiting Your Approval
                                 </span>
                               )}
                               {status === 'approved' && (
-                                <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                                  <CheckCircle className="w-3 h-3" />
-                                  {t.approved}
+                                <span className="text-[11px] font-bold text-emerald-900 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <CheckCircle className="w-3 h-3 text-emerald-700" />
+                                  Approved — Awaiting Principal's Lock
                                 </span>
                               )}
                               {status === 'locked' && (
-                                <span className="text-[11px] font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                                  <Lock className="w-3 h-3" />
-                                  {t.locked}
+                                <span className="text-[11px] font-bold text-purple-900 bg-purple-100 border border-purple-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <Lock className="w-3 h-3 text-purple-700" />
+                                  Locked by Principal
                                 </span>
                               )}
                               {status === 'returned_for_correction' && (
@@ -3725,12 +3742,20 @@ export const TeacherDashboard: React.FC = () => {
                                   examinationId: selectedExamId,
                                 })
                               }
-                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs cursor-pointer"
+                              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer ${
+                                status === 'submitted'
+                                  ? 'bg-blue-800 hover:bg-blue-900 text-white'
+                                  : 'bg-emerald-800 hover:bg-emerald-900 text-white'
+                              }`}
                             >
                               <Edit3 className="w-3.5 h-3.5" />
-                              {status === 'submitted' || status === 'approved' || status === 'locked'
+                              {status === 'submitted'
+                                ? 'Direct Edit & Approve'
+                                : status === 'approved' || status === 'locked'
                                 ? 'View Sheet'
-                                : t.navEnterMarks}
+                                : isMyAssignedSubject
+                                ? t.navEnterMarks
+                                : 'View Sheet'}
                             </button>
                           </div>
                         </div>
@@ -3741,31 +3766,31 @@ export const TeacherDashboard: React.FC = () => {
               </div>
             )
           ) : (
-            /* Other Teaching Classes Segment */
+            /* Teaching Subjects Segment */
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
                 <div>
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                     <Layers className="w-4 h-4 text-emerald-800" />
-                    <span>Other Teaching Classes ({otherClassAssignments.length})</span>
+                    <span>Teaching Subjects ({teachingSubjects.length})</span>
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Assigned teaching subjects across other classes under {selectedExam?.nameEn || 'Active Exam'}.
+                    Assigned teaching subjects across all classes under the current examination.
                   </p>
                 </div>
               </div>
 
-              {otherClassAssignments.length === 0 ? (
+              {teachingSubjects.length === 0 ? (
                 <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 space-y-2">
                   <Layers className="w-10 h-10 mx-auto text-slate-400 mb-2" />
-                  <h3 className="font-bold text-slate-800 text-sm">No Subjects in Other Classes</h3>
+                  <h3 className="font-bold text-slate-800 text-sm">No Teaching Subjects Assigned</h3>
                   <p className="text-xs text-slate-500 max-w-md mx-auto">
-                    All of your assigned subjects belong to your in-charge class.
+                    The administrator has not assigned you any teaching subjects yet.
                   </p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {otherClassAssignments.map(a => {
+                  {teachingSubjects.map(a => {
                     const cls = classes.find(c => c.id === a.classId);
                     const sub = subjects.find(s => s.id === a.subjectId);
                     const ms = markSheets.find(
@@ -3778,6 +3803,9 @@ export const TeacherDashboard: React.FC = () => {
                         : sub?.nameMl || sub?.nameEn || '—';
 
                     const status = ms?.status || 'not_started';
+                    const isMyClassInCharge = Boolean(
+                      inChargeClass && (inChargeClass.id === a.classId || (cls && cls.numericGrade === inChargeClass.numericGrade))
+                    );
 
                     return (
                       <div
@@ -3804,19 +3832,19 @@ export const TeacherDashboard: React.FC = () => {
                             {status === 'submitted' && (
                               <span className="text-[11px] font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full flex items-center gap-1">
                                 <Clock className="w-3 h-3" />
-                                Awaiting Approval
+                                {isMyClassInCharge ? 'Awaiting Your Approval' : 'Awaiting Class Teacher Approval'}
                               </span>
                             )}
                             {status === 'approved' && (
                               <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
                                 <CheckCircle className="w-3 h-3" />
-                                {t.approved}
+                                Approved — Awaiting Principal's Lock
                               </span>
                             )}
                             {status === 'locked' && (
                               <span className="text-[11px] font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full flex items-center gap-1">
                                 <Lock className="w-3 h-3" />
-                                {t.locked}
+                                Locked by Principal
                               </span>
                             )}
                             {status === 'returned_for_correction' && (
@@ -3827,7 +3855,7 @@ export const TeacherDashboard: React.FC = () => {
                             )}
                           </div>
 
-                          <h3 className="font-bold text-slate-900 text-base mb-1">
+                          <h3 className="font-bold text-slate-900 text-base mb-1 font-ml">
                             {subDisplayName}
                           </h3>
                           <p className="text-xs text-slate-500">
@@ -3857,7 +3885,9 @@ export const TeacherDashboard: React.FC = () => {
                             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs cursor-pointer"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
-                            {status === 'submitted' || status === 'approved' || status === 'locked'
+                            {status === 'submitted' && isMyClassInCharge
+                              ? 'Direct Edit & Approve'
+                              : status === 'submitted' || status === 'approved' || status === 'locked'
                               ? 'View Sheet'
                               : t.navEnterMarks}
                           </button>

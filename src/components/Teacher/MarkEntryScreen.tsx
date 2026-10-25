@@ -15,6 +15,7 @@ import {
   StudentMarkEntry,
   sortStudentsBoysFirst,
   determineStudentGender,
+  isClassMatch,
 } from '../../types';
 import {
   Save,
@@ -46,6 +47,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
   const [components, setComponents] = useState<SubjectAssessmentRule[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [markSheet, setMarkSheet] = useState<MarkSheet | null>(null);
+  const [assignedTeacherId, setAssignedTeacherId] = useState<string>('');
 
   // Local state for mark entries
   const [marks, setMarks] = useState<Record<string, { isAbsent: boolean; componentMarks: Record<string, string>; remarks: string }>>({});
@@ -82,6 +84,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
       }));
       setStudents(sortedStudents);
       setMarkSheet(data.markSheet);
+      setAssignedTeacherId(data.assignedTeacherId || data.markSheet?.assignedTeacherId || '');
 
       // Initialize marks state
       const initialMarks: Record<string, { isAbsent: boolean; componentMarks: Record<string, string>; remarks: string }> = {};
@@ -273,10 +276,52 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
     return hasAny ? total : '—';
   };
 
+  const isClassTeacher = Boolean(
+    user &&
+    user.role === 'teacher' &&
+    (user.inChargeClassId === classId ||
+      (user.inChargeClassId && isClassMatch([user.inChargeClassId], classId)) ||
+      (cls && user.inChargeClassId && isClassMatch([user.inChargeClassId], cls.name)) ||
+      (cls && String(cls.numericGrade) === String(user.inChargeClassId)))
+  );
+
+  const userAssignments = Array.isArray(user?.assignments)
+    ? user.assignments
+    : Array.isArray((user as any)?.assignedSubjects)
+    ? (user as any).assignedSubjects
+    : [];
+
+  const isAssignedViaUserAssignments = userAssignments.some(
+    (a: any) =>
+      (a.classId === classId || (cls && isClassMatch([a.classId], classId))) &&
+      (a.subjectId === subjectId || (subject && a.subjectId === subject.id))
+  );
+
+  const isSubjectTeacher = Boolean(
+    user &&
+    user.role === 'teacher' &&
+    (isAssignedViaUserAssignments ||
+      (assignedTeacherId && assignedTeacherId === user.id) ||
+      (markSheet?.assignedTeacherId && markSheet.assignedTeacherId === user.id))
+  );
+
+  // 3-Tier Status Permissions:
+  // 1. 'locked': strictly read-only for all teachers (Principal lock)
+  // 2. 'approved': read-only for all teachers (awaiting Principal's lock)
+  // 3. 'submitted': editable for Class Teacher; read-only for Subject Teacher
+  // 4. 'draft': editable for Subject Teacher. If user is only Class Teacher (and not Subject Teacher), it is read-only (waiting for Subject Teacher submission)
+  const isLocked = markSheet?.status === 'locked';
+  const isApproved = markSheet?.status === 'approved';
+  const isSubmitted = markSheet?.status === 'submitted';
+  const isDraft = !isLocked && !isApproved && !isSubmitted;
+
   const isReadOnly =
-    markSheet?.status === 'submitted' ||
-    markSheet?.status === 'approved' ||
-    markSheet?.status === 'locked';
+    isLocked ||
+    isApproved ||
+    (isSubmitted && !isClassTeacher) ||
+    (isDraft && isClassTeacher && !isSubjectTeacher);
+
+  const [isApproving, setIsApproving] = useState(false);
 
   const handleSaveDraft = async () => {
     setIsSaving(true);
@@ -319,6 +364,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
           classId,
           subjectId,
           studentMarks: studentMarksPayload,
+          keepStatus: isClassTeacher && isSubmitted, // keep 'submitted' status if Class Teacher edits before approving
         }),
       });
 
@@ -350,23 +396,84 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
         }).catch(e => console.warn('Audit log error:', e));
       }
       setTimeout(() => setSaveSuccess(false), 3000);
+      return data.markSheet;
     } catch (err: any) {
       setErrorMsg(err.message);
+      return null;
     } finally {
       setIsSaving(false);
     }
   };
 
+  const handleApprove = async () => {
+    const confirmApprove = window.confirm(
+      `Approve marks for Class ${cls?.name || classId} - ${subject?.nameEn || subjectId}? This will change the status to "Approved — Awaiting Principal's Lock".`
+    );
+    if (!confirmApprove) return;
+
+    setIsApproving(true);
+    try {
+      // 1. First save latest modifications
+      const savedSheet = await handleSaveDraft();
+      const targetSheetId = savedSheet?.id || markSheet?.id;
+      if (!targetSheetId) {
+        throw new Error('Unable to resolve mark sheet ID for approval.');
+      }
+
+      // 2. Direct persistent Firestore write
+      try {
+        await setDoc(
+          doc(db, 'marks', targetSheetId),
+          cleanForFirestore({
+            status: 'approved',
+            verifiedAt: new Date().toISOString(),
+            verifiedBy: user?.name || 'Class Teacher',
+          }),
+          { merge: true }
+        );
+      } catch (firestoreErr: any) {
+        console.warn('Firestore approve mark sheet warning:', firestoreErr);
+      }
+
+      // 3. API approve call
+      const res = await fetchWithAuth(`/api/mark-sheets/${targetSheetId}/approve`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to approve mark sheet');
+      }
+
+      const data = await res.json();
+      setMarkSheet(data.markSheet);
+
+      logAuditEvent({
+        action: 'MARKS_APPROVED',
+        details: `Class Teacher ${user?.name || 'Class Teacher'} approved marks for Class ${cls?.name || classId} - ${subject?.nameEn || subjectId} (${exam?.nameEn || examinationId}).`,
+        currentUser: user,
+        recordType: 'marks',
+        recordId: targetSheetId,
+      }).catch(e => console.warn('Audit log error:', e));
+
+      alert('Marks successfully approved! Status is now: "Approved — Awaiting Principal\'s Lock".');
+    } catch (err: any) {
+      alert(err.message || 'Failed to approve marks');
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
   const handleSubmit = async () => {
     // First save latest draft
-    await handleSaveDraft();
-    if (!markSheet?.id) return;
+    const saved = await handleSaveDraft();
+    const targetId = saved?.id || markSheet?.id;
+    if (!targetId) return;
 
     try {
       // Direct persistent Firestore write
       try {
         await setDoc(
-          doc(db, 'marks', markSheet.id),
+          doc(db, 'marks', targetId),
           cleanForFirestore({
             status: 'submitted',
             submittedAt: new Date().toISOString(),
@@ -377,7 +484,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
         console.warn('Firestore mark submit write warning:', firestoreErr);
       }
 
-      const res = await fetchWithAuth(`/api/mark-sheets/${markSheet.id}/submit`, {
+      const res = await fetchWithAuth(`/api/mark-sheets/${targetId}/submit`, {
         method: 'POST',
       });
       if (!res.ok) {
@@ -390,13 +497,13 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
 
       logAuditEvent({
         action: 'MARKS_SUBMITTED',
-        details: `Teacher ${user?.name || 'Teacher'} submitted mark sheet for Class ${cls?.name || classId} - ${subject?.nameEn || subjectId} (${exam?.nameEn || examinationId}).`,
+        details: `Subject Teacher ${user?.name || 'Teacher'} submitted mark sheet for Class ${cls?.name || classId} - ${subject?.nameEn || subjectId} (${exam?.nameEn || examinationId}).`,
         currentUser: user,
         recordType: 'marks',
-        recordId: markSheet.id,
+        recordId: targetId,
       }).catch(e => console.warn('Audit log error:', e));
 
-      alert('Mark sheet successfully submitted to the Principal for verification!');
+      alert('Mark sheet successfully submitted to the Class Teacher for review & approval!');
     } catch (err: any) {
       alert(err.message);
     }
@@ -500,7 +607,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
           {/* Status Badges */}
           <div className="flex items-center gap-3">
             {markSheet?.status === 'returned_for_correction' && (
-              <div className="text-xs bg-amber-50 text-amber-800 border border-amber-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+              <div className="text-xs bg-amber-50 text-amber-800 border border-amber-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
                 <AlertCircle className="w-4 h-4 text-amber-600" />
                 <span>
                   Returned: <strong className="font-semibold">{markSheet.returnedReason}</strong>
@@ -508,58 +615,136 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
               </div>
             )}
 
-            {markSheet?.status === 'submitted' && (
-              <div className="text-xs bg-blue-50 text-blue-800 border border-blue-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
-                <Clock className="w-4 h-4 text-blue-600" />
-                <span>Submitted — Awaiting Principal's Verification</span>
+            {isDraft && isClassTeacher && !isSubjectTeacher && (
+              <div className="text-xs bg-slate-100 text-slate-700 border border-slate-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-medium">
+                <Clock className="w-4 h-4 text-slate-500 shrink-0" />
+                <span>Draft — Waiting for Subject Teacher to Submit</span>
               </div>
             )}
 
-            {markSheet?.status === 'approved' && (
-              <div className="text-xs bg-emerald-50 text-emerald-800 border border-emerald-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
-                <CheckCircle className="w-4 h-4 text-emerald-600" />
-                <span>Verified & Approved</span>
+            {isDraft && isSubjectTeacher && (
+              <div className="text-xs bg-amber-50 text-amber-800 border border-amber-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-medium">
+                <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>Draft / In Progress</span>
               </div>
             )}
 
-            {markSheet?.status === 'locked' && (
-              <div className="text-xs bg-purple-50 text-purple-800 border border-purple-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
-                <Lock className="w-4 h-4 text-purple-600" />
-                <span>Locked by Principal</span>
+            {isSubmitted && (
+              <div className="text-xs bg-blue-50 text-blue-900 border border-blue-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-medium">
+                <Clock className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>
+                  {isClassTeacher
+                    ? 'Submitted by Subject Teacher — Class Teacher Direct Edit & Approve Active'
+                    : 'Submitted — Awaiting Class Teacher Approval'}
+                </span>
+              </div>
+            )}
+
+            {isApproved && (
+              <div className="text-xs bg-emerald-50 text-emerald-900 border border-emerald-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-bold">
+                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>Approved — Awaiting Principal's Lock</span>
+              </div>
+            )}
+
+            {isLocked && (
+              <div className="text-xs bg-purple-50 text-purple-900 border border-purple-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-bold">
+                <Lock className="w-4 h-4 text-purple-600 shrink-0" />
+                <span>Locked by Principal (Strictly Read-Only)</span>
               </div>
             )}
           </div>
         </div>
 
-        {/* Action Buttons Row */}
-        {!isReadOnly && (
-          <div className="grid grid-cols-3 gap-2 w-full my-3">
-            <button
-              onClick={handleSaveDraft}
-              disabled={isSaving}
-              className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 rounded-xl transition shadow-2xs disabled:opacity-50"
-            >
-              <Save className="w-4 h-4 shrink-0" />
-              <span>{isSaving ? 'Saving...' : 'Save'}</span>
-            </button>
+        {/* Action Buttons Row - Equal Height Responsive 3-Column Grid */}
+        <div className="grid grid-cols-3 gap-2 w-full my-3">
+          {/* Button 1: Save Draft / Save Changes */}
+          <button
+            type="button"
+            onClick={handleSaveDraft}
+            disabled={isReadOnly || isSaving}
+            className={`h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap rounded-xl transition ${
+              isReadOnly
+                ? 'border border-gray-200 text-gray-400 bg-gray-50 cursor-not-allowed'
+                : 'border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 shadow-2xs cursor-pointer disabled:opacity-50'
+            }`}
+          >
+            <Save className="w-4 h-4 shrink-0" />
+            <span>{isSaving ? 'Saving...' : isClassTeacher && isSubmitted ? 'Save Changes' : 'Save Draft'}</span>
+          </button>
 
-            <button
-              onClick={() => setShowPreviewModal(true)}
-              className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap border border-emerald-300 text-emerald-800 bg-emerald-50/50 hover:bg-emerald-100 rounded-xl transition shadow-2xs"
-            >
-              <Eye className="w-4 h-4 shrink-0" />
-              <span>Preview</span>
-            </button>
+          {/* Button 2: Preview */}
+          <button
+            type="button"
+            onClick={() => setShowPreviewModal(true)}
+            className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap border border-emerald-300 text-emerald-800 bg-emerald-50/50 hover:bg-emerald-100 rounded-xl transition shadow-2xs cursor-pointer"
+          >
+            <Eye className="w-4 h-4 shrink-0" />
+            <span>Preview</span>
+          </button>
 
+          {/* Button 3: Dynamic Action (Submit / Approve / Waiting / Approved / Locked) */}
+          {isLocked ? (
             <button
-              onClick={() => setShowSubmitModal(true)}
-              className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap bg-emerald-800 text-white shadow-sm hover:bg-emerald-900 rounded-xl transition"
+              type="button"
+              disabled
+              className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-bold whitespace-nowrap bg-purple-100 text-purple-800 border border-purple-300 rounded-xl transition cursor-not-allowed shadow-2xs"
             >
-              <Send className="w-4 h-4 shrink-0" />
-              <span>Submit</span>
+              <Lock className="w-4 h-4 shrink-0 text-purple-600" />
+              <span>🔒 Locked</span>
             </button>
-          </div>
-        )}
+          ) : isApproved ? (
+            <button
+              type="button"
+              disabled
+              className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-bold whitespace-nowrap bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl transition cursor-not-allowed shadow-2xs"
+            >
+              <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600" />
+              <span>✓ Approved</span>
+            </button>
+          ) : isSubmitted ? (
+            isClassTeacher ? (
+              <button
+                type="button"
+                onClick={handleApprove}
+                disabled={isApproving}
+                className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-bold whitespace-nowrap bg-emerald-800 text-white shadow-sm hover:bg-emerald-900 rounded-xl transition disabled:opacity-60 cursor-pointer"
+              >
+                <CheckCircle className="w-4 h-4 shrink-0" />
+                <span>{isApproving ? 'Approving...' : '✓ Approve'}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled
+                className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap bg-blue-100 text-blue-800 border border-blue-300 rounded-xl transition cursor-not-allowed shadow-2xs"
+              >
+                <Clock className="w-4 h-4 shrink-0 text-blue-600" />
+                <span>⏳ Awaiting Approval</span>
+              </button>
+            )
+          ) : (
+            /* Draft / Not Started state */
+            isSubjectTeacher ? (
+              <button
+                type="button"
+                onClick={() => setShowSubmitModal(true)}
+                className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap bg-emerald-800 text-white shadow-sm hover:bg-emerald-900 rounded-xl transition cursor-pointer"
+              >
+                <Send className="w-4 h-4 shrink-0" />
+                <span>Submit</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled
+                className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap bg-gray-100 text-gray-500 border border-gray-300 rounded-xl transition cursor-not-allowed shadow-2xs"
+              >
+                <span>⏳ Waiting for Submission</span>
+              </button>
+            )
+          )}
+        </div>
       </div>
 
       {saveSuccess && (
@@ -743,10 +928,10 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
             <h3 className="text-lg font-bold text-slate-900 mb-2">
-              Submit Marks to Principal?
+              Submit Marks to Class Teacher?
             </h3>
             <p className="text-xs text-slate-600 mb-4 leading-relaxed">
-              Once submitted, marks for this subject will become <strong>read-only</strong> while the Principal verifies them. Any absent students will be noted accordingly.
+              Once submitted, marks for this subject will be sent to the <strong>Class Teacher</strong> for review, direct editing, and approval. It will become read-only for you until approved or returned.
             </p>
 
             <div className="flex justify-end gap-3">

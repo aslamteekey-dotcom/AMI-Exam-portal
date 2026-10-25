@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Examination, AcademicYear, ClassItem } from '../../types';
+import { Examination, AcademicYear, ClassItem, isClassResultsPublished } from '../../types';
 import { db, handleFirestoreError, OperationType, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { collection, doc, setDoc, deleteDoc } from 'firebase/firestore';
@@ -17,6 +17,8 @@ import {
   Trash2,
   X,
   Hash,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import { ExamRegisterModal } from './ExamRegisterModal';
 import { logAuditEvent } from '../../services/auditLogger';
@@ -329,6 +331,53 @@ export const ExamManagement: React.FC = () => {
       }
     } catch (err) {
       alert('Failed to revoke publication');
+    }
+  };
+
+  const handleLockClass = async (classId: string) => {
+    if (!selectedExamId || !classId) return;
+    try {
+      const res = await fetchWithAuth(`/api/examinations/${selectedExamId}/classes/${classId}/lock`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        await loadData();
+        alert('All marks for this class locked.');
+      }
+    } catch (e: any) {
+      alert(e.message || 'Failed to lock class');
+    }
+  };
+
+  const handleUnlockClass = async (classId: string) => {
+    if (!selectedExamId || !classId) return;
+    try {
+      const res = await fetchWithAuth(`/api/examinations/${selectedExamId}/classes/${classId}/unlock`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        await loadData();
+        alert('Class marks unlocked (reverted to approved).');
+      }
+    } catch (e: any) {
+      alert(e.message || 'Failed to unlock class');
+    }
+  };
+
+  const handleTogglePublishClass = async (classId: string, currentPublished: boolean) => {
+    if (!selectedExamId || !classId) return;
+    try {
+      const res = await fetchWithAuth(`/api/examinations/${selectedExamId}/classes/${classId}/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isPublished: !currentPublished }),
+      });
+      if (res.ok) {
+        await loadData();
+        alert(currentPublished ? 'Class results unpublished.' : 'Class results published to parents.');
+      }
+    } catch (e: any) {
+      alert(e.message || 'Failed to change class publish state');
     }
   };
 
@@ -760,6 +809,127 @@ export const ExamManagement: React.FC = () => {
                 <Hash className="w-3.5 h-3.5" />
                 Assign / Edit Register Nos
               </button>
+            </div>
+          </div>
+
+          {/* Class-Wise Decoupled Lock & Publish Table */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                  Class-Wise Mark Locking &amp; Independent Result Publication
+                </h4>
+                <p className="text-[11px] text-slate-500">
+                  Decoupled control: Lock marks to finalize evaluations, and separately publish results to make them visible to parents.
+                </p>
+              </div>
+            </div>
+
+            <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-slate-100 font-bold text-slate-700 border-b">
+                  <tr>
+                    <th className="p-3">Class</th>
+                    <th className="p-3 text-center">Marks Status</th>
+                    <th className="p-3 text-center">Action 1: Lock Marks</th>
+                    <th className="p-3 text-center">Action 2: Publish to Parents</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {classes
+                    .filter(c => participatingClassIds.includes(c.id))
+                    .map(cls => {
+                      const classSheets = examSheets.filter(s => s.classId === cls.id);
+                      const approvedCount = classSheets.filter(s => s.status === 'approved').length;
+                      const lockedCount = classSheets.filter(s => s.status === 'locked').length;
+                      const submittedCount = classSheets.filter(s => s.status === 'submitted').length;
+                      const isClassLocked =
+                        (selectedExam?.lockedClasses && selectedExam.lockedClasses.includes(cls.id)) ||
+                        (classSheets.length > 0 && lockedCount === classSheets.length);
+                      const isClassPublished = isClassResultsPublished(selectedExam, cls.id);
+
+                      return (
+                        <tr key={cls.id} className="hover:bg-slate-50 transition">
+                          <td className="p-3">
+                            <span className="font-bold text-slate-900 block">{cls.name}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {classSheets.length} Subject Slots
+                            </span>
+                          </td>
+                          <td className="p-3 text-center">
+                            <div className="flex items-center justify-center gap-1.5 font-mono text-[11px]">
+                              {submittedCount > 0 && (
+                                <span className="bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded-md font-semibold">
+                                  {submittedCount} Subm
+                                </span>
+                              )}
+                              {approvedCount > 0 && (
+                                <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md font-semibold">
+                                  {approvedCount} Appr
+                                </span>
+                              )}
+                              {lockedCount > 0 && (
+                                <span className="bg-purple-50 text-purple-800 border border-purple-200 px-2 py-0.5 rounded-md font-semibold">
+                                  {lockedCount} Locked
+                                </span>
+                              )}
+                              {submittedCount === 0 && approvedCount === 0 && lockedCount === 0 && (
+                                <span className="text-slate-400 text-xs">No marks submitted</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">
+                            {isClassLocked ? (
+                              <button
+                                type="button"
+                                onClick={() => handleUnlockClass(cls.id)}
+                                className="inline-flex items-center gap-1 px-3 py-1 text-xs font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-lg transition cursor-pointer"
+                                title="Unlock marks to allow teacher corrections"
+                              >
+                                <Unlock className="w-3 h-3 text-amber-700" />
+                                <span>Unlock Class</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleLockClass(cls.id)}
+                                disabled={approvedCount === 0 && lockedCount === 0}
+                                className="inline-flex items-center gap-1 px-3 py-1 text-xs font-bold text-white bg-purple-800 hover:bg-purple-900 rounded-lg transition cursor-pointer disabled:opacity-40"
+                                title="Lock all marks for this class"
+                              >
+                                <Lock className="w-3 h-3" />
+                                <span>Lock Class Marks</span>
+                              </button>
+                            )}
+                          </td>
+                          <td className="p-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleTogglePublishClass(cls.id, isClassPublished)}
+                              className={`inline-flex items-center gap-1 px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
+                                isClassPublished
+                                  ? 'bg-emerald-100 text-emerald-950 border border-emerald-300 hover:bg-emerald-200'
+                                  : 'bg-slate-100 text-slate-700 border border-slate-300 hover:bg-emerald-50 hover:text-emerald-900 hover:border-emerald-300'
+                              }`}
+                            >
+                              {isClassPublished ? (
+                                <>
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
+                                  <span>Published to Parents</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Globe className="w-3.5 h-3.5 text-slate-500" />
+                                  <span>Publish Class</span>
+                                </>
+                              )}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
             </div>
           </div>
 

@@ -90,6 +90,37 @@ export interface Examination {
   status: 'draft' | 'ongoing' | 'evaluating' | 'ready_to_publish' | 'published' | 'approved' | 'completed' | (string & {});
   classesParticipating?: string[];
   passMarkPercentage: number;
+  publishedClasses?: string[];
+  lockedClasses?: string[];
+  classPublishStatus?: Record<string, boolean>;
+}
+
+/**
+ * Checks whether examination results for a specific class have been explicitly published.
+ * Distinct from locking: marks can be locked by Principal, but results are only visible
+ * to parents if explicitly published for that class or overall examination.
+ */
+export function isClassResultsPublished(
+  exam: Examination | null | undefined,
+  classId: string | null | undefined
+): boolean {
+  if (!exam) return false;
+  if (classId) {
+    if (exam.publishedClasses && Array.isArray(exam.publishedClasses)) {
+      if (exam.publishedClasses.includes(classId)) return true;
+    }
+    if (exam.classPublishStatus && typeof exam.classPublishStatus === 'object') {
+      if (exam.classPublishStatus[classId] === true) return true;
+      if (exam.classPublishStatus[classId] === false) return false;
+    }
+  }
+  // If exam has isPublished: true or status is published, and no specific class restrictions
+  if (exam.isPublished === true || exam.status === 'published') {
+    if (!exam.publishedClasses || exam.publishedClasses.length === 0 || (classId && exam.publishedClasses.includes(classId))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export interface Student {
