@@ -1559,31 +1559,40 @@ export const ParentDashboard: React.FC = () => {
                 const effectiveTotalWorking = Math.max(totalWorkingDays, totalBenchmark - totalHolidaysCount);
 
                 let remainingAttended = attendedDays;
-                const monthlyRecords = baseMonths.map((m, idx) => {
+                const monthlyRecords = baseMonths.map(m => {
                   const monthHolidays = Object.keys(allHolidaysMap).filter(k => k.startsWith(m.key));
                   const mHolidaysCount = monthHolidays.length;
-                  const mActualWorking = Math.max(1, m.working - mHolidaysCount);
 
                   const monthDateKeys = Object.keys(records).filter(k => k.startsWith(m.key));
-                  const nonHolidayDates = monthDateKeys.filter(k => !allHolidaysMap[k]);
-                  let mAttended: number;
+                  const nonHolidayDates = monthDateKeys.filter(k => {
+                    const rec = records[k];
+                    if (!rec) return false;
+                    if (rec.isHoliday === true || (rec as any).status === 'holiday' || (rec as any).status === 'OFF') return false;
+                    if (allHolidaysMap[k]) return false;
+                    const d = new Date(k + 'T00:00:00');
+                    if (d.getDay() === 0 && !specialWorkingDays[k]) return false;
+                    const hasMarks =
+                      (rec.statusMap && Object.keys(rec.statusMap).length > 0) ||
+                      (rec.presentStudentIds && rec.presentStudentIds.length > 0) ||
+                      (rec.absentStudentIds && rec.absentStudentIds.length > 0) ||
+                      Boolean(rec.markedAt);
+                    return hasMarks;
+                  });
 
-                  if (nonHolidayDates.length > 0) {
-                    mAttended = nonHolidayDates.filter(k => records[k]?.statusMap?.[selectedChild?.id || ''] !== false).length;
-                    const unrecorded = Math.max(0, mActualWorking - nonHolidayDates.length);
-                    const estRemainder = Math.min(unrecorded, Math.round(remainingAttended * (mActualWorking / effectiveTotalWorking)));
-                    mAttended = Math.min(mActualWorking, mAttended + estRemainder);
-                  } else {
-                    if (idx === baseMonths.length - 1) {
-                      mAttended = Math.min(mActualWorking, Math.max(0, remainingAttended));
-                    } else {
-                      mAttended = Math.min(mActualWorking, Math.round((attendedDays * mActualWorking) / effectiveTotalWorking));
-                      remainingAttended = Math.max(0, remainingAttended - mAttended);
-                    }
-                  }
+                  const mActualWorking = nonHolidayDates.length;
+                  const mAttended = nonHolidayDates.filter(k => {
+                    const rec = records[k];
+                    const chId = selectedChild?.id || '';
+                    return Boolean(
+                      rec?.statusMap?.[chId] === true ||
+                      (rec?.statusMap?.[chId] as any) === 'Present' ||
+                      (rec?.statusMap?.[chId] as any) === 'P' ||
+                      (rec?.presentStudentIds && rec.presentStudentIds.includes(chId))
+                    );
+                  }).length;
 
                   const mLeaves = Math.max(0, mActualWorking - mAttended);
-                  const mPct = mActualWorking > 0 ? ((mAttended / mActualWorking) * 100).toFixed(2) + '%' : '100.00%';
+                  const mPct = mActualWorking > 0 ? ((mAttended / mActualWorking) * 100).toFixed(1) + '%' : '0.0%';
                   return {
                     month: m.month,
                     working: mActualWorking,

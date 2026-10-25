@@ -46,6 +46,8 @@ import {
   deleteDoc,
   addDoc,
   updateDoc,
+  query,
+  where,
 } from 'firebase/firestore';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { logAuditEvent } from '../../services/auditLogger';
@@ -823,8 +825,8 @@ export const TeacherDashboard: React.FC = () => {
                 createdAt: data.createdAt || data.requestedAt,
                 requestedAt: data.requestedAt || data.createdAt,
               };
-              if (item.date && !next[item.date]) next[item.date] = item;
-              if (item.classId && item.date && !next[`${item.classId}_${item.date}`]) {
+              if (item.date) next[item.date] = item;
+              if (item.classId && item.date) {
                 next[`${item.classId}_${item.date}`] = item;
               }
             });
@@ -1033,11 +1035,19 @@ export const TeacherDashboard: React.FC = () => {
 
   // Check if a date is locked (already saved to Firestore and not explicitly unlocked by Principal)
   const isDateLocked = (dateStr: string): boolean => {
-    if (isDateHoliday(dateStr)) return true;
+    if (isDateHoliday(dateStr, attendanceClassId)) return true;
     if (dateStr > todayStr) return true;
+    if (unlockedDates[dateStr] === true) return false;
+
+    // Check if Principal approved the unlock request in real time (and not re-locked in local state)
+    const req = getRequestForDate(dateStr, attendanceClassId);
+    if (req?.status === 'approved' && unlockedDates[dateStr] !== false) {
+      return false; // Principal unlocked this date for corrections
+    }
+
     const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
     if (!rec) return false;
-    if ((rec.isHoliday || (rec as any).status === 'holiday') && !isDateHoliday(dateStr)) {
+    if ((rec.isHoliday || (rec as any).status === 'holiday') && !isDateHoliday(dateStr, attendanceClassId)) {
       return false;
     }
     const hasStudentMarks =
@@ -1046,13 +1056,16 @@ export const TeacherDashboard: React.FC = () => {
       (rec.statusMap && Object.keys(rec.statusMap).length > 0);
     if (!hasStudentMarks) return false;
 
-    // Check if Principal approved the unlock request in real time
-    const req = getRequestForDate(dateStr, attendanceClassId);
-    if (req?.status === 'approved') {
-      return false; // Principal unlocked this date for corrections
+    // If explicitly marked as locked in lockedDays and request is not approved
+    if (classAttendanceConfig?.lockedDays?.[dateStr] === true && req?.status !== 'approved') {
+      return true;
     }
+
     // If approved and unlocked by Principal in Firestore or locally marked editable
-    if (rec.isLocked === false || rec.unlocked === true || rec.editable === true || unlockedDates[dateStr]) {
+    if ((rec.isLocked === false || rec.unlocked === true || rec.editable === true) && unlockedDates[dateStr] !== false && req?.status === 'approved') {
+      return false;
+    }
+    if (rec.isLocked === false && !rec.markedAt) {
       return false;
     }
     return true;
@@ -1110,7 +1123,34 @@ export const TeacherDashboard: React.FC = () => {
   useEffect(() => {
     if (!attendanceClassId) return;
 
-    const currentRecords = rawCfg?.dailyRecords || {};
+    const currentRecords: Record<string, DailyAttendanceRecord> = { ...(rawCfg?.dailyRecords || {}) };
+
+    // Consolidate any standalone daily attendance documents for this class from allAttendanceConfigs
+    allAttendanceConfigs.forEach(item => {
+      const itemData = item as any;
+      const isMatch =
+        item.classId === attendanceClassId ||
+        itemData.classId === attendanceClassId ||
+        item.classId?.startsWith(`${attendanceClassId}_`) ||
+        itemData.id?.startsWith(`${attendanceClassId}_`);
+
+      if (isMatch && itemData.date && !currentRecords[itemData.date]) {
+        currentRecords[itemData.date] = {
+          date: itemData.date,
+          presentStudentIds: itemData.presentStudentIds || [],
+          absentStudentIds: itemData.absentStudentIds || [],
+          statusMap: itemData.statusMap || {},
+          markedAt: itemData.markedAt,
+          markedBy: itemData.markedBy,
+          isHoliday: Boolean(itemData.isHoliday),
+          holidayReason: itemData.holidayReason,
+          isLocked: itemData.isLocked,
+          unlocked: itemData.unlocked,
+          editable: itemData.editable,
+        };
+      }
+    });
+
     const cleanedRecords: Record<string, DailyAttendanceRecord> = {};
 
     Object.entries(currentRecords).forEach(([dKey, rec]) => {
@@ -1138,29 +1178,37 @@ export const TeacherDashboard: React.FC = () => {
       }
     });
 
-    const activeHolsForClass = Object.values(institutionHolidays).filter(
-      h => isClassMatch(h.targetClasses, attendanceClassId)
-    ).length;
-    const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
-      sw => isClassMatch(sw.targetClasses, attendanceClassId)
-    ).length;
-    const computedWorking = Math.max(1, 88 - activeHolsForClass + totalSundaysUnlocked);
-    const resolvedWorking = rawCfg?.totalWorkingDays ? Math.max(rawCfg.totalWorkingDays, computedWorking) : computedWorking;
+    // Calculate dynamic working days directly from live initialized/recorded days (excluding holidays & Sundays)
+    const recordedWorkingDates = Object.keys(cleanedRecords).filter(dKey => {
+      const rec = cleanedRecords[dKey];
+      if (!rec) return false;
+      if (rec.isHoliday || isDateHoliday(dKey, attendanceClassId)) return false;
+      if (isDateSunday(dKey) && !isSundayUnlockedForClass(dKey, attendanceClassId)) return false;
+      const hasMarks =
+        (rec.statusMap && Object.keys(rec.statusMap).length > 0) ||
+        (rec.presentStudentIds && rec.presentStudentIds.length > 0) ||
+        (rec.absentStudentIds && rec.absentStudentIds.length > 0) ||
+        Boolean(rec.markedAt);
+      return hasMarks;
+    });
+
+    const dynamicTotalWorking = recordedWorkingDates.length;
 
     const resolvedConfig: ClassAttendanceConfig = {
       classId: attendanceClassId,
-      totalWorkingDays: resolvedWorking,
+      totalWorkingDays: dynamicTotalWorking,
       studentDaysAttended: rawCfg?.studentDaysAttended || {},
       dailyRecords: cleanedRecords,
+      lockedDays: (rawCfg as any)?.lockedDays || {},
       updatedAt: rawCfg?.updatedAt,
     };
 
     setClassAttendanceConfig(resolvedConfig);
-    setAttendanceTotalWorkingDays(resolvedWorking);
+    setAttendanceTotalWorkingDays(dynamicTotalWorking);
     if (rawCfg?.studentDaysAttended) {
       setStudentDaysAttendedMap(rawCfg.studentDaysAttended);
     }
-  }, [attendanceClassId, rawCfg, institutionHolidays, specialWorkingDays]);
+  }, [attendanceClassId, rawCfg, allAttendanceConfigs, institutionHolidays, specialWorkingDays]);
 
   // Dynamically listen to class attendance config from Firestore in real-time when switching classes
   useEffect(() => {
@@ -1318,6 +1366,41 @@ export const TeacherDashboard: React.FC = () => {
       ...prev,
       [dateStr]: false,
     }));
+    setClassAttendanceConfig(prev => {
+      if (!prev || !prev.dailyRecords || !prev.dailyRecords[dateStr]) return prev;
+      return {
+        ...prev,
+        lockedDays: {
+          ...(prev.lockedDays || {}),
+          [dateStr]: true,
+        },
+        dailyRecords: {
+          ...prev.dailyRecords,
+          [dateStr]: {
+            ...prev.dailyRecords[dateStr],
+            isLocked: true,
+            unlocked: false,
+            editable: false,
+          },
+        },
+      };
+    });
+    setAttendanceEditRequests(prev => {
+      const next = { ...prev };
+      Object.keys(next).forEach(k => {
+        const r = next[k];
+        if (r && (r.classId === attendanceClassId || !r.classId)) {
+          const matches =
+            r.date === dateStr ||
+            k.includes(dateStr) ||
+            (r.startDate && r.endDate && dateStr >= r.startDate && dateStr <= r.endDate);
+          if (matches) {
+            next[k] = { ...r, status: 'completed' };
+          }
+        }
+      });
+      return next;
+    });
   };
 
   // Current week vs selected week calculation
@@ -1544,6 +1627,11 @@ export const TeacherDashboard: React.FC = () => {
         else absentStudentIds.push(st.id);
       });
 
+      const updatedLockedDays: Record<string, boolean> = {
+        ...(classAttendanceConfig?.lockedDays || {}),
+        [selectedAttendanceDate]: true,
+      };
+
       const updatedDailyRecords: Record<string, DailyAttendanceRecord> = {
         ...(classAttendanceConfig?.dailyRecords || {}),
         [selectedAttendanceDate]: {
@@ -1557,6 +1645,7 @@ export const TeacherDashboard: React.FC = () => {
           isLocked: true,
           unlocked: false,
           editable: false,
+          relockedAt: new Date().toISOString(),
         },
       };
 
@@ -1565,25 +1654,35 @@ export const TeacherDashboard: React.FC = () => {
       };
 
       const distinctDates = Object.keys(updatedDailyRecords);
-      const holidayDates = distinctDates.filter(
-        dKey => isDateHoliday(dKey, attendanceClassId)
-      );
-      const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
-        sw => isClassMatch(sw.targetClasses, attendanceClassId)
-      ).length;
-      const totalWorking = Math.max(1, 88 - holidayDates.length + totalSundaysUnlocked);
+      const workingDateKeys = distinctDates.filter(dKey => {
+        const rec = updatedDailyRecords[dKey];
+        if (!rec) return false;
+        if (rec.isHoliday || isDateHoliday(dKey, attendanceClassId)) return false;
+        if (isDateSunday(dKey) && !isSundayUnlockedForClass(dKey, attendanceClassId)) return false;
+        const hasMarks =
+          (rec.statusMap && Object.keys(rec.statusMap).length > 0) ||
+          (rec.presentStudentIds && rec.presentStudentIds.length > 0) ||
+          (rec.absentStudentIds && rec.absentStudentIds.length > 0) ||
+          Boolean(rec.markedAt);
+        return hasMarks;
+      });
+      const totalWorking = workingDateKeys.length;
 
       currentStudents.forEach(st => {
         let count = 0;
-        distinctDates.forEach(dKey => {
-          const isHol = isDateHoliday(dKey, attendanceClassId);
-          if (!isHol && updatedDailyRecords[dKey]?.statusMap?.[st.id] !== false) {
+        workingDateKeys.forEach(dKey => {
+          const rec = updatedDailyRecords[dKey];
+          const isPres = Boolean(
+            rec.statusMap?.[st.id] === true ||
+            (rec.statusMap?.[st.id] as any) === 'Present' ||
+            (rec.statusMap?.[st.id] as any) === 'P' ||
+            (rec.presentStudentIds && rec.presentStudentIds.includes(st.id))
+          );
+          if (isPres) {
             count++;
           }
         });
-        const nonHolidayDatesCount = Math.max(1, distinctDates.length - holidayDates.length);
-        const studentDays = Math.min(totalWorking, count + Math.max(0, totalWorking - nonHolidayDatesCount - 2));
-        updatedDaysAttended[st.id] = studentDays;
+        updatedDaysAttended[st.id] = count;
       });
 
       const updatedConfig: ClassAttendanceConfig = {
@@ -1591,16 +1690,36 @@ export const TeacherDashboard: React.FC = () => {
         totalWorkingDays: totalWorking,
         studentDaysAttended: updatedDaysAttended,
         dailyRecords: updatedDailyRecords,
+        lockedDays: updatedLockedDays,
         updatedAt: new Date().toISOString(),
       };
 
+      // 1. Direct Firestore writes to attendance collections
       await setDoc(doc(db, 'attendance', attendanceClassId), cleanForFirestore(updatedConfig), { merge: true });
       await setDoc(doc(db, 'attendance', `${attendanceClassId}_${selectedAttendanceDate}`), cleanForFirestore({
         classId: attendanceClassId,
         ...updatedDailyRecords[selectedAttendanceDate],
         date: selectedAttendanceDate,
+        isLocked: true,
+        unlocked: false,
+        editable: false,
         updatedAt: new Date().toISOString(),
       }), { merge: true }).catch(() => {});
+
+      // 2. Update Month's Locked Status document (attendanceLocks)
+      const monthKey = selectedAttendanceDate.slice(0, 7);
+      try {
+        await setDoc(doc(db, 'attendanceLocks', `${attendanceClassId}_${monthKey}`), cleanForFirestore({
+          classId: attendanceClassId,
+          month: monthKey,
+          lockedDays: {
+            [selectedAttendanceDate]: true,
+          },
+          updatedAt: new Date().toISOString(),
+        }), { merge: true });
+      } catch (lockErr) {
+        console.warn('Month lock document write warning:', lockErr);
+      }
 
       for (const st of currentStudents) {
         try {
@@ -1623,41 +1742,55 @@ export const TeacherDashboard: React.FC = () => {
         body: JSON.stringify(updatedConfig),
       });
 
-      setClassAttendanceConfig(updatedConfig);
-      setStudentDaysAttendedMap(updatedDaysAttended);
-      setAttendanceTotalWorkingDays(totalWorking);
+      // 3. Resolve active unlock requests in Firestore attendanceUnlockRequests
+      const nowIso = new Date().toISOString();
+      try {
+        const reqsSnap = await getDocs(
+          query(
+            collection(db, 'attendanceUnlockRequests'),
+            where('classId', '==', attendanceClassId)
+          )
+        );
+        for (const docSnap of reqsSnap.docs) {
+          const data = docSnap.data() as any;
+          if (data.status === 'approved' || data.status === 'pending') {
+            const matches =
+              data.date === selectedAttendanceDate ||
+              (data.startDate && data.endDate && selectedAttendanceDate >= data.startDate && selectedAttendanceDate <= data.endDate);
+            if (matches) {
+              await updateDoc(doc(db, 'attendanceUnlockRequests', docSnap.id), {
+                status: 'completed',
+                completedAt: nowIso,
+                resolvedAt: nowIso,
+                resolvedBy: user?.name || 'Class Teacher',
+                resolutionNote: 'Corrections submitted and attendance re-locked',
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch (qErr) {
+        console.warn('Error resolving unlock requests in Firestore:', qErr);
+      }
 
-      // Re-lock the date immediately upon save
-      setUnlockedDates(prev => ({ ...prev, [selectedAttendanceDate]: false }));
-
-      // Automatically complete any unlock request for this date in attendanceUnlockRequests
+      // 4. Resolve legacy attendanceEditRequests documents
       const activeReq = getRequestForDate(selectedAttendanceDate, attendanceClassId);
       if (activeReq?.id) {
         try {
-          await updateDoc(doc(db, 'attendanceUnlockRequests', activeReq.id), {
+          await setDoc(doc(db, 'attendanceUnlockRequests', activeReq.id), {
             status: 'completed',
-            completedAt: new Date().toISOString(),
-          });
-        } catch {
-          await setDoc(
-            doc(db, 'attendanceUnlockRequests', activeReq.id),
-            {
-              status: 'completed',
-              completedAt: new Date().toISOString(),
-            },
-            { merge: true }
-          );
-        }
+            completedAt: nowIso,
+            resolvedAt: nowIso,
+          }, { merge: true });
+        } catch {}
       }
 
-      // Backward compatibility update to attendanceEditRequests
       const reqId = `${attendanceClassId}_${selectedAttendanceDate}`;
       try {
         await setDoc(
           doc(db, 'attendanceEditRequests', reqId),
           {
             status: 'resolved',
-            resolvedAt: new Date().toISOString(),
+            resolvedAt: nowIso,
           },
           { merge: true }
         );
@@ -1667,6 +1800,34 @@ export const TeacherDashboard: React.FC = () => {
           body: JSON.stringify({ status: 'resolved' }),
         }).catch(() => {});
       } catch {}
+
+      // 5. Immediate UI State Updates (Re-lock without page refresh)
+      setClassAttendanceConfig(updatedConfig);
+      setStudentDaysAttendedMap(updatedDaysAttended);
+      setAttendanceTotalWorkingDays(totalWorking);
+
+      setUnlockedDates(prev => ({ ...prev, [selectedAttendanceDate]: false }));
+
+      setAttendanceEditRequests(prev => {
+        const next = { ...prev };
+        Object.keys(next).forEach(k => {
+          const r = next[k];
+          if (r && (r.classId === attendanceClassId || !r.classId)) {
+            const matches =
+              r.date === selectedAttendanceDate ||
+              k.includes(selectedAttendanceDate) ||
+              (r.startDate && r.endDate && selectedAttendanceDate >= r.startDate && selectedAttendanceDate <= r.endDate);
+            if (matches) {
+              next[k] = {
+                ...r,
+                status: 'completed',
+                resolvedAt: nowIso,
+              };
+            }
+          }
+        });
+        return next;
+      });
 
       logAuditEvent({
         action: 'ATTENDANCE_MARKED',
@@ -1747,32 +1908,58 @@ export const TeacherDashboard: React.FC = () => {
           statusMap,
           markedAt: new Date().toISOString(),
           markedBy: user?.name || 'Class Teacher',
+          isHoliday: false,
+          isLocked: true,
+          unlocked: false,
+          editable: false,
+          relockedAt: new Date().toISOString(),
         };
+      });
+
+      const savedDates = eligibleDays
+        .filter(wDay => !isDateHoliday(wDay.dateStr, attendanceClassId))
+        .map(wDay => wDay.dateStr);
+
+      const updatedLockedDays: Record<string, boolean> = {
+        ...(classAttendanceConfig?.lockedDays || {}),
+      };
+      savedDates.forEach(dStr => {
+        updatedLockedDays[dStr] = true;
       });
 
       const updatedDaysAttended: Record<string, number> = {
         ...(classAttendanceConfig?.studentDaysAttended || {}),
       };
       const distinctDates = Object.keys(updatedDailyRecords);
-      const holidayDates = distinctDates.filter(
-        dKey => isDateHoliday(dKey, attendanceClassId)
-      );
-      const totalSundaysUnlocked = Object.values(specialWorkingDays).filter(
-        sw => isClassMatch(sw.targetClasses, attendanceClassId)
-      ).length;
-      const totalWorking = Math.max(1, 88 - holidayDates.length + totalSundaysUnlocked);
+      const workingDateKeys = distinctDates.filter(dKey => {
+        const rec = updatedDailyRecords[dKey];
+        if (!rec) return false;
+        if (rec.isHoliday || isDateHoliday(dKey, attendanceClassId)) return false;
+        if (isDateSunday(dKey) && !isSundayUnlockedForClass(dKey, attendanceClassId)) return false;
+        const hasMarks =
+          (rec.statusMap && Object.keys(rec.statusMap).length > 0) ||
+          (rec.presentStudentIds && rec.presentStudentIds.length > 0) ||
+          (rec.absentStudentIds && rec.absentStudentIds.length > 0) ||
+          Boolean(rec.markedAt);
+        return hasMarks;
+      });
+      const totalWorking = workingDateKeys.length;
 
       currentStudents.forEach(st => {
         let count = 0;
-        distinctDates.forEach(dKey => {
-          const isHol = isDateHoliday(dKey, attendanceClassId);
-          if (!isHol && updatedDailyRecords[dKey]?.statusMap?.[st.id] !== false) {
+        workingDateKeys.forEach(dKey => {
+          const rec = updatedDailyRecords[dKey];
+          const isPres = Boolean(
+            rec.statusMap?.[st.id] === true ||
+            (rec.statusMap?.[st.id] as any) === 'Present' ||
+            (rec.statusMap?.[st.id] as any) === 'P' ||
+            (rec.presentStudentIds && rec.presentStudentIds.includes(st.id))
+          );
+          if (isPres) {
             count++;
           }
         });
-        const nonHolidayDatesCount = Math.max(1, distinctDates.length - holidayDates.length);
-        const studentDays = Math.min(totalWorking, count + Math.max(0, totalWorking - nonHolidayDatesCount - 2));
-        updatedDaysAttended[st.id] = studentDays;
+        updatedDaysAttended[st.id] = count;
       });
 
       const updatedConfig: ClassAttendanceConfig = {
@@ -1780,20 +1967,42 @@ export const TeacherDashboard: React.FC = () => {
         totalWorkingDays: totalWorking,
         studentDaysAttended: updatedDaysAttended,
         dailyRecords: updatedDailyRecords,
+        lockedDays: updatedLockedDays,
         updatedAt: new Date().toISOString(),
       };
 
+      // 1. Direct Firestore write to class attendance config
       await setDoc(doc(db, 'attendance', attendanceClassId), cleanForFirestore(updatedConfig), { merge: true });
 
+      // 2. Direct Firestore writes for individual day docs
       for (const w of weekDays) {
         if (w.dateStr <= todayStr && w.dateStr >= ACADEMIC_YEAR_START_DATE && updatedDailyRecords[w.dateStr]) {
           await setDoc(doc(db, 'attendance', `${attendanceClassId}_${w.dateStr}`), cleanForFirestore({
             classId: attendanceClassId,
             ...updatedDailyRecords[w.dateStr],
             date: w.dateStr,
+            isLocked: true,
+            unlocked: false,
+            editable: false,
             updatedAt: new Date().toISOString(),
           }), { merge: true }).catch(() => {});
         }
+      }
+
+      // 3. Update month's locked status documents (attendanceLocks)
+      const monthsSet = new Set(savedDates.map(d => d.slice(0, 7)));
+      for (const mKey of monthsSet) {
+        const monthDates = savedDates.filter(d => d.startsWith(mKey));
+        const monthLocks: Record<string, boolean> = {};
+        monthDates.forEach(d => { monthLocks[d] = true; });
+        try {
+          await setDoc(doc(db, 'attendanceLocks', `${attendanceClassId}_${mKey}`), cleanForFirestore({
+            classId: attendanceClassId,
+            month: mKey,
+            lockedDays: monthLocks,
+            updatedAt: new Date().toISOString(),
+          }), { merge: true });
+        } catch {}
       }
 
       for (const st of currentStudents) {
@@ -1817,6 +2026,54 @@ export const TeacherDashboard: React.FC = () => {
         body: JSON.stringify(updatedConfig),
       });
 
+      // 4. Resolve matching unlock requests in Firestore attendanceUnlockRequests
+      const nowIso = new Date().toISOString();
+      try {
+        const reqsSnap = await getDocs(
+          query(
+            collection(db, 'attendanceUnlockRequests'),
+            where('classId', '==', attendanceClassId)
+          )
+        );
+        for (const docSnap of reqsSnap.docs) {
+          const data = docSnap.data() as any;
+          if (data.status === 'approved' || data.status === 'pending') {
+            const matches = savedDates.some(dStr =>
+              data.date === dStr ||
+              (data.startDate && data.endDate && dStr >= data.startDate && dStr <= data.endDate)
+            );
+            if (matches) {
+              await updateDoc(doc(db, 'attendanceUnlockRequests', docSnap.id), {
+                status: 'completed',
+                completedAt: nowIso,
+                resolvedAt: nowIso,
+                resolvedBy: user?.name || 'Class Teacher',
+                resolutionNote: 'Corrections submitted and attendance re-locked',
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch (qErr) {
+        console.warn('Error resolving weekly unlock requests in Firestore:', qErr);
+      }
+
+      // 5. Resolve legacy attendanceEditRequests
+      for (const dStr of savedDates) {
+        const reqId = `${attendanceClassId}_${dStr}`;
+        try {
+          await setDoc(doc(db, 'attendanceEditRequests', reqId), {
+            status: 'resolved',
+            resolvedAt: nowIso,
+          }, { merge: true });
+          await fetchWithAuth(`/api/attendance-edit-requests/${reqId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'resolved' }),
+          }).catch(() => {});
+        } catch {}
+      }
+
+      // 6. Immediate React UI state update (Immediate restriction without page refresh)
       setClassAttendanceConfig(updatedConfig);
       setStudentDaysAttendedMap(updatedDaysAttended);
       setAttendanceTotalWorkingDays(totalWorking);
@@ -1828,6 +2085,25 @@ export const TeacherDashboard: React.FC = () => {
           copy[w.dateStr] = false;
         });
         return copy;
+      });
+
+      // Immediately resolve local attendanceEditRequests state so isDateLocked reflects locked state right away
+      setAttendanceEditRequests(prev => {
+        const next = { ...prev };
+        Object.keys(next).forEach(k => {
+          const r = next[k];
+          if (r && (r.classId === attendanceClassId || !r.classId)) {
+            const matches = savedDates.some(dStr =>
+              r.date === dStr ||
+              k.includes(dStr) ||
+              (r.startDate && r.endDate && dStr >= r.startDate && dStr <= r.endDate)
+            );
+            if (matches) {
+              next[k] = { ...r, status: 'completed', resolvedAt: nowIso };
+            }
+          }
+        });
+        return next;
       });
 
       setWeeklySaveSuccess(true);
@@ -3932,65 +4208,136 @@ export const TeacherDashboard: React.FC = () => {
 
         const weekDays = getWeekDays(selectedWeekDate);
 
-        const academicMonths = [
-          { key: '2026-06', monthEn: 'June 2026', monthMl: 'ജൂൺ 2026', working: 18 },
-          { key: '2026-07', monthEn: 'July 2026', monthMl: 'ജൂലൈ 2026', working: 22 },
-          { key: '2026-08', monthEn: 'August 2026', monthMl: 'ഓഗസ്റ്റ് 2026', working: 20 },
-          { key: '2026-09', monthEn: 'September 2026', monthMl: 'സെപ്റ്റംബർ 2026', working: 20 },
-          { key: '2026-10', monthEn: 'October 2026', monthMl: 'ഒക്ടോബർ 2026', working: 18 },
+        const liveRecords = classAttendanceConfig?.dailyRecords || {};
+
+        // Base Academic Months (Term 1) and dynamic detection of any other months recorded in Firestore
+        const baseAcademicMonths = [
+          { key: '2026-06', monthEn: 'June 2026', monthMl: 'ജൂൺ 2026' },
+          { key: '2026-07', monthEn: 'July 2026', monthMl: 'ജൂലൈ 2026' },
+          { key: '2026-08', monthEn: 'August 2026', monthMl: 'ഓഗസ്റ്റ് 2026' },
+          { key: '2026-09', monthEn: 'September 2026', monthMl: 'സെപ്റ്റംബർ 2026' },
+          { key: '2026-10', monthEn: 'October 2026', monthMl: 'ഒക്ടോബർ 2026' },
         ];
-        const totalBenchmarkWorking = academicMonths.reduce((sum, m) => sum + m.working, 0); // 98 days
-        const totalEffectiveWorking = Math.max(
-          attendanceTotalWorkingDays || 88,
-          totalBenchmarkWorking
-        );
+
+        // Check if additional months exist in live Firestore dailyRecords
+        const extraMonthKeys = Array.from(new Set(
+          Object.keys(liveRecords)
+            .map(d => d.slice(0, 7))
+            .filter(k => /^\d{4}-\d{2}$/.test(k) && !baseAcademicMonths.some(m => m.key === k))
+        )).sort();
+
+        const extraMonthNameMap: Record<string, { en: string; ml: string }> = {
+          '2026-11': { en: 'November 2026', ml: 'നവംബർ 2026' },
+          '2026-12': { en: 'December 2026', ml: 'ഡിസംബർ 2026' },
+          '2027-01': { en: 'January 2027', ml: 'ജനുവരി 2027' },
+          '2027-02': { en: 'February 2027', ml: 'ഫെബ്രുവരി 2027' },
+          '2027-03': { en: 'March 2027', ml: 'മാർച്ച് 2027' },
+        };
+
+        const allCandidateMonths = [
+          ...baseAcademicMonths,
+          ...extraMonthKeys.map(k => ({
+            key: k,
+            monthEn: extraMonthNameMap[k]?.en || k,
+            monthMl: extraMonthNameMap[k]?.ml || k,
+          })),
+        ];
+
+        // 1. DYNAMIC "WORKING DAYS" CALCULATION (NO HARDCODING):
+        // Calculate the totalWorkingDays dynamically for each month directly from live Firestore attendance document.
+        // A day is counted as a "working day" ONLY IF attendance was actually initialized/marked for that day in Firestore
+        // and it is not explicitly marked as a Holiday or Sunday.
+        const academicMonths = allCandidateMonths.map(m => {
+          const monthWorkingDayKeys = Object.keys(liveRecords).filter(dayKey => {
+            if (!dayKey.startsWith(m.key)) return false;
+            const rec = liveRecords[dayKey];
+            if (!rec) return false;
+
+            // Exclude holidays
+            if (rec.isHoliday === true || (rec as any).status === 'holiday' || (rec as any).status === 'Holiday' || (rec as any).status === 'OFF') {
+              return false;
+            }
+            if (isDateHoliday(dayKey, attendanceClassId)) {
+              return false;
+            }
+
+            // Exclude Sundays unless unlocked as special working day
+            if (isDateSunday(dayKey) && !isSundayUnlockedForClass(dayKey, attendanceClassId)) {
+              return false;
+            }
+
+            // Must have attendance actually initialized / recorded
+            const hasMarks =
+              (rec.statusMap && Object.keys(rec.statusMap).length > 0) ||
+              (rec.presentStudentIds && rec.presentStudentIds.length > 0) ||
+              (rec.absentStudentIds && rec.absentStudentIds.length > 0) ||
+              Boolean(rec.markedAt);
+
+            return hasMarks;
+          });
+
+          return {
+            ...m,
+            workingDays: monthWorkingDayKeys.sort(),
+            working: monthWorkingDayKeys.length, // DYNAMIC COUNT (NO HARDCODING)
+          };
+        });
+
+        // Dynamic sum of all working days across months
+        const totalEffectiveWorking = academicMonths.reduce((sum, m) => sum + m.working, 0);
 
         const dObj = new Date(selectedAttendanceDate);
         const dateFormattedEn = !isNaN(dObj.getTime())
           ? dObj.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
           : selectedAttendanceDate;
 
+        // 2. EXACT "PRESENT" COUNT AGGREGATION & PERCENTAGES:
         const getStudentMonthlyBreakdown = (st: Student) => {
-          const totalAttended = studentDaysAttendedMap[st.id] ?? (st.attendance?.daysAttended ?? Math.max(0, totalEffectiveWorking - ((Number(st.rollNo || 1) * 3) % 4) - 2));
+          let studentTotalAttended = 0;
 
-          const records = classAttendanceConfig?.dailyRecords || {};
-          let remainingAttended = totalAttended;
+          const monthsData = academicMonths.map(m => {
+            let presentCount = 0;
 
-          const monthsData = academicMonths.map((m: { key: string; monthEn: string; monthMl: string; working: number }, idx: number) => {
-            const monthDateKeys = Object.keys(records).filter(k => k.startsWith(m.key));
-            let monthAttended: number;
-            if (monthDateKeys.length > 0) {
-              monthAttended = monthDateKeys.filter(k => records[k]?.statusMap?.[st.id] !== false).length;
-              const unrecordedDays = Math.max(0, m.working - monthDateKeys.length);
-              const estFromRemainder = Math.min(unrecordedDays, Math.round(remainingAttended * (m.working / totalEffectiveWorking)));
-              monthAttended = Math.min(m.working, monthAttended + estFromRemainder);
-            } else {
-              if (idx === academicMonths.length - 1) {
-                monthAttended = Math.min(m.working, Math.max(0, remainingAttended));
-              } else {
-                monthAttended = Math.min(m.working, Math.round((totalAttended * m.working) / totalEffectiveWorking));
-                remainingAttended = Math.max(0, remainingAttended - monthAttended);
+            m.workingDays.forEach(dayKey => {
+              const rec = liveRecords[dayKey];
+              if (!rec) return;
+
+              // Count exactly how many times student is Present in the live Firestore document
+              const isPresent = Boolean(
+                rec.statusMap?.[st.id] === true ||
+                (rec.statusMap?.[st.id] as any) === 'Present' ||
+                (rec.statusMap?.[st.id] as any) === 'P' ||
+                (rec.presentStudentIds && rec.presentStudentIds.includes(st.id))
+              );
+
+              if (isPresent) {
+                presentCount++;
               }
-            }
-            const pct = m.working > 0 ? ((monthAttended / m.working) * 100).toFixed(1) : '100.0';
+            });
+
+            studentTotalAttended += presentCount;
+
+            const percentage = m.working > 0
+              ? ((presentCount / m.working) * 100).toFixed(1)
+              : '0.0';
+
             return {
               key: m.key,
               working: m.working,
-              attended: monthAttended,
-              percentage: pct,
+              attended: presentCount,
+              percentage,
             };
           });
 
-          const totalDaysSum = monthsData.reduce((s: number, m: { attended: number }) => s + m.attended, 0);
-          const overallPct = totalEffectiveWorking > 0
-            ? ((totalDaysSum / totalEffectiveWorking) * 100).toFixed(1)
-            : '100.0';
+          const overallPercentage = totalEffectiveWorking > 0
+            ? ((studentTotalAttended / totalEffectiveWorking) * 100).toFixed(1)
+            : '0.0';
 
           return {
             months: monthsData,
-            totalAttended: totalDaysSum,
+            totalAttended: studentTotalAttended,
             totalWorking: totalEffectiveWorking,
-            overallPercentage: overallPct,
+            overallPercentage,
           };
         };
 
@@ -4095,8 +4442,11 @@ export const TeacherDashboard: React.FC = () => {
               const isDailyHoliday = isDateHoliday(selectedAttendanceDate);
               const dailyHolidayInfo = getHolidayInfo(selectedAttendanceDate);
               const reqForDate = getRequestForDate(selectedAttendanceDate, attendanceClassId);
-              const isApprovedByPrincipal = reqForDate?.status === 'approved' || (dailyRecord && (dailyRecord.isLocked === false || dailyRecord.unlocked === true || dailyRecord.editable === true));
-              const isDailyEditing = isDailyRecorded && (unlockedDates[selectedAttendanceDate] || isApprovedByPrincipal);
+              const isApprovedByPrincipal =
+                reqForDate?.status === 'approved' &&
+                unlockedDates[selectedAttendanceDate] !== false &&
+                classAttendanceConfig?.lockedDays?.[selectedAttendanceDate] !== true;
+              const isDailyEditing = isDailyRecorded && (unlockedDates[selectedAttendanceDate] === true || isApprovedByPrincipal || (dailyRecord && (dailyRecord.isLocked === false || dailyRecord.unlocked === true || dailyRecord.editable === true) && classAttendanceConfig?.lockedDays?.[selectedAttendanceDate] !== true && unlockedDates[selectedAttendanceDate] !== false));
               const isDailyLocked = isDailyRecorded && !isDailyEditing;
 
               return (
@@ -4814,7 +5164,7 @@ export const TeacherDashboard: React.FC = () => {
                             const holInfo = getHolidayInfo(d.dateStr);
                             const isDayRecorded = isDateRecorded(d.dateStr);
                             const isDayLocked = isDateLocked(d.dateStr);
-                            const isDayEditing = isDayRecorded && unlockedDates[d.dateStr];
+                            const isDayEditing = isDayRecorded && !isDayLocked;
 
                             return (
                               <th
@@ -5112,7 +5462,7 @@ export const TeacherDashboard: React.FC = () => {
                       <th className="py-2.5 px-2 font-mono text-center w-20">Adm No</th>
                       {academicMonths.map(m => (
                         <th key={m.key} className="py-2.5 px-3 text-center min-w-[90px]">
-                          <div>{m.monthEn.replace(' 2026', '')}</div>
+                          <div>{m.monthEn.replace(/\s\d{4}$/, '')}</div>
                           <div className="text-[10px] text-slate-400 font-normal">({m.working}d)</div>
                         </th>
                       ))}

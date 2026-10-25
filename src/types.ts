@@ -390,6 +390,7 @@ export interface DailyAttendanceRecord {
   editable?: boolean;
   unlockedAt?: string;
   unlockedBy?: string;
+  relockedAt?: string;
 }
 
 export interface AttendanceUnlockRequest {
@@ -431,6 +432,7 @@ export interface ClassAttendanceConfig {
   monthlyStats?: Record<string, MonthlyAttendanceStat>; // month key -> stat
   updatedAt?: string;
   holidays?: Record<string, { date: string; reason: string }>;
+  lockedDays?: Record<string, boolean>;
 }
 
 /**
