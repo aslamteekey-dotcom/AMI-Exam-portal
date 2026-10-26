@@ -27,6 +27,7 @@ import {
 } from '../../types';
 import { MarkEntryScreen } from './MarkEntryScreen';
 import { useHorizontalScroll, handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
+import { useAttendanceLocks } from '../../hooks/useAttendanceLocks';
 import {
   db,
   handleFirestoreError,
@@ -1004,71 +1005,29 @@ export const TeacherDashboard: React.FC = () => {
     return null;
   };
 
+  // Central Unified Real-Time Attendance Lock State (Single Source of Truth)
+  const attendanceLocks = useAttendanceLocks({
+    classId: attendanceClassId,
+    isDateHoliday,
+    todayStr,
+    academicYearStartDate: ACADEMIC_YEAR_START_DATE,
+    dailyRecords: classAttendanceConfig?.dailyRecords || {},
+    classLockedDays: classAttendanceConfig?.lockedDays || {},
+  });
+
   // Helper to fetch request for date & class
   const getRequestForDate = (dateStr: string, classId?: string): AttendanceEditRequest | undefined => {
-    const targetClass = classId || attendanceClassId;
-    const direct = attendanceEditRequests[`${targetClass}_${dateStr}`] || attendanceEditRequests[dateStr];
-    if (direct) return direct;
-    const allReqs = Object.values(attendanceEditRequests);
-    return allReqs.find(r => {
-      if (r.classId && targetClass && r.classId !== targetClass) return false;
-      if ((r.mode === 'range' || (r.startDate && r.endDate)) && r.startDate && r.endDate) {
-        return dateStr >= r.startDate && dateStr <= r.endDate;
-      }
-      return false;
-    });
+    return attendanceLocks.getRequestForDate(dateStr, classId);
   };
 
-  // Check if attendance has already been saved to Firestore for a given date (excluding empty/stale holiday stubs)
+  // Check if attendance has already been saved to Firestore for a given date
   const isDateRecorded = (dateStr: string): boolean => {
-    const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
-    if (!rec) return false;
-    if ((rec.isHoliday || (rec as any).status === 'holiday') && !isDateHoliday(dateStr)) {
-      return false;
-    }
-    const hasStudentMarks =
-      (rec.presentStudentIds && rec.presentStudentIds.length > 0) ||
-      (rec.absentStudentIds && rec.absentStudentIds.length > 0) ||
-      (rec.statusMap && Object.keys(rec.statusMap).length > 0);
-    return Boolean(hasStudentMarks);
+    return attendanceLocks.isDateRecorded(dateStr);
   };
 
   // Check if a date is locked (already saved to Firestore and not explicitly unlocked by Principal)
   const isDateLocked = (dateStr: string): boolean => {
-    if (isDateHoliday(dateStr, attendanceClassId)) return true;
-    if (dateStr > todayStr) return true;
-    if (unlockedDates[dateStr] === true) return false;
-
-    // Check if Principal approved the unlock request in real time (and not re-locked in local state)
-    const req = getRequestForDate(dateStr, attendanceClassId);
-    if (req?.status === 'approved' && unlockedDates[dateStr] !== false) {
-      return false; // Principal unlocked this date for corrections
-    }
-
-    const rec = classAttendanceConfig?.dailyRecords?.[dateStr];
-    if (!rec) return false;
-    if ((rec.isHoliday || (rec as any).status === 'holiday') && !isDateHoliday(dateStr, attendanceClassId)) {
-      return false;
-    }
-    const hasStudentMarks =
-      (rec.presentStudentIds && rec.presentStudentIds.length > 0) ||
-      (rec.absentStudentIds && rec.absentStudentIds.length > 0) ||
-      (rec.statusMap && Object.keys(rec.statusMap).length > 0);
-    if (!hasStudentMarks) return false;
-
-    // If explicitly marked as locked in lockedDays and request is not approved
-    if (classAttendanceConfig?.lockedDays?.[dateStr] === true && req?.status !== 'approved') {
-      return true;
-    }
-
-    // If approved and unlocked by Principal in Firestore or locally marked editable
-    if ((rec.isLocked === false || rec.unlocked === true || rec.editable === true) && unlockedDates[dateStr] !== false && req?.status === 'approved') {
-      return false;
-    }
-    if (rec.isLocked === false && !rec.markedAt) {
-      return false;
-    }
-    return true;
+    return attendanceLocks.isDateLocked(dateStr);
   };
 
   // Helper to compute days of the week (Monday through Saturday, plus Sunday if unlocked for this class)
@@ -1362,6 +1321,7 @@ export const TeacherDashboard: React.FC = () => {
 
   // Re-lock an unlocked date
   const handleRelockDate = (dateStr: string) => {
+    attendanceLocks.relockDate(dateStr);
     setUnlockedDates(prev => ({
       ...prev,
       [dateStr]: false,
@@ -1742,35 +1702,10 @@ export const TeacherDashboard: React.FC = () => {
         body: JSON.stringify(updatedConfig),
       });
 
-      // 3. Resolve active unlock requests in Firestore attendanceUnlockRequests
       const nowIso = new Date().toISOString();
-      try {
-        const reqsSnap = await getDocs(
-          query(
-            collection(db, 'attendanceUnlockRequests'),
-            where('classId', '==', attendanceClassId)
-          )
-        );
-        for (const docSnap of reqsSnap.docs) {
-          const data = docSnap.data() as any;
-          if (data.status === 'approved' || data.status === 'pending') {
-            const matches =
-              data.date === selectedAttendanceDate ||
-              (data.startDate && data.endDate && selectedAttendanceDate >= data.startDate && selectedAttendanceDate <= data.endDate);
-            if (matches) {
-              await updateDoc(doc(db, 'attendanceUnlockRequests', docSnap.id), {
-                status: 'completed',
-                completedAt: nowIso,
-                resolvedAt: nowIso,
-                resolvedBy: user?.name || 'Class Teacher',
-                resolutionNote: 'Corrections submitted and attendance re-locked',
-              }).catch(() => {});
-            }
-          }
-        }
-      } catch (qErr) {
-        console.warn('Error resolving unlock requests in Firestore:', qErr);
-      }
+
+      // 3. Resolve active unlock requests in Firestore attendanceUnlockRequests
+      await attendanceLocks.resolveUnlockRequests(selectedAttendanceDate, attendanceClassId, user?.name || 'Class Teacher');
 
       // 4. Resolve legacy attendanceEditRequests documents
       const activeReq = getRequestForDate(selectedAttendanceDate, attendanceClassId);
@@ -2026,36 +1961,10 @@ export const TeacherDashboard: React.FC = () => {
         body: JSON.stringify(updatedConfig),
       });
 
-      // 4. Resolve matching unlock requests in Firestore attendanceUnlockRequests
       const nowIso = new Date().toISOString();
-      try {
-        const reqsSnap = await getDocs(
-          query(
-            collection(db, 'attendanceUnlockRequests'),
-            where('classId', '==', attendanceClassId)
-          )
-        );
-        for (const docSnap of reqsSnap.docs) {
-          const data = docSnap.data() as any;
-          if (data.status === 'approved' || data.status === 'pending') {
-            const matches = savedDates.some(dStr =>
-              data.date === dStr ||
-              (data.startDate && data.endDate && dStr >= data.startDate && dStr <= data.endDate)
-            );
-            if (matches) {
-              await updateDoc(doc(db, 'attendanceUnlockRequests', docSnap.id), {
-                status: 'completed',
-                completedAt: nowIso,
-                resolvedAt: nowIso,
-                resolvedBy: user?.name || 'Class Teacher',
-                resolutionNote: 'Corrections submitted and attendance re-locked',
-              }).catch(() => {});
-            }
-          }
-        }
-      } catch (qErr) {
-        console.warn('Error resolving weekly unlock requests in Firestore:', qErr);
-      }
+
+      // 4. Resolve matching unlock requests in Firestore attendanceUnlockRequests
+      await attendanceLocks.resolveUnlockRequests(savedDates, attendanceClassId, user?.name || 'Class Teacher');
 
       // 5. Resolve legacy attendanceEditRequests
       for (const dStr of savedDates) {
@@ -4438,16 +4347,13 @@ export const TeacherDashboard: React.FC = () => {
             {/* VIEW 1: DAILY ATTENDANCE MARKING */}
             {attendanceMode === 'daily' && (() => {
               const dailyRecord = classAttendanceConfig?.dailyRecords?.[selectedAttendanceDate];
-              const isDailyRecorded = isDateRecorded(selectedAttendanceDate);
-              const isDailyHoliday = isDateHoliday(selectedAttendanceDate);
+              const lockStatus = attendanceLocks.getDateLockStatus(selectedAttendanceDate, dailyRecord);
+              const isDailyRecorded = lockStatus.isRecorded;
+              const isDailyHoliday = lockStatus.isHoliday;
               const dailyHolidayInfo = getHolidayInfo(selectedAttendanceDate);
-              const reqForDate = getRequestForDate(selectedAttendanceDate, attendanceClassId);
-              const isApprovedByPrincipal =
-                reqForDate?.status === 'approved' &&
-                unlockedDates[selectedAttendanceDate] !== false &&
-                classAttendanceConfig?.lockedDays?.[selectedAttendanceDate] !== true;
-              const isDailyEditing = isDailyRecorded && (unlockedDates[selectedAttendanceDate] === true || isApprovedByPrincipal || (dailyRecord && (dailyRecord.isLocked === false || dailyRecord.unlocked === true || dailyRecord.editable === true) && classAttendanceConfig?.lockedDays?.[selectedAttendanceDate] !== true && unlockedDates[selectedAttendanceDate] !== false));
-              const isDailyLocked = isDailyRecorded && !isDailyEditing;
+              const reqForDate = lockStatus.activeRequest || getRequestForDate(selectedAttendanceDate, attendanceClassId);
+              const isDailyEditing = lockStatus.canEdit && lockStatus.isUnlockedByPrincipal;
+              const isDailyLocked = lockStatus.isLocked;
 
               return (
                 <div className="space-y-4">
@@ -5159,12 +5065,13 @@ export const TeacherDashboard: React.FC = () => {
                           <th className="py-3 px-3 text-center w-12 font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
                           <th className="py-3 px-4 min-w-[180px] md:min-w-[220px] sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Student Name</th>
                           {weekDays.map(d => {
-                            const isFuture = d.dateStr > todayStr;
-                            const isDayHoliday = isDateHoliday(d.dateStr);
+                            const lockStatus = attendanceLocks.getDateLockStatus(d.dateStr);
+                            const isFuture = lockStatus.isFuture;
+                            const isDayHoliday = lockStatus.isHoliday;
                             const holInfo = getHolidayInfo(d.dateStr);
-                            const isDayRecorded = isDateRecorded(d.dateStr);
-                            const isDayLocked = isDateLocked(d.dateStr);
-                            const isDayEditing = isDayRecorded && !isDayLocked;
+                            const isDayRecorded = lockStatus.isRecorded;
+                            const isDayLocked = lockStatus.isLocked;
+                            const isDayEditing = lockStatus.canEdit && lockStatus.isUnlockedByPrincipal;
 
                             return (
                               <th

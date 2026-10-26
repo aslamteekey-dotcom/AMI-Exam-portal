@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   setDoc,
   deleteDoc,
@@ -10,7 +11,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType, isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, isQuotaError } from './firebase';
-import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination, FeePayment, ClassAttendanceConfig, InstitutionHoliday, SpecialWorkingDay, AuditLog, InstitutionSettings, assignClassSequentialRollNumbers, normalizeGender, determineStudentGender } from '../types';
+import { Student, User, ClassItem, SubjectItem, MarkSheet, Examination, FeePayment, ReceiptSequences, ClassAttendanceConfig, InstitutionHoliday, SpecialWorkingDay, AuditLog, InstitutionSettings, assignClassSequentialRollNumbers, normalizeGender, determineStudentGender } from '../types';
 
 /**
  * Removes undefined fields from objects before saving to Firestore,
@@ -1165,7 +1166,25 @@ export class FirestoreSyncService {
   public async syncFeePayment(fee: FeePayment): Promise<void> {
     if (isFirestoreQuotaExhausted()) return;
     try {
-      await setDoc(doc(db, 'fee_payments', fee.id), cleanForFirestore(fee), { merge: true });
+      const cleanData = cleanForFirestore(fee);
+      const writes: Promise<any>[] = [
+        setDoc(doc(db, 'fee_payments', fee.id), cleanData, { merge: true }),
+      ];
+
+      // Mirror to respective series collections as well for direct querying
+      if (fee.feeCategory === 'special' || (fee.specialFeeAmount > 0 && !fee.tuitionFeeAmount && !fee.admissionFee)) {
+        writes.push(setDoc(doc(db, 'special_receipts', fee.id), cleanData, { merge: true }));
+        if (fee.receiptNo) {
+          writes.push(setDoc(doc(db, 'special_receipts', String(fee.receiptNo).trim()), cleanData, { merge: true }));
+        }
+      } else {
+        writes.push(setDoc(doc(db, 'tuition_receipts', fee.id), cleanData, { merge: true }));
+        if (fee.receiptNo) {
+          writes.push(setDoc(doc(db, 'tuition_receipts', String(fee.receiptNo).trim()), cleanData, { merge: true }));
+        }
+      }
+
+      await Promise.allSettled(writes);
     } catch (e) {
       this.handleWriteError(e, OperationType.WRITE, `fee_payments/${fee.id}`);
     }
@@ -1175,10 +1194,83 @@ export class FirestoreSyncService {
   public async deleteFeePayment(feeId: string): Promise<void> {
     if (isFirestoreQuotaExhausted()) return;
     try {
-      await deleteDoc(doc(db, 'fee_payments', feeId));
+      await Promise.allSettled([
+        deleteDoc(doc(db, 'fee_payments', feeId)),
+        deleteDoc(doc(db, 'tuition_receipts', feeId)),
+        deleteDoc(doc(db, 'special_receipts', feeId)),
+      ]);
     } catch (e) {
       this.handleWriteError(e, OperationType.DELETE, `fee_payments/${feeId}`);
     }
+  }
+
+  // Purge test fee receipts and records for a specific class (e.g., 'Class 7')
+  public async resetClassTestFees(targetClass: string = 'Class 7'): Promise<{ deletedCount: number }> {
+    if (isFirestoreQuotaExhausted()) return { deletedCount: 0 };
+    let deletedCount = 0;
+    try {
+      const collectionsToCheck = ['fee_payments', 'tuition_receipts', 'special_receipts'];
+      for (const colName of collectionsToCheck) {
+        try {
+          const snap = await getDocs(collection(db, colName));
+          for (const d of snap.docs) {
+            const data = d.data();
+            const isMatch =
+              data.className === targetClass ||
+              data.classId === targetClass ||
+              (targetClass === 'Class 7' && (data.classId === 'cls_7' || data.className === 'Class 7')) ||
+              (data.studentClass && data.studentClass === targetClass);
+            if (isMatch) {
+              deletedCount++;
+              await deleteDoc(d.ref).catch(() => {});
+              if (data.receiptNo) {
+                await deleteDoc(doc(db, colName, String(data.receiptNo).trim())).catch(() => {});
+              }
+            }
+          }
+        } catch (colErr) {
+          console.warn(`Error querying ${colName} for test fee reset:`, colErr);
+        }
+      }
+    } catch (e) {
+      this.handleWriteError(e, OperationType.DELETE, `resetClassTestFees/${targetClass}`);
+    }
+    return { deletedCount };
+  }
+
+  // Sync receipt sequences (tuition_receipts starting at 4458, special_receipts starting at 1)
+  public async syncReceiptSequences(sequences: ReceiptSequences): Promise<void> {
+    if (isFirestoreQuotaExhausted()) return;
+    try {
+      const cleanData = cleanForFirestore({
+        ...sequences,
+        updatedAt: new Date().toISOString(),
+      });
+      await Promise.allSettled([
+        setDoc(doc(db, 'metadata', 'receipt_sequences'), cleanData, { merge: true }),
+        setDoc(doc(db, 'settings', 'receipt_sequences'), cleanData, { merge: true }),
+      ]);
+    } catch (e) {
+      this.handleWriteError(e, OperationType.WRITE, 'metadata/receipt_sequences');
+    }
+  }
+
+  // Fetch receipt sequences from Firestore
+  public async fetchReceiptSequences(): Promise<ReceiptSequences | null> {
+    if (isFirestoreQuotaExhausted()) return null;
+    try {
+      const snap = await getDoc(doc(db, 'metadata', 'receipt_sequences')).catch(() => null);
+      if (snap && snap.exists()) {
+        return snap.data() as ReceiptSequences;
+      }
+      const altSnap = await getDoc(doc(db, 'settings', 'receipt_sequences')).catch(() => null);
+      if (altSnap && altSnap.exists()) {
+        return altSnap.data() as ReceiptSequences;
+      }
+    } catch (e) {
+      console.warn('Error fetching receipt sequences from Firestore:', e);
+    }
+    return null;
   }
 
   // Sync sub-admin

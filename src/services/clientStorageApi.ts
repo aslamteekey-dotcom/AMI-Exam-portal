@@ -20,6 +20,7 @@ import {
   normalizeGender,
   determineStudentGender,
   FeePayment,
+  ReceiptSequences,
   ClassAttendanceConfig,
   InstitutionHoliday,
   SpecialWorkingDay,
@@ -43,6 +44,7 @@ export interface MadrasaDatabase {
   auditLogs: AuditLog[];
   settings: InstitutionSettings;
   feePayments: FeePayment[];
+  receiptSequences?: ReceiptSequences;
   attendanceConfigs: ClassAttendanceConfig[];
   institutionHolidays?: InstitutionHoliday[];
   specialWorkingDays?: SpecialWorkingDay[];
@@ -2542,10 +2544,13 @@ export class ClientStorageApi {
             if (priorityReg) {
               regNos[activeKey] = priorityReg;
             }
+            const clsObj = this.db.classes?.find(c => c.id === s.classId);
+            const madrasaClass = s.class || clsObj?.name || (s.classId?.startsWith('cls_') ? `Class ${s.classId.replace('cls_', '')}` : s.classId);
             return [
               s.admissionNo?.toString() || s.id,
               {
                 ...s,
+                class: madrasaClass,
                 gender: determineStudentGender(s, activeKey),
                 examRegisterNumbers: regNos,
                 examRegisterNos: regNos,
@@ -4181,6 +4186,44 @@ export class ClientStorageApi {
       }
 
       // Fees Management API
+      if (path === '/api/fees/receipt-sequences' && method === 'GET') {
+        const payments = this.db.feePayments || [];
+        // Calculate highest tuition receipt number
+        const tuitionNums = payments
+          .filter(p => p.feeCategory === 'tuition' || (p.tuitionFeeMonths && p.tuitionFeeMonths.length > 0) || p.admissionFee > 0)
+          .map(p => parseInt((p.receiptNo || '').replace(/\D/g, ''), 10))
+          .filter(n => !isNaN(n) && n >= 4458);
+        const highestTuition = tuitionNums.length > 0 ? Math.max(...tuitionNums) : 4457;
+
+        // Calculate highest special receipt number
+        const specialNums = payments
+          .filter(p => p.feeCategory === 'special' || (p.specialFeeAmount > 0 && (!p.tuitionFeeMonths || p.tuitionFeeMonths.length === 0) && !p.admissionFee))
+          .map(p => parseInt((p.receiptNo || '').replace(/\D/g, ''), 10))
+          .filter(n => !isNaN(n) && n >= 1);
+        const highestSpecial = specialNums.length > 0 ? Math.max(...specialNums) : 0;
+
+        const stored = this.db.receiptSequences || { tuitionReceiptNo: 4458, specialReceiptNo: 1 };
+        const result: ReceiptSequences = {
+          tuitionReceiptNo: Math.max(stored.tuitionReceiptNo || 4458, highestTuition + 1, 4458),
+          specialReceiptNo: Math.max(stored.specialReceiptNo || 1, highestSpecial + 1, 1),
+        };
+        return this.jsonResponse(result);
+      }
+
+      if (path === '/api/fees/receipt-sequences' && method === 'POST') {
+        const { tuitionReceiptNo, specialReceiptNo } = bodyData;
+        const current = this.db.receiptSequences || { tuitionReceiptNo: 4458, specialReceiptNo: 1 };
+        const updated: ReceiptSequences = {
+          tuitionReceiptNo: Number(tuitionReceiptNo) || current.tuitionReceiptNo || 4458,
+          specialReceiptNo: Number(specialReceiptNo) || current.specialReceiptNo || 1,
+          updatedAt: new Date().toISOString(),
+        };
+        this.db.receiptSequences = updated;
+        this.saveDB();
+        firestoreSync.syncReceiptSequences(updated).catch(e => console.warn('Firestore syncReceiptSequences error:', e));
+        return this.jsonResponse(updated);
+      }
+
       if (path === '/api/fees/payments' && method === 'GET') {
         const studentId = params.get('studentId');
         const classId = params.get('classId');
@@ -4195,26 +4238,34 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/fees/payments' && method === 'POST') {
-        let nextNum = 1001;
-        const existingNums = (this.db.feePayments || [])
-          .map(p => parseInt((p.receiptNo || '').replace(/\D/g, ''), 10))
-          .filter(n => !isNaN(n));
-        if (existingNums.length > 0) {
-          nextNum = Math.max(...existingNums) + 1;
+        const isSpecial = bodyData.feeCategory === 'special' || Boolean(bodyData.specialFeeType && !bodyData.tuitionFeeMonths?.length && !bodyData.admissionFee);
+        const feeCategory: 'tuition' | 'special' = isSpecial ? 'special' : 'tuition';
+
+        let proposedReceiptNo = bodyData.receiptNo ? String(bodyData.receiptNo).trim() : '';
+        if (!proposedReceiptNo) {
+          if (isSpecial) {
+            const seq = this.db.receiptSequences?.specialReceiptNo || 1;
+            proposedReceiptNo = String(seq).padStart(2, '0');
+          } else {
+            const seq = this.db.receiptSequences?.tuitionReceiptNo || 4458;
+            proposedReceiptNo = String(seq);
+          }
         }
 
         const pId = bodyData.id || `fee_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-        const receiptNo = bodyData.receiptNo ? String(bodyData.receiptNo).trim() : `#${nextNum}`;
         const newPayment: FeePayment = {
           id: pId,
-          receiptNo,
+          receiptNo: proposedReceiptNo,
           date: bodyData.date || new Date().toISOString().split('T')[0],
           studentId: bodyData.studentId,
           studentName: bodyData.studentName,
           admissionNo: bodyData.admissionNo,
           classId: bodyData.classId,
           className: bodyData.className,
+          feeCategory,
+          specialFeeType: bodyData.specialFeeType || undefined,
           admissionFee: Number(bodyData.admissionFee) || 0,
+          hasAdmissionFee: Boolean(bodyData.hasAdmissionFee || Number(bodyData.admissionFee) > 0),
           tuitionFeeMonths: Array.isArray(bodyData.tuitionFeeMonths) ? bodyData.tuitionFeeMonths : [],
           tuitionFeeAmount: Number(bodyData.tuitionFeeAmount) || (Array.isArray(bodyData.tuitionFeeMonths) ? bodyData.tuitionFeeMonths.length * 300 : 0),
           specialFeeComponents: bodyData.specialFeeComponents || {},
@@ -4229,6 +4280,27 @@ export class ClientStorageApi {
 
         if (!this.db.feePayments) this.db.feePayments = [];
         this.db.feePayments.push(newPayment);
+
+        // Auto-increment the respective sequence
+        const numericPart = parseInt(proposedReceiptNo.replace(/\D/g, ''), 10);
+        if (!isNaN(numericPart)) {
+          if (!this.db.receiptSequences) {
+            this.db.receiptSequences = { tuitionReceiptNo: 4458, specialReceiptNo: 1 };
+          }
+          if (feeCategory === 'tuition') {
+            this.db.receiptSequences.tuitionReceiptNo = Math.max(
+              this.db.receiptSequences.tuitionReceiptNo || 4458,
+              numericPart + 1
+            );
+          } else {
+            this.db.receiptSequences.specialReceiptNo = Math.max(
+              this.db.receiptSequences.specialReceiptNo || 1,
+              numericPart + 1
+            );
+          }
+          firestoreSync.syncReceiptSequences(this.db.receiptSequences).catch(() => {});
+        }
+
         this.saveDB();
         firestoreSync.syncFeePayment(newPayment).catch(e => console.warn('Firestore syncFeePayment error:', e));
         return this.jsonResponse(newPayment);
@@ -4241,6 +4313,36 @@ export class ClientStorageApi {
         this.saveDB();
         firestoreSync.deleteFeePayment(feeId).catch(e => console.warn('Firestore deleteFeePayment error:', e));
         return this.jsonResponse({ success: true });
+      }
+
+      if (path === '/api/fees/reset-class-test-fees' && method === 'POST') {
+        const targetClass = bodyData?.className || 'Class 7';
+        const targetStudents = (this.db.students || []).filter(
+          s => s.class === targetClass || (s as any).class === targetClass || s.classId === 'cls_7' || s.classId === targetClass
+        );
+        const targetStudentIds = new Set(targetStudents.map(s => s.id));
+        const toDelete = (this.db.feePayments || []).filter(
+          p =>
+            p.className === targetClass ||
+            p.classId === 'cls_7' ||
+            p.classId === targetClass ||
+            targetStudentIds.has(p.studentId)
+        );
+        this.db.feePayments = (this.db.feePayments || []).filter(
+          p =>
+            !(
+              p.className === targetClass ||
+              p.classId === 'cls_7' ||
+              p.classId === targetClass ||
+              targetStudentIds.has(p.studentId)
+            )
+        );
+        this.saveDB();
+        for (const p of toDelete) {
+          firestoreSync.deleteFeePayment(p.id).catch(() => {});
+        }
+        await firestoreSync.resetClassTestFees(targetClass).catch(() => {});
+        return this.jsonResponse({ success: true, count: toDelete.length });
       }
 
       // Attendance API

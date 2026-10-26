@@ -22,6 +22,11 @@ import {
   Hash,
   Calendar,
   GraduationCap,
+  Printer,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Phone,
 } from 'lucide-react';
 
 export const StudentManagement: React.FC = () => {
@@ -31,6 +36,41 @@ export const StudentManagement: React.FC = () => {
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  type SortKey = 'name' | 'admissionNo' | 'examRegNo' | 'schoolClass';
+  type SortDirection = 'asc' | 'desc';
+
+  const [sortConfig, setSortConfig] = useState<{
+    key: SortKey | null;
+    direction: SortDirection;
+  }>({
+    key: null,
+    direction: 'asc',
+  });
+
+  const getStudentExamRegNo = (student: Student): string => {
+    return String(
+      (student as any).examRegisterNos?.[activeExamId] ||
+      student.examRegNo ||
+      (student as any).regNo ||
+      (student as any).examRegisterNumbers?.[activeExamId] ||
+      Object.values((student as any).examRegisterNos || {})[0] ||
+      Object.values((student as any).examRegisterNumbers || {})[0] ||
+      ''
+    ).trim();
+  };
+
+  const handleSort = (key: SortKey) => {
+    setSortConfig(prev => {
+      if (prev.key === key) {
+        if (prev.direction === 'asc') {
+          return { key, direction: 'desc' };
+        }
+        return { key: null, direction: 'asc' };
+      }
+      return { key, direction: 'asc' };
+    });
+  };
 
   // Add / Edit Modal
   const [showAddModal, setShowAddModal] = useState(false);
@@ -941,45 +981,98 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
 
   const isAdmissionNumberDuplicate = Boolean(duplicateAdmissionConflict);
 
-  // Filter students with strict sorting: Boys first, then Girls; alphabetical A to Z within each
-  const classStudents = students.filter(student => {
-    // Exclude any ghost / corrupted record lacking name or admission number
-    const hasName = Boolean(String(student.nameEn || (student as any).name || '').trim());
-    const hasAdm = Boolean(String(student.admissionNo?.toString() || '').trim());
-    if (!hasName || !hasAdm) return false;
+  // Filter students with strict default sorting: Boys first, then Girls; alphabetical A to Z within each
+  const classStudents = useMemo(() => {
+    return students.filter(student => {
+      // Exclude any ghost / corrupted record lacking name or admission number
+      const hasName = Boolean(String(student.nameEn || (student as any).name || '').trim());
+      const hasAdm = Boolean(String(student.admissionNo?.toString() || '').trim());
+      if (!hasName || !hasAdm) return false;
 
-    const matchClass = selectedClassId ? student.classId === selectedClassId : true;
-    const q = (searchQuery || '').toLowerCase().trim();
-    if (!q) return matchClass;
+      const matchClass = selectedClassId ? student.classId === selectedClassId : true;
+      const q = (searchQuery || '').toLowerCase().trim();
+      if (!q) return matchClass;
 
-    const studentName = (student.nameEn || (student as any).name || '').toLowerCase();
-    const malayalamName = (student.nameMl || '').toLowerCase();
-    const admissionNo = (student.admissionNo?.toString() || '').toLowerCase();
-    const parentName = ((student.parentNameEn || (student as any).parentName || (student as any).guardianName || '').toString()).toLowerCase();
-    const gender = (student.gender || '').toLowerCase();
-    const schoolClass = (student.schoolClass || (student as any).class || '').toLowerCase();
-    const rollNo = String(student.rollNo || '');
+      const studentName = (student.nameEn || (student as any).name || '').toLowerCase();
+      const malayalamName = (student.nameMl || '').toLowerCase();
+      const admissionNo = (student.admissionNo?.toString() || '').toLowerCase();
+      const parentName = ((student.parentNameEn || (student as any).parentName || (student as any).guardianName || '').toString()).toLowerCase();
+      const gender = (student.gender || '').toLowerCase();
+      const schoolClass = (student.schoolClass || (student as any).class || '').toLowerCase();
+      const rollNo = String(student.rollNo || '');
+      const regNo = getStudentExamRegNo(student).toLowerCase();
+      const dob = (student.dob || '').toLowerCase();
 
-    const matchSearch =
-      studentName.includes(q) ||
-      malayalamName.includes(q) ||
-      admissionNo.includes(q) ||
-      parentName.includes(q) ||
-      gender.includes(q) ||
-      schoolClass.includes(q) ||
-      rollNo.includes(q);
-    return matchClass && matchSearch;
-  });
+      const matchSearch =
+        studentName.includes(q) ||
+        malayalamName.includes(q) ||
+        admissionNo.includes(q) ||
+        parentName.includes(q) ||
+        gender.includes(q) ||
+        schoolClass.includes(q) ||
+        rollNo.includes(q) ||
+        regNo.includes(q) ||
+        dob.includes(q);
+      return matchClass && matchSearch;
+    });
+  }, [students, selectedClassId, searchQuery, activeExamId]);
 
-  const sortedStudents = sortStudentsBoysFirst(classStudents, activeExamId);
-  const filteredStudents = sortedStudents.map((s, idx) => ({
-    ...s,
-    gender: determineStudentGender(s, activeExamId),
-    rollNo: idx + 1,
-  }));
+  const baseSortedStudents = useMemo(() => {
+    const sorted = sortStudentsBoysFirst(classStudents, activeExamId);
+    return sorted.map((s, idx) => ({
+      ...s,
+      gender: determineStudentGender(s, activeExamId),
+      rollNo: idx + 1,
+    }));
+  }, [classStudents, activeExamId]);
 
-  const boysCount = filteredStudents.filter(s => determineStudentGender(s, activeExamId) === 'Boy').length;
-  const girlsCount = filteredStudents.filter(s => determineStudentGender(s, activeExamId) === 'Girl').length;
+  const filteredStudents = useMemo(() => {
+    if (!sortConfig.key) {
+      return baseSortedStudents;
+    }
+
+    const sorted = [...baseSortedStudents].sort((a, b) => {
+      let comparison = 0;
+      if (sortConfig.key === 'name') {
+        const nameA = (a.nameEn || (a as any).name || '').trim();
+        const nameB = (b.nameEn || (b as any).name || '').trim();
+        comparison = nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+      } else if (sortConfig.key === 'admissionNo') {
+        const admA = (a.admissionNo?.toString() || '').trim();
+        const admB = (b.admissionNo?.toString() || '').trim();
+        comparison = admA.localeCompare(admB, undefined, { numeric: true, sensitivity: 'base' });
+      } else if (sortConfig.key === 'examRegNo') {
+        const regA = getStudentExamRegNo(a);
+        const regB = getStudentExamRegNo(b);
+        if (!regA && regB) return 1;
+        if (regA && !regB) return -1;
+        comparison = regA.localeCompare(regB, undefined, { numeric: true, sensitivity: 'base' });
+      } else if (sortConfig.key === 'schoolClass') {
+        const scA = (a.schoolClass || (a as any).class || '').trim();
+        const scB = (b.schoolClass || (b as any).class || '').trim();
+        if (!scA && scB) return 1;
+        if (scA && !scB) return -1;
+        comparison = scA.localeCompare(scB, undefined, { numeric: true, sensitivity: 'base' });
+      }
+
+      if (comparison === 0) {
+        comparison = (a.rollNo || 0) - (b.rollNo || 0);
+      }
+
+      return sortConfig.direction === 'asc' ? comparison : -comparison;
+    });
+
+    return sorted;
+  }, [baseSortedStudents, sortConfig, activeExamId]);
+
+  const boysCount = useMemo(
+    () => filteredStudents.filter(s => determineStudentGender(s, activeExamId) === 'Boy').length,
+    [filteredStudents, activeExamId]
+  );
+  const girlsCount = useMemo(
+    () => filteredStudents.filter(s => determineStudentGender(s, activeExamId) === 'Girl').length,
+    [filteredStudents, activeExamId]
+  );
 
   return (
     <div className="space-y-6">
@@ -998,7 +1091,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
           <button
             type="button"
             onClick={handleDownloadSampleCsv}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 bg-white hover:bg-emerald-50 border border-emerald-300 rounded-xl transition shadow-2xs cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 bg-white hover:bg-emerald-50 border border-emerald-300 rounded-xl transition shadow-2xs cursor-pointer print:hidden"
             title="Download CSV Template with Demo Structure"
           >
             <Download className="w-3.5 h-3.5 text-emerald-700" />
@@ -1008,7 +1101,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
           <button
             type="button"
             onClick={handleExportCsv}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer print:hidden"
           >
             <Download className="w-3.5 h-3.5" />
             {t.exportCsv}
@@ -1016,7 +1109,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
 
           <button
             onClick={() => setShowImportModal(true)}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition cursor-pointer print:hidden"
           >
             <Upload className="w-3.5 h-3.5" />
             {t.importCsv}
@@ -1024,7 +1117,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
 
           <button
             onClick={handleClearDemoStudents}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-xl transition cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-xl transition cursor-pointer print:hidden"
             title="Purge only mock student records from database"
           >
             <Trash2 className="w-3.5 h-3.5 text-amber-700" />
@@ -1033,7 +1126,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
 
           <button
             onClick={handleDeleteAllStudents}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded-xl transition cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded-xl transition cursor-pointer print:hidden"
             title="Permanently remove all students"
           >
             <Trash2 className="w-3.5 h-3.5 text-rose-700" />
@@ -1043,7 +1136,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
           <button
             type="button"
             onClick={handleResequenceRollNumbers}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-300 rounded-xl transition shadow-2xs cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-300 rounded-xl transition shadow-2xs cursor-pointer print:hidden"
             title="Auto-resequence class roll numbers strictly (Boys A-Z first: 1, 2, 3... then Girls A-Z)"
           >
             <Hash className="w-3.5 h-3.5 text-teal-700" />
@@ -1051,8 +1144,18 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
           </button>
 
           <button
+            type="button"
+            onClick={() => window.print()}
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer print:hidden"
+            title="Print Students Table"
+          >
+            <Printer className="w-3.5 h-3.5 text-slate-600" />
+            <span>Print</span>
+          </button>
+
+          <button
             onClick={handleOpenAdd}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer print:hidden"
           >
             <Plus className="w-4 h-4" />
             Add Student
@@ -1061,7 +1164,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
       </div>
 
       {/* Filter, Search & Delete by Class Bar */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs print:hidden">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="font-semibold text-slate-600">{t.filterClass}:</span>
@@ -1117,7 +1220,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
 
       {/* Duplicate Admission Number Alert Banner */}
       {duplicateAdmissionsList.length > 0 && (
-        <div className="bg-red-50 border border-red-300 rounded-2xl p-4 text-xs text-red-900 flex items-start justify-between gap-3 shadow-xs">
+        <div className="bg-red-50 border border-red-300 rounded-2xl p-4 text-xs text-red-900 flex items-start justify-between gap-3 shadow-xs print:hidden">
           <div className="flex items-start gap-2.5">
             <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
             <div>
@@ -1136,29 +1239,140 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
         </div>
       )}
 
-      {/* Students Table strictly aligned with CSV: Admission No | Name | Class | Gender | Parent Name | Phone | Actions */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden w-full">
+      {/* Printable Report Header for Official Records */}
+      <div className="hidden print:block mb-4 pb-3 border-b-2 border-slate-800">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-800 flex items-center justify-center text-white font-bold text-base">
+              AMI
+            </div>
+            <div>
+              <h1 className="text-base font-bold text-slate-900 font-serif">Al-Madrasathul Islamiya Pallikkuth</h1>
+              <p className="text-[10px] text-slate-600">
+                KMEB Affiliated · Mi'yar Grading A+ Accredited · Pallikkuth, Pattikkad P.O, Malappuram
+              </p>
+            </div>
+          </div>
+          <div className="text-right text-[10px] text-slate-600 font-mono">
+            <div>Academic Year: 2026–2027</div>
+            <div>Printed: {new Date().toLocaleDateString('en-GB')}</div>
+          </div>
+        </div>
+        <div className="mt-2.5 flex items-center justify-between text-xs font-semibold text-slate-800 bg-slate-100 px-3 py-1.5 rounded border border-slate-200">
+          <span>
+            Students Directory — {selectedClassId ? (isMl ? classes.find(c => c.id === selectedClassId)?.nameMl : classes.find(c => c.id === selectedClassId)?.name) : 'All Classes'}
+          </span>
+          <span>
+            Total: {filteredStudents.length} Students ({boysCount} Boys, {girlsCount} Girls)
+          </span>
+        </div>
+      </div>
+
+      {/* Students Data Table with Dedicated Columns: Roll No | Name | Adm No | Reg No | DOB | School Class | Madrasa Class | Gender | Parent Info */}
+      <div className="students-table-container bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden w-full print:border-none print:shadow-none print:rounded-none">
         <div
           onWheel={handleHorizontalWheel}
-          className="overflow-x-auto w-full scrollbar-thin relative"
+          className="students-table-scroll overflow-x-auto w-full scrollbar-thin relative print:overflow-visible"
         >
-          <table className="w-full min-w-[760px] text-xs text-left border-collapse">
-            <thead className="sticky top-0 bg-slate-100 text-slate-700 font-bold border-b z-30">
+          <table className="students-data-table w-full min-w-[960px] print:min-w-full text-xs text-left border-collapse">
+            <thead className="sticky top-0 bg-slate-100 text-slate-700 font-bold border-b z-30 print:static print:bg-slate-100">
               <tr>
-                <th className="p-3 text-center w-12 font-mono whitespace-nowrap sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll No</th>
-                <th className="p-3 whitespace-nowrap sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[180px] md:min-w-[220px]">Name</th>
-                <th className="p-3 font-mono text-center w-20 whitespace-nowrap">Adm No</th>
-                <th className="p-3 whitespace-nowrap">Class</th>
-                <th className="p-3 text-center whitespace-nowrap">Gender</th>
-                <th className="p-3 whitespace-nowrap">Parent Name</th>
-                <th className="p-3 whitespace-nowrap">Phone</th>
-                <th className="p-3 text-center w-28 whitespace-nowrap">Actions</th>
+                <th className="p-3 text-center w-12 font-mono whitespace-nowrap sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb] print:static print:shadow-none print:w-auto">
+                  Roll No
+                </th>
+                <th
+                  onClick={() => handleSort('name')}
+                  className="p-3 whitespace-nowrap sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[170px] md:min-w-[200px] cursor-pointer select-none transition hover:bg-slate-200/80 print:static print:shadow-none print:min-w-0"
+                  title="Click to sort by Name"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span>Name</span>
+                    {sortConfig.key === 'name' ? (
+                      sortConfig.direction === 'asc' ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-emerald-800" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-emerald-800" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 text-slate-400 group-hover:text-slate-600 print:hidden" />
+                    )}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('admissionNo')}
+                  className="p-3 font-mono text-center w-24 whitespace-nowrap cursor-pointer select-none transition hover:bg-slate-200/80"
+                  title="Click to sort by Admission Number"
+                >
+                  <div className="flex items-center justify-center gap-1.5">
+                    <span>Adm No</span>
+                    {sortConfig.key === 'admissionNo' ? (
+                      sortConfig.direction === 'asc' ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-emerald-800" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-emerald-800" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 text-slate-400 group-hover:text-slate-600 print:hidden" />
+                    )}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('examRegNo')}
+                  className="p-3 font-mono text-center w-24 whitespace-nowrap cursor-pointer select-none transition hover:bg-slate-200/80"
+                  title="Click to sort by Exam Register Number"
+                >
+                  <div className="flex items-center justify-center gap-1.5">
+                    <span>Reg No</span>
+                    {sortConfig.key === 'examRegNo' ? (
+                      sortConfig.direction === 'asc' ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-emerald-800" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-emerald-800" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 text-slate-400 group-hover:text-slate-600 print:hidden" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-3 text-center font-mono whitespace-nowrap">
+                  DOB
+                </th>
+                <th
+                  onClick={() => handleSort('schoolClass')}
+                  className="p-3 whitespace-nowrap cursor-pointer select-none transition hover:bg-slate-200/80"
+                  title="Click to sort by School Class"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span>School Class</span>
+                    {sortConfig.key === 'schoolClass' ? (
+                      sortConfig.direction === 'asc' ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-emerald-800" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-emerald-800" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 text-slate-400 group-hover:text-slate-600 print:hidden" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-3 whitespace-nowrap">
+                  Madrasa Class
+                </th>
+                <th className="p-3 text-center whitespace-nowrap">
+                  Gender
+                </th>
+                <th className="p-3 whitespace-nowrap min-w-[150px]">
+                  Parent Info
+                </th>
+                <th className="p-3 text-center w-28 whitespace-nowrap print:hidden">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredStudents.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-400">
+                  <td colSpan={10} className="p-8 text-center text-slate-400">
                     No students found. Add a student or import via CSV.
                   </td>
                 </tr>
@@ -1167,6 +1381,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
                   const cls = classes.find(c => c.id === student.classId);
                   const isDuplicate =
                     (admFrequency.get((student.admissionNo?.toString() || '').trim().toLowerCase()) || 0) > 1;
+                  const regNo = getStudentExamRegNo(student);
 
                   return (
                     <tr
@@ -1177,49 +1392,26 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
                           : 'hover:bg-slate-50 transition group'
                       }
                     >
+                      {/* Roll No */}
                       <td
-                        className={`p-3 text-center font-mono font-bold text-slate-700 whitespace-nowrap w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${
+                        className={`p-3 text-center font-mono font-bold text-slate-700 whitespace-nowrap w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] print:static print:shadow-none print:w-auto ${
                           isDuplicate ? 'bg-red-50 group-hover:bg-red-100' : 'bg-white group-hover:bg-slate-50'
                         }`}
                       >
                         {student.rollNo}
                       </td>
+
+                      {/* Name (Cleaned up - no embedded regNo, dob, schoolClass badges) */}
                       <td
-                        className={`p-3 min-w-[180px] md:min-w-[220px] whitespace-nowrap sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
+                        className={`p-3 min-w-[170px] md:min-w-[200px] whitespace-nowrap sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] print:static print:shadow-none print:min-w-0 ${
                           isDuplicate ? 'bg-red-50 group-hover:bg-red-100' : 'bg-white group-hover:bg-slate-50'
                         }`}
                       >
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-bold text-slate-900">{student.nameEn || (student as any).name || '—'}</span>
-                          {(() => {
-                            const regNo =
-                              (student as any).examRegisterNos?.[activeExamId] ||
-                              student.examRegNo ||
-                              (student as any).regNo ||
-                              (student as any).examRegisterNumbers?.[activeExamId] ||
-                              '-';
-                            if (regNo && regNo !== '-') {
-                              return (
-                                <span className="px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold bg-emerald-50 text-emerald-800 border border-emerald-200" title="Exam Register Number">
-                                  Reg: {regNo}
-                                </span>
-                              );
-                            }
-                            return null;
-                          })()}
-                          {student.schoolClass && (
-                            <span className="px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200" title="Regular School Grade">
-                              {student.schoolClass}
-                            </span>
-                          )}
-                          {student.dob && (
-                            <span className="text-[10px] text-slate-500 font-mono" title="Date of Birth">
-                              🎂 {student.dob}
-                            </span>
-                          )}
                           {isDuplicate && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-300 shadow-2xs">
-                              ⚠️ Duplicate Adm No
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-red-100 text-red-700 border border-red-300 shadow-2xs">
+                              ⚠️ Duplicate Adm
                             </span>
                           )}
                         </div>
@@ -1229,7 +1421,9 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
                           </span>
                         )}
                       </td>
-                      <td className="p-3 font-mono font-semibold whitespace-nowrap w-20 text-center">
+
+                      {/* Adm No */}
+                      <td className="p-3 font-mono font-semibold whitespace-nowrap w-24 text-center">
                         <span
                           className={
                             isDuplicate
@@ -1240,6 +1434,35 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
                           {student.admissionNo}
                         </span>
                       </td>
+
+                      {/* Reg No (Standalone Column) */}
+                      <td className="p-3 font-mono font-bold whitespace-nowrap w-24 text-center">
+                        {regNo ? (
+                          <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-emerald-50 text-emerald-950 border border-emerald-200 inline-block">
+                            {regNo}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 font-mono">—</span>
+                        )}
+                      </td>
+
+                      {/* DOB (Standalone Column) */}
+                      <td className="p-3 font-mono text-center text-slate-700 whitespace-nowrap">
+                        {student.dob ? student.dob : <span className="text-slate-400">—</span>}
+                      </td>
+
+                      {/* School Class (Standalone Column) */}
+                      <td className="p-3 whitespace-nowrap">
+                        {student.schoolClass ? (
+                          <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            {student.schoolClass}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+
+                      {/* Madrasa Class */}
                       <td className="p-3 whitespace-nowrap">
                         <span
                           className={`bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md font-semibold ${
@@ -1249,6 +1472,8 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
                           {isMl ? cls?.nameMl : cls?.name}
                         </span>
                       </td>
+
+                      {/* Gender */}
                       <td className="p-3 text-center whitespace-nowrap">
                         <span
                           className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
@@ -1260,7 +1485,9 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
                           {determineStudentGender(student, activeExamId)}
                         </span>
                       </td>
-                      <td className="p-3 min-w-[140px] whitespace-nowrap">
+
+                      {/* Parent Info */}
+                      <td className="p-3 min-w-[150px] whitespace-nowrap">
                         <span className="font-medium text-slate-800 block">
                           {student.parentNameEn || '—'}
                         </span>
@@ -1269,11 +1496,16 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
                             {student.parentNameMl}
                           </span>
                         )}
+                        {student.parentPhone && (
+                          <span className="text-[11px] font-mono text-slate-500 flex items-center gap-1 mt-0.5">
+                            <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                            {student.parentPhone}
+                          </span>
+                        )}
                       </td>
-                      <td className="p-3 font-mono text-slate-600 whitespace-nowrap">
-                        {student.parentPhone || '—'}
-                      </td>
-                      <td className="p-3 text-center whitespace-nowrap">
+
+                      {/* Actions */}
+                      <td className="p-3 text-center whitespace-nowrap print:hidden">
                         <div className="flex items-center justify-center gap-1.5">
                           {isDuplicate && (
                             <button

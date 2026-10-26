@@ -130,6 +130,7 @@ export interface Student {
   nameEn: string;
   nameMl: string;
   classId: string;
+  class?: string; // Madrasa class name (e.g., 'Class 1' to 'Class 9')
   academicYearId: string;
   parentNameEn: string;
   parentNameMl: string;
@@ -304,6 +305,22 @@ export interface SpecialFeeBreakdown {
   annualExam?: number;       // Annual exam charges installment
 }
 
+export type SpecialFeeType =
+  | 'Terminal Exam Fee'
+  | 'Hikma Exam Fee'
+  | 'Public Exam Fee'
+  | 'Council Fund'
+  | 'Donation/Other'
+  | 'Exam'
+  | 'Hikma Exam'
+  | 'Public Exam';
+
+export interface ReceiptSequences {
+  tuitionReceiptNo: number;
+  specialReceiptNo: number;
+  updatedAt?: string;
+}
+
 export interface FeePayment {
   id: string;
   receiptNo: string;
@@ -313,7 +330,10 @@ export interface FeePayment {
   admissionNo: string;
   classId: string;
   className: string;
+  feeCategory?: 'tuition' | 'special';
+  specialFeeType?: SpecialFeeType | string;
   admissionFee: number;
+  hasAdmissionFee?: boolean;
   tuitionFeeMonths: FeeMonth[];
   tuitionFeeAmount: number; // ₹300 per month
   specialFeeComponents: SpecialFeeBreakdown;

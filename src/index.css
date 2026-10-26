@@ -80,15 +80,21 @@ html[lang="ml"] td {
 }
 
 @media print {
-  html, body, table, th, td {
-    width: 210mm;
-    height: 297mm;
+  html, body {
+    width: 100% !important;
+    min-height: 100% !important;
     margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
     font-family: 'Inter', 'Noto Serif Malayalam', serif !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+  }
+  table {
+    border-collapse: collapse !important;
+  }
+  th, td {
+    height: auto !important;
   }
   .font-title {
     font-family: 'Cinzel', serif !important;
@@ -104,8 +110,8 @@ html[lang="ml"] td {
     text-rendering: optimizeLegibility !important;
     -webkit-font-smoothing: antialiased !important;
   }
-  /* Hide all UI elements except the printable card */
-  nav, header, footer, .no-print, button, .parent-nav, .print\:hidden, aside, .navbar-container {
+  /* Hide all UI elements, inputs, and controls in print */
+  nav, header, footer, .no-print, button, .parent-nav, .print\:hidden, aside, .navbar-container, input, select {
     display: none !important;
   }
   main {
@@ -113,6 +119,49 @@ html[lang="ml"] td {
     margin: 0 !important;
     max-width: 100% !important;
     width: 100% !important;
+  }
+  /* Students Data Table Print Styling */
+  .students-table-container {
+    overflow: visible !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+  }
+  .students-table-scroll {
+    overflow: visible !important;
+    width: 100% !important;
+  }
+  .students-data-table {
+    min-width: 100% !important;
+    width: 100% !important;
+    font-size: 10px !important;
+    border-collapse: collapse !important;
+    border: 1px solid #cbd5e1 !important;
+  }
+  .students-data-table th,
+  .students-data-table td {
+    position: static !important;
+    box-shadow: none !important;
+    padding: 5px 6px !important;
+    border: 1px solid #e2e8f0 !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+  }
+  .students-data-table thead {
+    display: table-header-group !important;
+  }
+  .students-data-table tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  .students-data-table th {
+    background-color: #f8fafc !important;
+    color: #0f172a !important;
+    font-weight: 700 !important;
+    font-size: 9.5px !important;
   }
   .printable-progress-card {
     width: 100% !important;

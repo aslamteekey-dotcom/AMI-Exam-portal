@@ -2762,7 +2762,11 @@ export const ParentDashboard: React.FC = () => {
               <div className="text-xs space-y-1 mb-4 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
                 <div className="flex justify-between">
                   <span className="text-slate-500">Student Name:</span>
-                  <strong className="text-slate-900">{activeReceipt.studentName}</strong>
+                  <strong className="text-slate-900">
+                    {activeReceipt.className && !activeReceipt.studentName.includes(activeReceipt.className)
+                      ? `${activeReceipt.studentName} - ${activeReceipt.className}`
+                      : activeReceipt.studentName}
+                  </strong>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Admission No:</span>
@@ -2782,10 +2786,10 @@ export const ParentDashboard: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {activeReceipt.admissionFee > 0 && (
+                  {(activeReceipt.admissionFee > 0 || activeReceipt.hasAdmissionFee) && (
                     <tr>
-                      <td className="py-1 text-slate-800">Admission Fee</td>
-                      <td className="py-1 text-right font-mono">₹{activeReceipt.admissionFee}</td>
+                      <td className="py-1 text-slate-800 font-medium">Admission Fee</td>
+                      <td className="py-1 text-right font-mono font-semibold">₹{activeReceipt.admissionFee}</td>
                     </tr>
                   )}
                   {activeReceipt.tuitionFeeAmount > 0 && (
@@ -2799,16 +2803,28 @@ export const ParentDashboard: React.FC = () => {
                       <td className="py-1 text-right font-mono font-bold">₹{activeReceipt.tuitionFeeAmount}</td>
                     </tr>
                   )}
-                  {activeReceipt.specialFeeComponents && Object.entries(activeReceipt.specialFeeComponents).map(([k, val]) => {
-                    if (!val) return null;
-                    return (
-                      <tr key={k}>
-                        <td className="py-1 text-slate-800 capitalize">{k.replace(/([A-Z])/g, ' $1')}</td>
-                        <td className="py-1 text-right font-mono">₹{val}</td>
-                      </tr>
-                    );
-                  })}
-                  {activeReceipt.donationAmount > 0 && (
+                  {activeReceipt.specialFeeType && (
+                    <tr>
+                      <td className="py-1 text-slate-800 font-medium">
+                        Special Fee: {activeReceipt.specialFeeType}
+                      </td>
+                      <td className="py-1 text-right font-mono font-bold">
+                        ₹{activeReceipt.specialFeeAmount || activeReceipt.totalAmount}
+                      </td>
+                    </tr>
+                  )}
+                  {!activeReceipt.specialFeeType &&
+                    activeReceipt.specialFeeComponents &&
+                    Object.entries(activeReceipt.specialFeeComponents).map(([k, val]) => {
+                      if (!val) return null;
+                      return (
+                        <tr key={k}>
+                          <td className="py-1 text-slate-800 capitalize">{k.replace(/([A-Z])/g, ' $1')}</td>
+                          <td className="py-1 text-right font-mono">₹{val}</td>
+                        </tr>
+                      );
+                    })}
+                  {!activeReceipt.specialFeeType && activeReceipt.donationAmount > 0 && (
                     <tr>
                       <td className="py-1 text-slate-800">Donation / Other</td>
                       <td className="py-1 text-right font-mono">₹{activeReceipt.donationAmount}</td>

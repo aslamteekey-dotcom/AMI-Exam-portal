@@ -1428,6 +1428,9 @@ export const AdminAttendanceView: React.FC = () => {
       const recordsToUpdate: Record<string, any> = {};
       const newUnlockedLocal: Record<string, boolean> = {};
 
+      const lockedDaysToUpdate: Record<string, boolean> = {};
+      const monthsSet = new Set<string>();
+
       targetDates.forEach(dStr => {
         recordsToUpdate[dStr] = {
           isLocked: false,
@@ -1436,6 +1439,8 @@ export const AdminAttendanceView: React.FC = () => {
           unlockedAt: nowIso,
           unlockedBy: approverName,
         };
+        lockedDaysToUpdate[dStr] = false;
+        monthsSet.add(dStr.slice(0, 7));
         newUnlockedLocal[dStr] = true;
       });
 
@@ -1443,10 +1448,31 @@ export const AdminAttendanceView: React.FC = () => {
         classRef,
         {
           dailyRecords: recordsToUpdate,
+          lockedDays: lockedDaysToUpdate,
           updatedAt: nowIso,
         },
         { merge: true }
       );
+
+      // Also sync to attendanceLocks central collection
+      for (const mKey of monthsSet) {
+        const monthLocks: Record<string, boolean> = {};
+        targetDates.filter(d => d.startsWith(mKey)).forEach(d => {
+          monthLocks[d] = false;
+        });
+        try {
+          await setDoc(
+            doc(db, 'attendanceLocks', `${req.classId}_${mKey}`),
+            cleanForFirestore({
+              classId: req.classId,
+              month: mKey,
+              lockedDays: monthLocks,
+              updatedAt: nowIso,
+            }),
+            { merge: true }
+          );
+        } catch {}
+      }
 
       // 3. Local API sync
       await fetchWithAuth(`/api/attendance-edit-requests/${req.id}`, {
