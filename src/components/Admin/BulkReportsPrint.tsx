@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { ClassItem, Examination, StudentProgressReport, InstitutionSettings, sortStudentsBoysFirst, normalizeGender, determineStudentGender, ProgressReportSubject } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
@@ -39,6 +39,7 @@ export const BulkReportsPrint: React.FC = () => {
   const [isBatchPrinting, setIsBatchPrinting] = useState(false);
   const [pdfProgress, setPdfProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
   const [showRegModal, setShowRegModal] = useState(false);
+  const [subjectStatusesMap, setSubjectStatusesMap] = useState<Record<string, string>>({});
   const bulkCardsContainerRef = useRef<HTMLDivElement>(null);
 
   const isMl = lang === 'ml';
@@ -114,6 +115,39 @@ export const BulkReportsPrint: React.FC = () => {
           },
         }));
 
+        const statuses: Record<string, string> = { ...(data.subjectStatuses || {}) };
+        if (Array.isArray(data.markSheets)) {
+          data.markSheets.forEach((ms: any) => {
+            if (ms.subjectId) statuses[ms.subjectId] = ms.status;
+          });
+        }
+        rawReports.forEach(r => {
+          (r.subjects || []).forEach(s => {
+            if (s.subjectId && (s.status || s.markSheetStatus)) {
+              if (!statuses[s.subjectId]) {
+                statuses[s.subjectId] = s.status || s.markSheetStatus || 'draft';
+              }
+            }
+          });
+        });
+        setSubjectStatusesMap(statuses);
+
+        // Also fetch mark-sheets list for the exam to ensure full status coverage
+        fetchWithAuth(`/api/mark-sheets?examinationId=${eId}`)
+          .then(r => (r.ok ? r.json() : []))
+          .then((sheets: any[]) => {
+            if (Array.isArray(sheets)) {
+              const extra: Record<string, string> = {};
+              sheets
+                .filter(ms => ms.classId === cId || String(ms.classId) === String(cId))
+                .forEach(ms => {
+                  if (ms.subjectId) extra[ms.subjectId] = ms.status;
+                });
+              setSubjectStatusesMap(prev => ({ ...prev, ...extra }));
+            }
+          })
+          .catch(() => {});
+
         setReportsData({
           reports: sortedReports,
           settings: data.settings || settings,
@@ -137,6 +171,13 @@ export const BulkReportsPrint: React.FC = () => {
   // Run initial data loading strictly once on mount
   useEffect(() => {
     loadInitial();
+    const handleSettingsUpdated = (e: any) => {
+      if (e?.detail) setSettings(e.detail);
+    };
+    window.addEventListener('madrasa_settings_updated', handleSettingsUpdated);
+    return () => {
+      window.removeEventListener('madrasa_settings_updated', handleSettingsUpdated);
+    };
   }, []);
 
   // Dynamically re-fetch reports whenever selected class or exam changes
@@ -230,6 +271,81 @@ export const BulkReportsPrint: React.FC = () => {
     });
   }, [safeReports, classLedgerRankings, classTotalExpectedMax]);
 
+  // Helper to verify if subject mark sheet is formally submitted ('submitted' | 'approved' | 'locked')
+  const isSubjectSubmitted = useCallback((subId: string, subObj?: ProgressReportSubject) => {
+    const status = (
+      subjectStatusesMap[subId] ||
+      subObj?.status ||
+      subObj?.markSheetStatus ||
+      (subObj as any)?.markStatus ||
+      'draft'
+    ).toLowerCase();
+    return status === 'submitted' || status === 'approved' || status === 'locked';
+  }, [subjectStatusesMap]);
+
+  // Transformed reports strictly for Score Sheet where draft marks are forced to 0
+  const scoreSheetReports = useMemo(() => {
+    return safeReports.map(rep => {
+      const sanitizedSubjects = (rep.subjects || []).map(sub => {
+        const submitted = isSubjectSubmitted(sub.subjectId, sub);
+        if (!submitted) {
+          return {
+            ...sub,
+            status: 'draft',
+            markSheetStatus: 'draft',
+            isAbsent: false,
+            obtainedMarks: 0,
+            components: (sub.components || []).map(c => ({
+              ...c,
+              obtainedMarks: 0,
+            })),
+          };
+        }
+        return {
+          ...sub,
+          status: 'submitted',
+          markSheetStatus: 'submitted',
+        };
+      });
+
+      return {
+        ...rep,
+        subjects: sanitizedSubjects,
+      };
+    });
+  }, [safeReports, isSubjectSubmitted]);
+
+  // Dense rankings computed specifically for the Score Sheet using the forced 0 values
+  const scoreSheetRankings = useMemo(() => {
+    return computeClassLedgerRankings(scoreSheetReports, classTotalExpectedMax, true);
+  }, [scoreSheetReports, classTotalExpectedMax]);
+
+  // Enriched reports for Score Sheet
+  const enrichedScoreSheetReports = useMemo(() => {
+    return scoreSheetReports.map(rep => {
+      const s = rep.student;
+      const rankData = scoreSheetRankings.get(s?.id || '') || (s?.admissionNo ? scoreSheetRankings.get(s.admissionNo) : undefined);
+      const metrics = rankData?.metrics || calculateStudentReportMetrics(rep, classTotalExpectedMax, true);
+      return {
+        ...rep,
+        classRank: rankData?.rank ?? null,
+        denseRankText: rankData?.denseRankText || (metrics.displayResultStatus === 'Passed' ? 'Passed' : metrics.displayResultStatus),
+        resultStatus: metrics.displayResultStatus as any,
+        totalObtainedMarks: metrics.displayGrandObtained,
+        attendedObtainedMarks: metrics.displayGrandObtained,
+        totalMaxMarks: classTotalExpectedMax,
+        attendedMaxMarks: metrics.grandAttendedMax > 0 ? metrics.grandAttendedMax : classTotalExpectedMax,
+        percentage: Number(metrics.percentageStr) || 0,
+        hasAbsentSubjects: metrics.hasAbsent,
+        hasWithheldCe: metrics.hasWithheld,
+        attendance: {
+          daysAttended: metrics.attendanceDays,
+          totalWorkingDays: metrics.attendanceTotal,
+        },
+      };
+    });
+  }, [scoreSheetReports, scoreSheetRankings, classTotalExpectedMax]);
+
   const ledgerBoysCount = enrichedReports.filter(r => determineStudentGender(r.student, selectedExamId) === 'Boy').length;
   const ledgerGirlsCount = enrichedReports.filter(r => determineStudentGender(r.student, selectedExamId) === 'Girl').length;
 
@@ -261,7 +377,7 @@ export const BulkReportsPrint: React.FC = () => {
   };
 
   const handleExportScoreSheetCsv = () => {
-    if (!enrichedReports.length) return;
+    if (!enrichedScoreSheetReports.length) return;
     const headerCols = ['Roll No', 'Student Name'];
     classSubjects.forEach(sub => {
       const sName = sub.subjectNameEn || sub.code;
@@ -270,16 +386,17 @@ export const BulkReportsPrint: React.FC = () => {
     headerCols.push('Grand Total', 'Percentage', 'Attendance', 'Rank');
     let csv = headerCols.join(',') + '\n';
 
-    enrichedReports.forEach(rep => {
+    enrichedScoreSheetReports.forEach(rep => {
       const s = rep.student;
-      const rankData = classLedgerRankings.get(s?.id || '') || (s?.admissionNo ? classLedgerRankings.get(s.admissionNo) : undefined);
-      const metrics = rankData?.metrics || calculateStudentReportMetrics(rep, classTotalExpectedMax);
+      const rankData = scoreSheetRankings.get(s?.id || '') || (s?.admissionNo ? scoreSheetRankings.get(s.admissionNo) : undefined);
+      const metrics = rankData?.metrics || calculateStudentReportMetrics(rep, classTotalExpectedMax, true);
       const cleanName = `"${(s?.nameEn || '').replace(/"/g, '""')}"`;
       const row: (string | number)[] = [s?.rollNo || '-', cleanName];
 
       classSubjects.forEach(subDef => {
         const subData = (rep.subjects || []).find(sub => sub.subjectId === subDef.subjectId);
-        const marks = computeSubjectScoreSheetMarks(subData);
+        const subStatus = subjectStatusesMap[subDef.subjectId] || subData?.status || subData?.markSheetStatus;
+        const marks = computeSubjectScoreSheetMarks(subData, subStatus);
         row.push(marks.isAbsent ? 'AB' : marks.te);
         row.push(marks.isAbsent ? 'AB' : marks.ce);
         row.push(marks.isAbsent ? 'AB' : marks.tot);
@@ -833,41 +950,47 @@ export const BulkReportsPrint: React.FC = () => {
 
             {/* Score Sheet Container */}
             <div className="score-sheet-container p-4 md:p-6 print:p-0">
-              {/* Dynamic A4 Landscape Print Header (Preservation Rule) */}
-              <div className="score-sheet-print-header mb-4 text-center border-b border-slate-200 pb-3 print:border-black print:mb-2 print:pb-2">
-                <div className="font-serif text-emerald-900 text-xs sm:text-sm font-bold print:text-black" dir="rtl">
-                  {reportsData?.settings?.madrasaArabicHeader || settings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
+              {/* Dynamic A4 Landscape Print Header (Official Formatting Style matching Fee Receipts) */}
+              <div className="score-sheet-print-header hidden print:block text-center border-b border-black pb-2 mb-2">
+                <div className="font-serif text-black text-xs font-bold" dir="rtl">
+                  {settings?.madrasaArabicHeader || reportsData?.settings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
                 </div>
-                <h1 className="text-base sm:text-lg font-black uppercase text-emerald-950 font-serif tracking-wide mt-0.5 print:text-black print:text-base">
-                  {reportsData?.settings?.institutionName || settings?.institutionName || 'Al-Madrasathul Islamiya Pallikkuth'}
+                <h1 className="text-base font-black uppercase text-black font-serif tracking-wide mt-0.5">
+                  {settings?.institutionName || reportsData?.settings?.institutionName || settings?.madrasaNameEn || reportsData?.settings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
                 </h1>
-                <h2 className="text-xs sm:text-sm font-bold text-emerald-900 font-ml print:text-black print:text-xs">
-                  {reportsData?.settings?.institutionNameMl || settings?.institutionNameMl || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്'}
-                </h2>
-                <div className="text-[10px] text-slate-500 font-medium print:text-black">
-                  {reportsData?.settings?.institutionSubtitle || (reportsData?.settings?.registrationNumber ? `Reg. No: ${reportsData.settings.registrationNumber}` : 'Reg. No: 11425')}
-                </div>
+                {(settings?.institutionNameMl || reportsData?.settings?.institutionNameMl || settings?.madrasaNameMl || reportsData?.settings?.madrasaNameMl) && (
+                  <h2 className="text-xs font-bold text-black font-ml mt-0.5">
+                    {settings?.institutionNameMl || reportsData?.settings?.institutionNameMl || settings?.madrasaNameMl || reportsData?.settings?.madrasaNameMl}
+                  </h2>
+                )}
+                {(settings?.institutionSubtitle || reportsData?.settings?.institutionSubtitle || settings?.locationEn || reportsData?.settings?.locationEn) && (
+                  <div className="text-[10px] font-semibold text-black tracking-wide mt-0.5">
+                    {settings?.institutionSubtitle || reportsData?.settings?.institutionSubtitle || settings?.locationEn || reportsData?.settings?.locationEn}
+                  </div>
+                )}
+                <p className="text-[10px] text-black mt-0.5">
+                  {(settings?.registrationNumber || reportsData?.settings?.registrationNumber || settings?.registrationNo || reportsData?.settings?.registrationNo)
+                    ? `Reg. No: ${settings?.registrationNumber || reportsData?.settings?.registrationNumber || settings?.registrationNo || reportsData?.settings?.registrationNo} • `
+                    : ''}
+                  Consolidated Examination Score Sheet (2026–2027)
+                </p>
 
-                <div className="inline-block mt-2 px-3 py-0.5 bg-emerald-900 text-white rounded font-bold text-[11px] uppercase tracking-wider print:bg-transparent print:text-black print:border-b print:border-black print:mt-1">
-                  Consolidated Examination Score Sheet
-                </div>
-
-                {/* Dynamic Metadata Row: Institution Name, Exam, Class, Teacher */}
-                <div className="mt-2.5 flex flex-wrap items-center justify-between text-xs px-2 text-slate-800 font-semibold border-t border-b border-slate-200 py-1.5 print:border-black print:text-[9pt] print:mt-1 print:py-1">
+                {/* Dynamic Metadata Row: Exam Name, Class Name, Class Teacher, Academic Year */}
+                <div className="mt-1.5 flex items-center justify-between text-[9pt] px-2 text-black font-semibold border-t border-b border-black py-1">
                   <div>
-                    <span className="text-slate-500 print:text-black uppercase text-[10px]">Exam:</span>{' '}
-                    <span className="font-bold">{currentExam ? (isMl ? currentExam.nameMl : currentExam.nameEn) : 'Examination'}</span>
+                    <span className="uppercase text-[8pt] font-normal">Exam:</span>{' '}
+                    <span className="font-bold">{currentExam ? (isMl ? (currentExam.nameMl || currentExam.nameEn) : currentExam.nameEn) : 'Examination'}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 print:text-black uppercase text-[10px]">Class:</span>{' '}
+                    <span className="uppercase text-[8pt] font-normal">Class:</span>{' '}
                     <span className="font-bold">{classLabelEnglish}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 print:text-black uppercase text-[10px]">Class Teacher:</span>{' '}
-                    <span className="font-bold">{classTeacherName}</span>
+                    <span className="uppercase text-[8pt] font-normal">Class Teacher:</span>{' '}
+                    <span className="font-bold">{classTeacherName || 'Class Teacher'}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 print:text-black uppercase text-[10px]">Academic Year:</span>{' '}
+                    <span className="uppercase text-[8pt] font-normal">Academic Year:</span>{' '}
                     <span className="font-mono font-bold">2026–2027</span>
                   </div>
                 </div>
@@ -959,10 +1082,10 @@ export const BulkReportsPrint: React.FC = () => {
                   </thead>
 
                   <tbody className="divide-y divide-slate-200 print:divide-black">
-                    {enrichedReports.map((rep, idx) => {
+                    {enrichedScoreSheetReports.map((rep, idx) => {
                       const s = rep?.student;
-                      const rankData = classLedgerRankings.get(s?.id || '') || (s?.admissionNo ? classLedgerRankings.get(s.admissionNo) : undefined);
-                      const metrics = rankData?.metrics || calculateStudentReportMetrics(rep, classTotalExpectedMax);
+                      const rankData = scoreSheetRankings.get(s?.id || '') || (s?.admissionNo ? scoreSheetRankings.get(s.admissionNo) : undefined);
+                      const metrics = rankData?.metrics || calculateStudentReportMetrics(rep, classTotalExpectedMax, true);
 
                       return (
                         <tr
@@ -986,7 +1109,8 @@ export const BulkReportsPrint: React.FC = () => {
                           {/* Subject Columns: TE | CE | Tot */}
                           {classSubjects.map(subDef => {
                             const subData = (rep.subjects || []).find(sub => sub.subjectId === subDef.subjectId);
-                            const marks = computeSubjectScoreSheetMarks(subData);
+                            const subStatus = subjectStatusesMap[subDef.subjectId] || subData?.status || subData?.markSheetStatus;
+                            const marks = computeSubjectScoreSheetMarks(subData, subStatus);
 
                             return (
                               <React.Fragment key={`ss_marks_${s?.id}_${subDef.subjectId}`}>

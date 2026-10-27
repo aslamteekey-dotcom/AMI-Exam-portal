@@ -26,6 +26,12 @@ import {
 import { firestoreSync } from '../../services/firestoreSync';
 import { logAuditEvent } from '../../services/auditLogger';
 import {
+  isAlternateOffDay,
+  isAlternateScheduleClass,
+  getClassScheduleSummary,
+  getScheduledOffDayReason,
+} from '../../utils/scheduleUtils';
+import {
   Calendar,
   CalendarDays,
   Check,
@@ -3185,6 +3191,17 @@ export const AdminAttendanceView: React.FC = () => {
                       const isFuture = d.dateStr > todayStr;
                       const isDayHoliday = isDateHoliday(d.dateStr, selectedClassId);
                       const holInfo = getHolidayInfo(d.dateStr, selectedClassId);
+                      const isAltOff = isAlternateOffDay(selectedClass?.name || selectedClassId, d.dateStr);
+                      const recForDay = classAttendanceConfig?.dailyRecords?.[d.dateStr];
+                      const hasDayMarks = Boolean(
+                        recForDay &&
+                        !recForDay.isHoliday &&
+                        (recForDay.markedAt ||
+                          (recForDay.presentStudentIds && recForDay.presentStudentIds.length > 0) ||
+                          (recForDay.absentStudentIds && recForDay.absentStudentIds.length > 0) ||
+                          (recForDay.statusMap && Object.keys(recForDay.statusMap).length > 0))
+                      );
+                      const isUnmarkedAltOff = isAltOff && !hasDayMarks && !isDayHoliday && !isFuture;
 
                       return (
                         <th
@@ -3192,6 +3209,8 @@ export const AdminAttendanceView: React.FC = () => {
                           className={`py-3 px-2 text-center min-w-[80px] ${
                             isDayHoliday
                               ? 'bg-amber-100 text-amber-950 border-b-2 border-amber-300'
+                              : isUnmarkedAltOff
+                              ? 'bg-slate-100/80 text-slate-500 border-b-2 border-slate-200'
                               : isFuture
                               ? 'bg-slate-100/70 text-slate-400'
                               : 'bg-slate-100 text-slate-700'
@@ -3203,6 +3222,16 @@ export const AdminAttendanceView: React.FC = () => {
                             {isFuture && <Lock className="w-3 h-3 text-slate-400" />}
                           </div>
                           <div className="text-[10px] font-mono text-slate-500">{d.shortDate}</div>
+                          {isUnmarkedAltOff && (
+                            <div className="mt-1">
+                              <span
+                                className="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 uppercase tracking-wider"
+                                title="Scheduled Off-Day"
+                              >
+                                OFF-DAY
+                              </span>
+                            </div>
+                          )}
                         </th>
                       );
                     })}
@@ -3212,7 +3241,22 @@ export const AdminAttendanceView: React.FC = () => {
                 <tbody className="divide-y divide-slate-100">
                   {classStudents.map(st => {
                     const studentWeek = weeklyStatusMap[st.id] || {};
-                    const elapsedWorkingDays = weekDays.filter(d => d.dateStr <= todayStr && !isDateHoliday(d.dateStr, selectedClassId));
+                    const elapsedWorkingDays = weekDays.filter(d => {
+                      if (d.dateStr > todayStr) return false;
+                      if (isDateHoliday(d.dateStr, selectedClassId)) return false;
+                      const isAltOff = isAlternateOffDay(selectedClass?.name || selectedClassId, d.dateStr);
+                      const recForDay = classAttendanceConfig?.dailyRecords?.[d.dateStr];
+                      const hasDayMarks = Boolean(
+                        recForDay &&
+                        !recForDay.isHoliday &&
+                        (recForDay.markedAt ||
+                          (recForDay.presentStudentIds && recForDay.presentStudentIds.length > 0) ||
+                          (recForDay.absentStudentIds && recForDay.absentStudentIds.length > 0) ||
+                          (recForDay.statusMap && Object.keys(recForDay.statusMap).length > 0))
+                      );
+                      if (isAltOff && !hasDayMarks) return false;
+                      return true;
+                    });
                     let weekPresentCount = 0;
                     elapsedWorkingDays.forEach(d => {
                       if (studentWeek[d.dateStr] !== false) weekPresentCount++;
@@ -3257,6 +3301,31 @@ export const AdminAttendanceView: React.FC = () => {
                                   title="Future date locked"
                                 >
                                   <Lock className="w-3.5 h-3.5" />
+                                </div>
+                              </td>
+                            );
+                          }
+
+                          const isAltOff = isAlternateOffDay(selectedClass?.name || selectedClassId, d.dateStr);
+                          const recForDay = classAttendanceConfig?.dailyRecords?.[d.dateStr];
+                          const hasDayMarks = Boolean(
+                            recForDay &&
+                            !recForDay.isHoliday &&
+                            (recForDay.markedAt ||
+                              (recForDay.presentStudentIds && recForDay.presentStudentIds.length > 0) ||
+                              (recForDay.absentStudentIds && recForDay.absentStudentIds.length > 0) ||
+                              (recForDay.statusMap && Object.keys(recForDay.statusMap).length > 0))
+                          );
+                          const isUnmarkedAltOff = isAltOff && !hasDayMarks;
+
+                          if (isUnmarkedAltOff) {
+                            return (
+                              <td key={d.dateStr} className="py-2 px-1.5 text-center bg-slate-50/60">
+                                <div
+                                  className="min-h-10 min-w-10 w-10 h-10 rounded-xl mx-auto flex flex-col items-center justify-center border border-slate-200 bg-slate-100/90 text-slate-500 text-[9px] font-bold select-none cursor-default shadow-2xs"
+                                  title={`${selectedClass?.name || 'Class'}: Scheduled Off-Day (${d.dayName})`}
+                                >
+                                  <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500">OFF-DAY</span>
                                 </div>
                               </td>
                             );

@@ -1069,8 +1069,13 @@ export class FirestoreSyncService {
   public async syncParent(parent: User): Promise<void> {
     if (isFirestoreQuotaExhausted()) return;
     try {
-      await setDoc(doc(db, 'parents', parent.id), cleanForFirestore(parent));
+      const cleaned = cleanForFirestore(parent);
+      await Promise.all([
+        setDoc(doc(db, 'parents', parent.id), cleaned),
+        setDoc(doc(db, 'users', parent.id), cleaned),
+      ]);
     } catch (e) {
+      console.error('Firestore syncParent error:', e);
       this.handleWriteError(e, OperationType.WRITE, `parents/${parent.id}`);
     }
   }
@@ -1079,8 +1084,12 @@ export class FirestoreSyncService {
   public async deleteParent(parentId: string): Promise<void> {
     if (isFirestoreQuotaExhausted()) return;
     try {
-      await deleteDoc(doc(db, 'parents', parentId));
+      await Promise.all([
+        deleteDoc(doc(db, 'parents', parentId)),
+        deleteDoc(doc(db, 'users', parentId)),
+      ]);
     } catch (e) {
+      console.error('Firestore deleteParent error:', e);
       this.handleWriteError(e, OperationType.DELETE, `parents/${parentId}`);
     }
   }

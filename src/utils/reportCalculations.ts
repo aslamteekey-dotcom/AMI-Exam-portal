@@ -72,7 +72,8 @@ export function extractComponentColumns(components: { key: string; labelEn: stri
 
 export function calculateStudentReportMetrics(
   report: StudentProgressReport,
-  totalClassExpectedMax?: number
+  totalClassExpectedMax?: number,
+  isScoreSheet = false
 ): StudentCalculationResult {
   let grandAttendedObtained = 0;
   let grandAttendedMax = 0;
@@ -82,9 +83,19 @@ export function calculateStudentReportMetrics(
   let hasFailedWritten = false;
 
   (report.subjects || []).forEach((sub) => {
+    const rawStatus = (sub as any)?.status || (sub as any)?.markSheetStatus || (sub as any)?.markStatus;
+    const isSubmitted = rawStatus ? (rawStatus === 'submitted' || rawStatus === 'approved' || rawStatus === 'locked') : true;
+
     const { omrVal, ocrVal, cieVal, omrMax, ocrMax, cieMax } = extractComponentColumns(sub.components || []);
     const subMax = sub.maxMarks || (omrMax + ocrMax + cieMax) || 50;
     totalSubjectsMax += subMax;
+
+    if (isScoreSheet && !isSubmitted) {
+      // Unsubmitted / Draft subject on Score Sheet:
+      // Forced to 0 marks obtained, 0 contributed to grandAttendedObtained,
+      // and does NOT count as absent, fail, or withheld.
+      return;
+    }
 
     if (sub.isAbsent) {
       hasAbsent = true;
@@ -116,19 +127,23 @@ export function calculateStudentReportMetrics(
   });
 
   // Total Marks Obtained: sum of all (OMR + OCR + CIE) marks across attended subjects
-  const displayGrandObtained = grandAttendedObtained > 0
+  const displayGrandObtained = isScoreSheet
     ? grandAttendedObtained
-    : (typeof report.attendedObtainedMarks === 'number' && report.attendedObtainedMarks > 0
-        ? report.attendedObtainedMarks
-        : (typeof report.totalObtainedMarks === 'number' && report.totalObtainedMarks > 0
-            ? report.totalObtainedMarks
-            : grandAttendedObtained));
+    : (grandAttendedObtained > 0
+        ? grandAttendedObtained
+        : (typeof report.attendedObtainedMarks === 'number' && report.attendedObtainedMarks > 0
+            ? report.attendedObtainedMarks
+            : (typeof report.totalObtainedMarks === 'number' && report.totalObtainedMarks > 0
+                ? report.totalObtainedMarks
+                : grandAttendedObtained)));
 
   // Total Max Marks: consistently calculated for class (e.g. 400 for 8 subjects)
   const displayGrandMax = totalClassExpectedMax || (totalSubjectsMax > 0 ? totalSubjectsMax : 400);
 
   // Percentage: calculated against attended max (if attended) or total max, matching the card
-  const basePercentageMax = grandAttendedMax > 0 ? grandAttendedMax : displayGrandMax;
+  const basePercentageMax = isScoreSheet
+    ? (totalClassExpectedMax || (totalSubjectsMax > 0 ? totalSubjectsMax : 400))
+    : (grandAttendedMax > 0 ? grandAttendedMax : displayGrandMax);
   const percentageStr = basePercentageMax > 0
     ? ((displayGrandObtained / basePercentageMax) * 100).toFixed(2)
     : (report?.percentage !== null && report?.percentage !== undefined && !isNaN(report.percentage)
@@ -179,7 +194,11 @@ export function calculateStudentReportMetrics(
   };
 }
 
-export function computeClassLedgerRankings(reports: StudentProgressReport[], totalClassExpectedMax?: number) {
+export function computeClassLedgerRankings(
+  reports: StudentProgressReport[],
+  totalClassExpectedMax?: number,
+  isScoreSheet = false
+) {
   // Determine consistent class max: e.g. 8 subjects * 50 = 400
   const resolvedClassMax = totalClassExpectedMax || reports.reduce((max, r) => {
     const sSum = (r.subjects || []).reduce((sum, s) => sum + (s.maxMarks || 50), 0);
@@ -189,7 +208,7 @@ export function computeClassLedgerRankings(reports: StudentProgressReport[], tot
   // 1. Calculate metrics for all reports
   const reportMetrics = new Map<string, StudentCalculationResult>();
   reports.forEach((r) => {
-    const m = calculateStudentReportMetrics(r, resolvedClassMax);
+    const m = calculateStudentReportMetrics(r, resolvedClassMax, isScoreSheet);
     if (r.student?.id) reportMetrics.set(r.student.id, m);
     if (r.student?.admissionNo) reportMetrics.set(r.student.admissionNo, m);
   });
@@ -283,6 +302,8 @@ export interface SubjectScoreSheetMarks {
 
 export function computeSubjectScoreSheetMarks(
   sub: {
+    status?: string;
+    markSheetStatus?: string;
     isAbsent?: boolean;
     obtainedMarks?: number | null;
     maxMarks?: number;
@@ -293,13 +314,33 @@ export function computeSubjectScoreSheetMarks(
       maxMarks?: number;
       obtainedMarks?: number | null;
     }[];
-  } | undefined
+  } | undefined,
+  subjectStatus?: string
 ): SubjectScoreSheetMarks {
   if (!sub) {
     return { isAbsent: false, te: '—', ce: '—', tot: '—', teMax: 0, ceMax: 0, totMax: 0, isFail: false };
   }
 
+  const rawStatus = (subjectStatus || sub.status || (sub as any)?.markStatus || sub.markSheetStatus || '').toLowerCase();
+  const isSubmitted = rawStatus === 'submitted' || rawStatus === 'approved' || rawStatus === 'locked';
   const subMax = sub.maxMarks || 50;
+
+  // CONDITIONAL MARK RENDERING BASED ON STATUS:
+  // If the subject's mark status is 'draft' (or has not reached at least 'submitted', 'approved', or 'locked'),
+  // DO NOT display actual entered marks. Force TE, CE, and Tot to be 0 for all students in that subject.
+  // ABSENT FLAG OVERRIDE: If status is 'draft', display should be 0 even if the teacher has temporarily toggled isAbsent.
+  if (!isSubmitted) {
+    return {
+      isAbsent: false,
+      te: 0,
+      ce: 0,
+      tot: 0,
+      teMax: 0,
+      ceMax: 0,
+      totMax: subMax,
+      isFail: false,
+    };
+  }
 
   if (sub.isAbsent) {
     return { isAbsent: true, te: 'AB', ce: 'AB', tot: 'AB', teMax: 0, ceMax: 0, totMax: subMax, isFail: true };

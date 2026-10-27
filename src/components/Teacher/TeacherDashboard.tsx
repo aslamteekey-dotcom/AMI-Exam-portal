@@ -32,6 +32,14 @@ import { MarkEntryScreen } from './MarkEntryScreen';
 import { useHorizontalScroll, handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
 import { useAttendanceLocks } from '../../hooks/useAttendanceLocks';
 import {
+  isAlternateOffDay,
+  isClassScheduledOffDay,
+  isAlternateScheduleClass,
+  getScheduledOffDayReason,
+  getClassScheduleSummary,
+  parseDateToDayOfWeek,
+} from '../../utils/scheduleUtils';
+import {
   db,
   handleFirestoreError,
   OperationType,
@@ -273,6 +281,12 @@ export const TeacherDashboard: React.FC = () => {
   const [isSavingWeekly, setIsSavingWeekly] = useState(false);
   const [weeklySaveSuccess, setWeeklySaveSuccess] = useState(false);
   const [dailyViewLayout, setDailyViewLayout] = useState<'table' | 'cards'>('table');
+  const [isSpecialWorkingDay, setIsSpecialWorkingDay] = useState<boolean>(false);
+
+  // Reset teacher special working day override when switching date or class
+  useEffect(() => {
+    setIsSpecialWorkingDay(false);
+  }, [selectedAttendanceDate, attendanceClassId]);
 
   // Strict Hard Restriction: Instantly clamp to June 1 of academic year and cannot exceed today
   useEffect(() => {
@@ -1651,6 +1665,20 @@ export const TeacherDashboard: React.FC = () => {
       if (!newMap[st.id]) newMap[st.id] = {};
       weekDays.forEach(wDay => {
         if (wDay.dateStr <= todayStr && !isDateLocked(wDay.dateStr) && !isDateHoliday(wDay.dateStr, attendanceClassId)) {
+          const activeClassName = classes.find(c => c.id === attendanceClassId)?.name || attendanceClassId;
+          const isDayAltOff = isAlternateOffDay(activeClassName, wDay.dateStr);
+          const dayRec = classAttendanceConfig?.dailyRecords?.[wDay.dateStr];
+          const dayHasMarks = Boolean(
+            dayRec &&
+            !dayRec.isHoliday &&
+            (dayRec.markedAt ||
+              (dayRec.presentStudentIds && dayRec.presentStudentIds.length > 0) ||
+              (dayRec.absentStudentIds && dayRec.absentStudentIds.length > 0) ||
+              (dayRec.statusMap && Object.keys(dayRec.statusMap).length > 0))
+          );
+          if (isDayAltOff && !dayHasMarks) {
+            return;
+          }
           newMap[st.id][wDay.dateStr] = true;
         }
       });
@@ -1932,6 +1960,22 @@ export const TeacherDashboard: React.FC = () => {
 
         // If day was already marked & saved and not unlocked, keep its existing record
         if (isDateLocked(wDay.dateStr) && updatedDailyRecords[wDay.dateStr]) {
+          return;
+        }
+
+        // If day is an alternate scheduled off-day and has no recorded attendance, skip creating an active record
+        const activeClassName = classes.find(c => c.id === attendanceClassId)?.name || attendanceClassId;
+        const isDayAltOff = isAlternateOffDay(activeClassName, wDay.dateStr);
+        const existingRec = updatedDailyRecords[wDay.dateStr];
+        const dayHasMarks = Boolean(
+          existingRec &&
+          !existingRec.isHoliday &&
+          (existingRec.markedAt ||
+            (existingRec.presentStudentIds && existingRec.presentStudentIds.length > 0) ||
+            (existingRec.absentStudentIds && existingRec.absentStudentIds.length > 0) ||
+            (existingRec.statusMap && Object.keys(existingRec.statusMap).length > 0))
+        );
+        if (isDayAltOff && !dayHasMarks) {
           return;
         }
 
@@ -2634,8 +2678,33 @@ export const TeacherDashboard: React.FC = () => {
         const ms = markSheets.find(
           m => m.examinationId === selectedExamId && m.classId === inChargeClass.id && m.subjectId === sub.id
         );
-        const entry = ms?.studentMarks?.[student.id];
         const max = getSubjectMax(sub);
+
+        // CONDITIONAL MARK RENDERING BASED ON STATUS:
+        // Exclude in-progress / draft marks. Must be formally submitted ('submitted' | 'approved' | 'locked').
+        const isFormallySubmitted = Boolean(
+          ms && (ms.status === 'submitted' || ms.status === 'approved' || ms.status === 'locked')
+        );
+
+        if (!isFormallySubmitted) {
+          // If status is 'draft' (or not submitted/approved/locked):
+          // 1. Force displayed values for TE, CE, and Tot to be 0 for all students in that subject.
+          // 2. Override absent flag: display 0 even if the teacher has temporarily toggled isAbsent.
+          // 3. Draft marks contribute 0 to studentObtained, and do not trigger absent, fail, or withheld.
+          subjectMarksMap[sub.id] = {
+            value: 0,
+            te: 0,
+            ce: 0,
+            tot: 0,
+            isAbsent: false,
+            max,
+            isFail: false,
+            isWithheld: false,
+          };
+          return;
+        }
+
+        const entry = ms?.studentMarks?.[student.id];
 
         if (!entry) {
           subjectMarksMap[sub.id] = { value: '—', te: '—', ce: '—', tot: '—', isAbsent: false, max, isFail: false, isWithheld: false };
@@ -3685,41 +3754,47 @@ export const TeacherDashboard: React.FC = () => {
                     </div>
                   ) : (
                     <div className="score-sheet-container p-4 sm:p-6 print:p-0">
-                      {/* Dynamic A4 Landscape Print Header */}
-                      <div className="score-sheet-print-header mb-4 text-center border-b border-slate-200 pb-3 print:border-black print:mb-2 print:pb-2">
-                        <div className="font-serif text-emerald-900 text-xs sm:text-sm font-bold print:text-black" dir="rtl">
+                      {/* Dynamic A4 Landscape Print Header (Official Formatting Style matching Fee Receipts) */}
+                      <div className="score-sheet-print-header hidden print:block text-center border-b border-black pb-2 mb-2">
+                        <div className="font-serif text-black text-xs font-bold" dir="rtl">
                           {institutionSettings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
                         </div>
-                        <h1 className="text-base sm:text-lg font-black uppercase text-emerald-950 font-serif tracking-wide mt-0.5 print:text-black print:text-base">
+                        <h1 className="text-base font-black uppercase text-black font-serif tracking-wide mt-0.5">
                           {institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
                         </h1>
-                        <h2 className="text-xs sm:text-sm font-bold text-emerald-900 font-ml print:text-black print:text-xs">
-                          {institutionSettings?.institutionNameMl || institutionSettings?.madrasaNameMl || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്'}
-                        </h2>
-                        <div className="text-[10px] text-slate-500 font-medium print:text-black">
-                          {institutionSettings?.institutionSubtitle || (institutionSettings?.registrationNumber ? `Reg. No: ${institutionSettings.registrationNumber}` : 'Reg. No: 11425')}
-                        </div>
+                        {(institutionSettings?.institutionNameMl || institutionSettings?.madrasaNameMl) && (
+                          <h2 className="text-xs font-bold text-black font-ml mt-0.5">
+                            {institutionSettings?.institutionNameMl || institutionSettings?.madrasaNameMl}
+                          </h2>
+                        )}
+                        {(institutionSettings?.institutionSubtitle || institutionSettings?.locationEn) && (
+                          <div className="text-[10px] font-semibold text-black tracking-wide mt-0.5">
+                            {institutionSettings?.institutionSubtitle || institutionSettings?.locationEn}
+                          </div>
+                        )}
+                        <p className="text-[10px] text-black mt-0.5">
+                          {(institutionSettings?.registrationNumber || institutionSettings?.registrationNo)
+                            ? `Reg. No: ${institutionSettings?.registrationNumber || institutionSettings?.registrationNo} • `
+                            : ''}
+                          Consolidated Examination Score Sheet (2026–2027)
+                        </p>
 
-                        <div className="inline-block mt-2 px-3 py-0.5 bg-emerald-900 text-white rounded font-bold text-[11px] uppercase tracking-wider print:bg-transparent print:text-black print:border-b print:border-black print:mt-1">
-                          Consolidated Examination Score Sheet
-                        </div>
-
-                        {/* Dynamic Metadata Row: Institution Name, Exam, Class, Teacher */}
-                        <div className="mt-2.5 flex flex-wrap items-center justify-between text-xs px-2 text-slate-800 font-semibold border-t border-b border-slate-200 py-1.5 print:border-black print:text-[9pt] print:mt-1 print:py-1">
+                        {/* Dynamic Metadata Row: Exam Name, Class Name, Class Teacher, Academic Year */}
+                        <div className="mt-1.5 flex items-center justify-between text-[9pt] px-2 text-black font-semibold border-t border-b border-black py-1">
                           <div>
-                            <span className="text-slate-500 print:text-black uppercase text-[10px]">Exam:</span>{' '}
+                            <span className="uppercase text-[8pt] font-normal">Exam:</span>{' '}
                             <span className="font-bold">{selectedExam ? selectedExam.nameEn : 'Examination'}</span>
                           </div>
                           <div>
-                            <span className="text-slate-500 print:text-black uppercase text-[10px]">Class:</span>{' '}
+                            <span className="uppercase text-[8pt] font-normal">Class:</span>{' '}
                             <span className="font-bold">{inChargeClass.name}</span>
                           </div>
                           <div>
-                            <span className="text-slate-500 print:text-black uppercase text-[10px]">Class Teacher:</span>{' '}
+                            <span className="uppercase text-[8pt] font-normal">Class Teacher:</span>{' '}
                             <span className="font-bold">{user?.name || 'Class Teacher'}</span>
                           </div>
                           <div>
-                            <span className="text-slate-500 print:text-black uppercase text-[10px]">Academic Year:</span>{' '}
+                            <span className="uppercase text-[8pt] font-normal">Academic Year:</span>{' '}
                             <span className="font-mono font-bold">2026–2027</span>
                           </div>
                         </div>
@@ -4693,6 +4768,13 @@ export const TeacherDashboard: React.FC = () => {
                     <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
                     Live Sync Active
                   </span>
+
+                  {isAlternateScheduleClass(classes.find(c => c.id === attendanceClassId)?.name || attendanceClassId) && (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-blue-50 text-blue-900 border border-blue-200">
+                      <Clock className="w-3.5 h-3.5 text-blue-600" />
+                      <span>{getClassScheduleSummary(classes.find(c => c.id === attendanceClassId)?.name || attendanceClassId)}</span>
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -4755,8 +4837,49 @@ export const TeacherDashboard: React.FC = () => {
               const isDailyEditing = lockStatus.canEdit && lockStatus.isUnlockedByPrincipal;
               const isDailyLocked = lockStatus.isLocked;
 
+              const selectedClassName = classes.find(c => c.id === attendanceClassId)?.name || attendanceClassId;
+              const isAltOff = isAlternateOffDay(selectedClassName || attendanceClassId, selectedAttendanceDate);
+              const hasRecordedAttendance = Boolean(
+                dailyRecord &&
+                !dailyRecord.isHoliday &&
+                (dailyRecord.markedAt ||
+                  (dailyRecord.presentStudentIds && dailyRecord.presentStudentIds.length > 0) ||
+                  (dailyRecord.absentStudentIds && dailyRecord.absentStudentIds.length > 0) ||
+                  (dailyRecord.statusMap && Object.keys(dailyRecord.statusMap).length > 0))
+              );
+              const isScheduledOffDay = isAltOff && !hasRecordedAttendance && !isSpecialWorkingDay;
+
               return (
                 <div className="space-y-4">
+                  {/* Special Working Day Alert Banner when Activated by Teacher */}
+                  {isSpecialWorkingDay && isAltOff && !hasRecordedAttendance && (
+                    <div className="bg-emerald-50 border-2 border-emerald-400 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs animate-fade-in">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-200 text-emerald-950 flex items-center justify-center text-xl shrink-0 shadow-2xs">
+                          📅
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-emerald-950 flex items-center gap-2">
+                            <span>📅 Special Working Day Active (Teacher Override)</span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-200 text-emerald-900 border border-emerald-300">
+                              Open for Marking
+                            </span>
+                          </h4>
+                          <p className="text-xs text-emerald-800 mt-0.5">
+                            You have activated today as a special working day for {selectedClassName}. Mark attendance below and click &quot;Save Attendance&quot; to permanently record it in Firestore.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsSpecialWorkingDay(false)}
+                        className="px-3.5 py-1.5 text-xs font-bold text-emerald-900 bg-white hover:bg-emerald-100 rounded-xl border border-emerald-300 shadow-2xs transition cursor-pointer"
+                      >
+                        Revert to Off-Day
+                      </button>
+                    </div>
+                  )}
+
                   {/* Green Alert Banner when Unlocked by Principal */}
                   {isDailyEditing && !isDailyHoliday && (
                     <div className="bg-emerald-50 border-2 border-emerald-400 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs animate-fade-in">
@@ -4869,6 +4992,20 @@ export const TeacherDashboard: React.FC = () => {
                               <span>Official Holiday: {dailyHolidayInfo?.reason || 'Non-Working Day'}</span>
                             </span>
                           </div>
+                        ) : isScheduledOffDay ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-800 border border-slate-300 shadow-2xs">
+                              <span>📅</span>
+                              <span>{getScheduledOffDayReason(selectedClassName, selectedAttendanceDate) || 'Scheduled Off-Day (Alternate Schedule)'}</span>
+                            </span>
+                          </div>
+                        ) : isAltOff && hasRecordedAttendance ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
+                              <CheckCircle className="w-3.5 h-3.5 text-emerald-700" />
+                              <span>Working Day (Session Recorded)</span>
+                            </span>
+                          </div>
                         ) : isDailyLocked ? (
                           <div className="flex items-center gap-1.5">
                             {reqForDate?.status === 'pending' ? (
@@ -4907,7 +5044,7 @@ export const TeacherDashboard: React.FC = () => {
                     {/* Actions & Metrics Bar */}
                     <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
                       <div className="flex items-center gap-2 flex-wrap">
-                        {!isDailyHoliday && (
+                        {!isDailyHoliday && !isScheduledOffDay && (
                           <>
                             <button
                               type="button"
@@ -4940,6 +5077,16 @@ export const TeacherDashboard: React.FC = () => {
                             </button>
                           </>
                         )}
+                        {isScheduledOffDay && (
+                          <button
+                            type="button"
+                            onClick={() => setIsSpecialWorkingDay(true)}
+                            className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <CalendarCheck className="w-3.5 h-3.5" />
+                            <span>📅 Make it a Working Day</span>
+                          </button>
+                        )}
                       </div>
 
                       {/* Counter Badges & Save / Unlock Request Button */}
@@ -4948,6 +5095,11 @@ export const TeacherDashboard: React.FC = () => {
                           <div className="px-3 py-1.5 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 text-xs font-bold flex items-center gap-1.5">
                             <span>🏖️</span>
                             <span>Official Holiday · Working Day Exempt</span>
+                          </div>
+                        ) : isScheduledOffDay ? (
+                          <div className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold flex items-center gap-1.5">
+                            <span>📅</span>
+                            <span>Scheduled Off-Day</span>
                           </div>
                         ) : (
                           <>
@@ -5035,8 +5187,40 @@ export const TeacherDashboard: React.FC = () => {
                     </div>
                   )}
 
+                  {/* SCHEDULED OFF-DAY CARD (TEACHER OVERRIDE AVAILABLE) */}
+                  {isScheduledOffDay && !isDailyHoliday && (
+                    <div className="bg-gradient-to-r from-slate-50 via-slate-100 to-slate-50 rounded-2xl border-2 border-slate-300 p-8 text-center space-y-4 shadow-xs animate-fade-in">
+                      <div className="w-14 h-14 rounded-2xl bg-white border border-slate-300 flex items-center justify-center text-3xl mx-auto shadow-xs text-slate-700">
+                        📅
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="text-base font-bold text-slate-900">
+                          Today is a scheduled Off-Day for this class.
+                        </h4>
+                        <p className="text-xs text-slate-600 max-w-md mx-auto">
+                          {getScheduledOffDayReason(selectedClassName, selectedAttendanceDate) ||
+                            `${selectedClassName} follows an alternate-day schedule and is scheduled off today.`}
+                        </p>
+                      </div>
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setIsSpecialWorkingDay(true)}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-bold shadow-xs hover:shadow transition cursor-pointer"
+                        >
+                          <CalendarCheck className="w-4 h-4" />
+                          <span>📅 Make it a Working Day</span>
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-slate-500 max-w-lg mx-auto">
+                        If you conducted a special session or regular classes today, click above to unlock the attendance register and record marks for your students.
+                      </p>
+                    </div>
+                  )}
+
                   {/* Student Daily Marking List */}
-                  <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3">
+                  {!isScheduledOffDay && (
+                    <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
                       <div>
                         <span className="text-xs font-bold text-slate-700">
@@ -5363,8 +5547,9 @@ export const TeacherDashboard: React.FC = () => {
                       </div>
                     )}
                   </div>
-                </div>
-              );
+                )}
+              </div>
+            );
             })()}
 
             {/* VIEW 2: WEEKLY ATTENDANCE MARKING */}
@@ -5472,6 +5657,17 @@ export const TeacherDashboard: React.FC = () => {
                             const isDayRecorded = lockStatus.isRecorded;
                             const isDayLocked = lockStatus.isLocked;
                             const isDayEditing = lockStatus.canEdit && lockStatus.isUnlockedByPrincipal;
+                            const isAltOff = isAlternateOffDay(selectedClass?.name || attendanceClassId, d.dateStr);
+                            const recForDay = classAttendanceConfig?.dailyRecords?.[d.dateStr];
+                            const hasDayMarks = Boolean(
+                              recForDay &&
+                              !recForDay.isHoliday &&
+                              (recForDay.markedAt ||
+                                (recForDay.presentStudentIds && recForDay.presentStudentIds.length > 0) ||
+                                (recForDay.absentStudentIds && recForDay.absentStudentIds.length > 0) ||
+                                (recForDay.statusMap && Object.keys(recForDay.statusMap).length > 0))
+                            );
+                            const isUnmarkedAltOff = isAltOff && !hasDayMarks && !isDayHoliday && !isFuture;
 
                             return (
                               <th
@@ -5479,6 +5675,8 @@ export const TeacherDashboard: React.FC = () => {
                                 className={`py-3 px-2 text-center min-w-[80px] transition-colors ${
                                   isDayHoliday
                                     ? 'bg-amber-100/90 text-amber-950 border-b-2 border-amber-300'
+                                    : isUnmarkedAltOff
+                                    ? 'bg-slate-100/80 text-slate-500 border-b-2 border-slate-200'
                                     : isFuture
                                     ? 'bg-slate-100/70 text-slate-400'
                                     : isDayLocked
@@ -5512,6 +5710,15 @@ export const TeacherDashboard: React.FC = () => {
                                     <span className="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200/80 text-slate-500 uppercase tracking-wider">
                                       Future
                                     </span>
+                                  ) : isUnmarkedAltOff ? (
+                                    <div className="space-y-0.5">
+                                      <span
+                                        className="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 uppercase tracking-wider shadow-2xs"
+                                        title="Scheduled Off-Day (No attendance recorded)"
+                                      >
+                                        OFF-DAY
+                                      </span>
+                                    </div>
                                   ) : isDayLocked ? (
                                     <div className="space-y-0.5">
                                       {getRequestForDate(d.dateStr, attendanceClassId)?.status === 'pending' ? (
@@ -5569,7 +5776,22 @@ export const TeacherDashboard: React.FC = () => {
                       <tbody className="divide-y divide-slate-100">
                         {classStudents.map(st => {
                           const studentWeek = weeklyStatusMap[st.id] || {};
-                          const elapsedWorkingDays = weekDays.filter(d => d.dateStr <= todayStr && !isDateHoliday(d.dateStr));
+                          const elapsedWorkingDays = weekDays.filter(d => {
+                            if (d.dateStr > todayStr) return false;
+                            if (isDateHoliday(d.dateStr, attendanceClassId)) return false;
+                            const isAltOff = isAlternateOffDay(selectedClass?.name || attendanceClassId, d.dateStr);
+                            const recForDay = classAttendanceConfig?.dailyRecords?.[d.dateStr];
+                            const hasDayMarks = Boolean(
+                              recForDay &&
+                              !recForDay.isHoliday &&
+                              (recForDay.markedAt ||
+                                (recForDay.presentStudentIds && recForDay.presentStudentIds.length > 0) ||
+                                (recForDay.absentStudentIds && recForDay.absentStudentIds.length > 0) ||
+                                (recForDay.statusMap && Object.keys(recForDay.statusMap).length > 0))
+                            );
+                            if (isAltOff && !hasDayMarks) return false;
+                            return true;
+                          });
                           let weekPresentCount = 0;
                           elapsedWorkingDays.forEach(d => {
                             if (studentWeek[d.dateStr] !== false) weekPresentCount++;
@@ -5658,6 +5880,31 @@ export const TeacherDashboard: React.FC = () => {
                                         title="Future day locked - Advance marking prohibited"
                                       >
                                         <Lock className="w-4 h-4 text-slate-400" />
+                                      </div>
+                                    </td>
+                                  );
+                                }
+
+                                const isAltOff = isAlternateOffDay(selectedClass?.name || attendanceClassId, d.dateStr);
+                                const recForDay = classAttendanceConfig?.dailyRecords?.[d.dateStr];
+                                const hasDayMarks = Boolean(
+                                  recForDay &&
+                                  !recForDay.isHoliday &&
+                                  (recForDay.markedAt ||
+                                    (recForDay.presentStudentIds && recForDay.presentStudentIds.length > 0) ||
+                                    (recForDay.absentStudentIds && recForDay.absentStudentIds.length > 0) ||
+                                    (recForDay.statusMap && Object.keys(recForDay.statusMap).length > 0))
+                                );
+                                const isUnmarkedAltOff = isAltOff && !hasDayMarks;
+
+                                if (isUnmarkedAltOff) {
+                                  return (
+                                    <td key={d.dateStr} className="py-2 px-1.5 text-center bg-slate-50/60">
+                                      <div
+                                        className="min-h-10 min-w-10 w-10 h-10 rounded-xl mx-auto flex flex-col items-center justify-center border border-slate-200 bg-slate-100/90 text-slate-500 text-[9px] font-bold select-none cursor-default shadow-2xs"
+                                        title={`${selectedClass?.name || 'Class'}: Scheduled Off-Day (${d.dayName})`}
+                                      >
+                                        <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500">OFF-DAY</span>
                                       </div>
                                     </td>
                                   );

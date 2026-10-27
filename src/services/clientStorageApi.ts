@@ -1929,6 +1929,7 @@ export class ClientStorageApi {
 
       const ms = markSheetBySub.get(sub.id);
       const entry = ms?.studentMarks?.[student.id] || (student.admissionNo ? ms?.studentMarks?.[student.admissionNo] : undefined);
+      const sheetStatus = ms?.status || 'draft';
 
       if (!ms || !entry) {
         hasIncompleteSubjects = true;
@@ -1941,6 +1942,8 @@ export class ClientStorageApi {
           obtainedMarks: null,
           isAbsent: false,
           hasMissingCe: false,
+          status: sheetStatus,
+          markSheetStatus: sheetStatus,
           components: configuredComponents.map(c => ({
             key: c.componentKey,
             labelEn: c.labelEn,
@@ -1965,6 +1968,8 @@ export class ClientStorageApi {
           obtainedMarks: null,
           isAbsent: true,
           hasMissingCe: false,
+          status: sheetStatus,
+          markSheetStatus: sheetStatus,
           components: configuredComponents.map(c => ({
             key: c.componentKey,
             labelEn: c.labelEn,
@@ -2037,6 +2042,8 @@ export class ClientStorageApi {
         obtainedMarks: resolvedSubjectTotal,
         isAbsent: false,
         hasMissingCe: isCeMissing,
+        status: sheetStatus,
+        markSheetStatus: sheetStatus,
         components: configuredComponents.map(c => ({
           key: c.componentKey,
           labelEn: c.labelEn,
@@ -2301,6 +2308,23 @@ export class ClientStorageApi {
       }
 
       const subIdMatch = path.match(/^\/api\/subjects\/([^/]+)$/);
+      if (subIdMatch && (method === 'PUT' || method === 'PATCH')) {
+        const sId = subIdMatch[1];
+        const idx = this.db.subjects.findIndex(s => s.id === sId);
+        if (idx !== -1) {
+          const existing = this.db.subjects[idx];
+          const updatedSubject: SubjectItem = {
+            ...existing,
+            ...bodyData,
+            id: sId,
+          };
+          this.db.subjects[idx] = updatedSubject;
+          this.saveDB();
+          firestoreSync.syncSubject(updatedSubject).catch(e => console.warn('Firestore syncSubject error:', e));
+          return this.jsonResponse(updatedSubject);
+        }
+        return this.jsonResponse({ error: 'Subject not found' }, 404);
+      }
       if (subIdMatch && method === 'DELETE') {
         const sId = subIdMatch[1];
         this.db.subjects = this.db.subjects.filter(s => s.id !== sId);
@@ -3124,34 +3148,55 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/parents' && method === 'POST') {
-        const { id, username, name, nameMl, phone, studentIds, password } = bodyData;
+        const { id, username, name, nameEn, nameMl, phone, studentIds, password } = bodyData;
         if (!name) return this.jsonResponse({ error: 'Parent Name is required' }, 400);
 
         const parentId = id || `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const trimmedName = name.trim();
+        const trimmedNameEn = (nameEn || name).trim();
+        const trimmedNameMl = (nameMl || name).trim();
+        const trimmedPhone = (phone || '').trim();
+        const trimmedUsername = (username || name).trim();
+        const pwd = (password || 'parent123').trim();
+        const nowIso = new Date().toISOString();
+
         const newParent: User = {
           id: parentId,
-          username: username?.trim() || name.trim(),
-          name: name.trim(),
-          nameMl: nameMl?.trim(),
+          username: trimmedUsername,
+          name: trimmedName,
+          nameEn: trimmedNameEn,
+          nameMl: trimmedNameMl,
           role: 'parent',
-          plainPassword: (password || 'password123').trim(),
+          plainPassword: pwd,
+          passwordHash: clientHashPassword(pwd),
           active: true,
-          phone: phone?.trim(),
-          createdAt: new Date().toISOString(),
+          phone: trimmedPhone,
+          createdAt: nowIso,
+          updatedAt: nowIso,
         };
 
         if (Array.isArray(studentIds) && studentIds.length > 0) {
           const linked = this.db.students.filter(s => studentIds.includes(s.id));
           linked.forEach(s => {
             s.parentUserId = newParent.id;
+            s.parentPhone = trimmedPhone;
+            s.parentNameEn = trimmedNameEn;
+            s.parentNameMl = trimmedNameMl;
+            firestoreSync.syncStudent(s).catch(e => console.warn('Sync student on parent create:', e));
           });
           const elder = getElderChild(linked, this.db.classes);
           if (elder && !password) {
             newParent.plainPassword = elder.admissionNo;
+            newParent.passwordHash = clientHashPassword(elder.admissionNo);
           }
         }
 
-        this.db.users.push(newParent);
+        const existingIdx = this.db.users.findIndex(u => u.id === parentId);
+        if (existingIdx !== -1) {
+          this.db.users[existingIdx] = newParent;
+        } else {
+          this.db.users.push(newParent);
+        }
         this.saveDB();
 
         firestoreSync.syncParent(newParent).catch(e => {
@@ -3947,12 +3992,18 @@ export class ClientStorageApi {
           if (r) reports.push(r);
         });
         const exam = this.db.examinations.find(e => e.id === eId);
+        const classMarkSheets = this.db.markSheets.filter(
+          ms => (ms.classId === targetClassId || ms.classId === cId || (targetGrade !== undefined && String(ms.classId) === String(targetGrade))) && ms.examinationId === eId
+        );
+        const subjectStatuses = Object.fromEntries(classMarkSheets.map(ms => [ms.subjectId, ms.status]));
         return this.jsonResponse({
           reports,
           settings: this.db.settings,
           className: cls?.name,
           examName: exam?.nameEn,
           totalStudents: students.length,
+          subjectStatuses,
+          markSheets: classMarkSheets.map(ms => ({ subjectId: ms.subjectId, status: ms.status })),
         });
       }
 

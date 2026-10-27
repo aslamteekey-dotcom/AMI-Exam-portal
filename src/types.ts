@@ -27,6 +27,7 @@ export interface User {
   id: string;
   username: string;
   name: string;
+  nameEn?: string;
   nameMl?: string;
   role: UserRole;
   isSubAdmin?: boolean;
@@ -40,6 +41,7 @@ export interface User {
   assignments?: TeacherAssignment[];
   assignedSubjects?: TeacherAssignment[];
   createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ClassItem {
@@ -248,6 +250,8 @@ export interface ProgressReportSubject {
   isComplete: boolean;
   statusTextEn: string;
   statusTextMl: string;
+  status?: string;
+  markSheetStatus?: string;
 }
 
 export interface StudentProgressReport {

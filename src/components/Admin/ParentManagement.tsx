@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { User, Student, ClassItem, sortStudentsBoysFirst } from '../../types';
 import { db, handleFirestoreError, OperationType, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
+import { clientHashPassword } from '../../services/clientStorageApi';
 import { collection, doc, setDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 import {
   Users,
@@ -125,6 +126,8 @@ export const ParentManagement: React.FC = () => {
                 };
               });
             });
+          } else {
+            setParents([]);
           }
         },
         (error) => {
@@ -173,26 +176,61 @@ export const ParentManagement: React.FC = () => {
       if (!pass) pass = 'parent123';
 
       const parentId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const nowIso = new Date().toISOString();
+      const trimmedName = pName.trim();
+      const trimmedNameMl = pNameMl.trim() || trimmedName;
+      const trimmedUsername = (pUsername.trim() || trimmedName).toLowerCase().replace(/\s+/g, '.');
+      const trimmedPhone = pPhone.trim();
+
       const newParentData: User = {
         id: parentId,
-        username: pUsername.trim() || pName.trim(),
-        name: pName.trim(),
-        nameMl: pNameMl.trim() || pName.trim(),
+        username: trimmedUsername,
+        name: trimmedName,
+        nameEn: trimmedName,
+        nameMl: trimmedNameMl,
         role: 'parent',
         plainPassword: pass,
-        phone: pPhone.trim(),
+        passwordHash: clientHashPassword(pass),
+        phone: trimmedPhone,
         active: true,
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso,
+        updatedAt: nowIso,
       };
 
-      // 1. Persistent Firestore write
+      // 1. Persistent Firestore write to 'parents' and 'users' collections with proper try/catch and error logging
       try {
-        await setDoc(doc(db, 'parents', parentId), cleanForFirestore(newParentData));
+        await Promise.all([
+          setDoc(doc(db, 'parents', parentId), cleanForFirestore(newParentData)),
+          setDoc(doc(db, 'users', parentId), cleanForFirestore(newParentData)),
+        ]);
       } catch (firestoreErr: any) {
         console.error('Firestore write error when adding parent:', firestoreErr);
         handleFirestoreError(firestoreErr, OperationType.WRITE, `parents/${parentId}`);
         alert(`Firestore error: ${firestoreErr.message || 'Failed to save parent to cloud database'}`);
         return;
+      }
+
+      // Update linked students in Firestore if children were selected
+      if (createChildIds.length > 0) {
+        try {
+          const batch = writeBatch(db);
+          createChildIds.forEach(sId => {
+            batch.set(
+              doc(db, 'students', sId),
+              cleanForFirestore({
+                parentUserId: parentId,
+                parentPhone: trimmedPhone,
+                parentNameEn: trimmedName,
+                parentNameMl: trimmedNameMl,
+                updatedAt: nowIso,
+              }),
+              { merge: true }
+            );
+          });
+          await batch.commit();
+        } catch (studentBatchErr) {
+          console.error('Firestore student linking error:', studentBatchErr);
+        }
       }
 
       // 2. Also register in local storage/API
@@ -201,11 +239,12 @@ export const ParentManagement: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: parentId,
-          name: pName.trim(),
-          nameMl: pNameMl.trim() || pName.trim(),
-          username: pUsername.trim() || pName.trim(),
+          name: trimmedName,
+          nameEn: trimmedName,
+          nameMl: trimmedNameMl,
+          username: trimmedUsername,
           password: pass,
-          phone: pPhone.trim(),
+          phone: trimmedPhone,
           studentIds: createChildIds,
         }),
       });
@@ -213,6 +252,8 @@ export const ParentManagement: React.FC = () => {
         const err = await res.json();
         throw new Error(err.error || 'Failed to create parent account');
       }
+
+      // 3. Sync local state with database without manually pushing to local array
       setShowAddModal(false);
       setPName('');
       setPNameMl('');
@@ -220,9 +261,14 @@ export const ParentManagement: React.FC = () => {
       setPPassword('');
       setPPhone('');
       setCreateChildIds([]);
+
+      setSuccessToast('Parent account created and saved to cloud database!');
+      setTimeout(() => setSuccessToast(null), 3500);
+
       await loadData();
     } catch (err: any) {
-      alert(err.message);
+      console.error('Error in handleCreateParent:', err);
+      alert(err.message || 'Error creating parent account');
     }
   };
 
@@ -416,9 +462,12 @@ export const ParentManagement: React.FC = () => {
     if (!confirm) return;
 
     try {
-      // 1. Delete from Firestore
+      // 1. Delete from Firestore (both parents and users collections)
       try {
-        await deleteDoc(doc(db, 'parents', parent.id));
+        await Promise.all([
+          deleteDoc(doc(db, 'parents', parent.id)),
+          deleteDoc(doc(db, 'users', parent.id)),
+        ]);
       } catch (firestoreErr: any) {
         console.warn('Firestore parent delete warning:', firestoreErr);
       }
@@ -447,13 +496,17 @@ export const ParentManagement: React.FC = () => {
     if (!passwordTargetParent || !newPasswordVal.trim()) return;
 
     try {
-      // 1. Update password in Firestore
+      // 1. Update password in Firestore (both parents and users collections)
       try {
-        await setDoc(
-          doc(db, 'parents', passwordTargetParent.id),
-          cleanForFirestore({ plainPassword: newPasswordVal.trim() }),
-          { merge: true }
-        );
+        const pwdUpdate = cleanForFirestore({
+          plainPassword: newPasswordVal.trim(),
+          passwordHash: clientHashPassword(newPasswordVal.trim()),
+          updatedAt: new Date().toISOString(),
+        });
+        await Promise.all([
+          setDoc(doc(db, 'parents', passwordTargetParent.id), pwdUpdate, { merge: true }),
+          setDoc(doc(db, 'users', passwordTargetParent.id), pwdUpdate, { merge: true }),
+        ]);
       } catch (firestoreErr: any) {
         console.warn('Firestore parent password update warning:', firestoreErr);
       }
