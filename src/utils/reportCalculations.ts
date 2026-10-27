@@ -1,4 +1,4 @@
-import { StudentProgressReport } from '../types';
+import { StudentProgressReport, DailyAttendanceRecord } from '../types';
 
 export interface StudentCalculationResult {
   grandAttendedObtained: number;
@@ -405,4 +405,60 @@ export function computeSubjectScoreSheetMarks(
     totMax: subMax,
     isFail,
   };
+}
+
+/**
+ * Calculates Total Working Days and Attended Days up to an optional Examination Attendance Cut-off Date.
+ * If attendanceCutoffDate is provided:
+ * - Only counts a day towards Total Working Days if date <= attendanceCutoffDate (and not holiday/off day)
+ * - Only counts a student's present mark towards Attended Days if date <= attendanceCutoffDate
+ * Fallback: If attendanceCutoffDate is null/empty or no matching records, returns the fallback values.
+ */
+export function calculateAttendanceForExamCutoff(
+  dailyRecords: Record<string, DailyAttendanceRecord> | undefined | null,
+  cutoffDate: string | undefined | null,
+  studentId: string,
+  fallbackDaysAttended: number = 88,
+  fallbackTotalWorkingDays: number = 88
+): { daysAttended: number; totalWorkingDays: number } {
+  if (!cutoffDate || !cutoffDate.trim() || !dailyRecords || Object.keys(dailyRecords).length === 0) {
+    return {
+      daysAttended: fallbackDaysAttended,
+      totalWorkingDays: fallbackTotalWorkingDays,
+    };
+  }
+
+  const trimmedCutoff = cutoffDate.trim();
+  const records = Object.values(dailyRecords).filter(
+    rec =>
+      rec &&
+      rec.date &&
+      rec.date <= trimmedCutoff &&
+      !rec.isHoliday &&
+      (rec as any).status !== 'OFF' &&
+      (rec as any).status !== 'holiday'
+  );
+
+  if (records.length === 0) {
+    return {
+      daysAttended: fallbackDaysAttended,
+      totalWorkingDays: fallbackTotalWorkingDays,
+    };
+  }
+
+  const totalWorkingDays = records.length;
+  let daysAttended = 0;
+
+  records.forEach(rec => {
+    if (rec.statusMap && rec.statusMap[studentId] !== undefined) {
+      if (rec.statusMap[studentId]) daysAttended++;
+    } else if (rec.presentStudentIds && rec.presentStudentIds.includes(studentId)) {
+      daysAttended++;
+    } else if (!rec.absentStudentIds?.includes(studentId)) {
+      // Default present if not explicitly marked absent
+      daysAttended++;
+    }
+  });
+
+  return { daysAttended, totalWorkingDays };
 }

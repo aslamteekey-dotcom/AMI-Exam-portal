@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { ClassItem, Examination, StudentProgressReport, InstitutionSettings, sortStudentsBoysFirst, normalizeGender, determineStudentGender, ProgressReportSubject } from '../../types';
+import { ClassItem, Examination, StudentProgressReport, InstitutionSettings, sortStudentsBoysFirst, normalizeGender, determineStudentGender, ProgressReportSubject, ClassAttendanceConfig } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
-import { computeClassLedgerRankings, calculateStudentReportMetrics, computeSubjectScoreSheetMarks } from '../../utils/reportCalculations';
+import { computeClassLedgerRankings, calculateStudentReportMetrics, computeSubjectScoreSheetMarks, calculateAttendanceForExamCutoff } from '../../utils/reportCalculations';
 import { handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
+import { db, safeOnSnapshot } from '../../services/firebase';
+import { doc } from 'firebase/firestore';
 import {
   Printer,
   Download,
@@ -29,6 +31,7 @@ export const BulkReportsPrint: React.FC = () => {
   const [selectedClassId, setSelectedClassId] = useState('');
   const [selectedExamId, setSelectedExamId] = useState('');
   const [settings, setSettings] = useState<InstitutionSettings | null>(null);
+  const [classAttendanceConfig, setClassAttendanceConfig] = useState<ClassAttendanceConfig | null>(null);
   const [reportsData, setReportsData] = useState<{
     reports: StudentProgressReport[];
     settings: InstitutionSettings;
@@ -148,6 +151,14 @@ export const BulkReportsPrint: React.FC = () => {
           })
           .catch(() => {});
 
+        // Fetch attendance config for class
+        fetchWithAuth(`/api/attendance/class/${cId}`)
+          .then(r => (r.ok ? r.json() : null))
+          .then(cfg => {
+            if (cfg) setClassAttendanceConfig(cfg);
+          })
+          .catch(() => {});
+
         setReportsData({
           reports: sortedReports,
           settings: data.settings || settings,
@@ -167,6 +178,21 @@ export const BulkReportsPrint: React.FC = () => {
   const selectedExamIdRef = useRef(selectedExamId);
   selectedClassIdRef.current = selectedClassId;
   selectedExamIdRef.current = selectedExamId;
+
+  // Real-time listener for class attendance config
+  useEffect(() => {
+    if (!selectedClassId) return;
+    const unsub = safeOnSnapshot(doc(db, 'attendance', selectedClassId), snap => {
+      if (snap.exists()) {
+        setClassAttendanceConfig({ ...snap.data(), classId: snap.id } as ClassAttendanceConfig);
+      }
+    });
+    return () => {
+      try {
+        unsub();
+      } catch {}
+    };
+  }, [selectedClassId]);
 
   // Run initial data loading strictly once on mount
   useEffect(() => {
@@ -215,12 +241,22 @@ export const BulkReportsPrint: React.FC = () => {
 
   const safeReports = useMemo(() => {
     return sortStudentsBoysFirst(
-      rawReports.map(r => ({
-        ...r,
-        gender: determineStudentGender(r.student, selectedExamId),
-        nameEn: r.student?.nameEn,
-        name: (r.student as any)?.name,
-      })),
+      rawReports.map(r => {
+        const att = calculateAttendanceForExamCutoff(
+          classAttendanceConfig?.dailyRecords,
+          currentExam?.attendanceCutoffDate,
+          r.student?.id || '',
+          r.attendance?.daysAttended ?? 88,
+          r.attendance?.totalWorkingDays ?? 88
+        );
+        return {
+          ...r,
+          attendance: att,
+          gender: determineStudentGender(r.student, selectedExamId),
+          nameEn: r.student?.nameEn,
+          name: (r.student as any)?.name,
+        };
+      }),
       selectedExamId
     ).map((r, idx) => ({
       ...r,
@@ -230,7 +266,7 @@ export const BulkReportsPrint: React.FC = () => {
         gender: determineStudentGender(r.student, selectedExamId),
       },
     }));
-  }, [rawReports, selectedExamId]);
+  }, [rawReports, selectedExamId, classAttendanceConfig, currentExam?.attendanceCutoffDate]);
 
   // Determine consistent total maximum marks for the class (e.g. 8 subjects * 50 = 400)
   const classTotalExpectedMax = useMemo(() => {
@@ -889,7 +925,7 @@ export const BulkReportsPrint: React.FC = () => {
             {/* Embedded Print Styling matching requirement 3 */}
             <style>{`
               @media print {
-                @page { size: A4 landscape; margin: 8mm; }
+                @page { size: A4 landscape; margin: 5mm; }
                 .score-sheet-container {
                   width: 100% !important;
                   padding: 0 !important;
@@ -898,16 +934,17 @@ export const BulkReportsPrint: React.FC = () => {
                 .score-sheet-table { 
                   width: 100% !important; 
                   border-collapse: collapse !important; 
-                  font-size: 9pt !important;
+                  font-size: 8pt !important;
                 }
                 .score-sheet-table th, .score-sheet-table td { 
                   border: 1px solid #000 !important; 
-                  padding: 2px 4px !important; 
+                  padding: 1px 2px !important; 
                   text-align: center !important; 
                   white-space: nowrap !important; 
                 }
                 .score-sheet-table th.subject-name {
                   white-space: normal !important; 
+                  font-size: 7.5pt !important;
                 }
                 .no-print { display: none !important; }
               }
@@ -1053,7 +1090,9 @@ export const BulkReportsPrint: React.FC = () => {
                         className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-slate-100 print:bg-transparent min-w-[80px]"
                       >
                         Attendance
-                        <div className="text-[9px] text-slate-500 font-normal">Attended / Total</div>
+                        <div className="text-[9px] text-slate-500 font-normal">
+                          {currentExam?.attendanceCutoffDate ? `Up to ${currentExam.attendanceCutoffDate}` : 'Attended / Total'}
+                        </div>
                       </th>
                       <th
                         rowSpan={2}
@@ -1154,7 +1193,7 @@ export const BulkReportsPrint: React.FC = () => {
 
                           {/* Grand Total */}
                           <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono font-bold text-emerald-950 whitespace-nowrap bg-emerald-50/20 print:bg-transparent">
-                            {metrics.displayGrandObtained} / {classTotalExpectedMax}
+                            {metrics.displayGrandObtained}
                           </td>
 
                           {/* Percentage */}
@@ -1164,7 +1203,7 @@ export const BulkReportsPrint: React.FC = () => {
 
                           {/* Attendance */}
                           <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono text-slate-700 whitespace-nowrap">
-                            {metrics.attendanceDays} / {metrics.attendanceTotal}
+                            {metrics.attendanceDays}
                           </td>
 
                           {/* Rank */}

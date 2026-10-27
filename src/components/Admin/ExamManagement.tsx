@@ -45,6 +45,7 @@ export const ExamManagement: React.FC = () => {
   const [newAyId, setNewAyId] = useState('');
   const [newStartDate, setNewStartDate] = useState('');
   const [newEndDate, setNewEndDate] = useState('');
+  const [newAttendanceCutoffDate, setNewAttendanceCutoffDate] = useState('');
   const [newPassMark, setNewPassMark] = useState('35');
   const [scheduledDate, setScheduledDate] = useState('');
 
@@ -55,6 +56,7 @@ export const ExamManagement: React.FC = () => {
   const [editAyId, setEditAyId] = useState('');
   const [editStartDate, setEditStartDate] = useState('');
   const [editEndDate, setEditEndDate] = useState('');
+  const [editAttendanceCutoffDate, setEditAttendanceCutoffDate] = useState('');
   const [editPassMark, setEditPassMark] = useState('35');
 
   const isMl = lang === 'ml';
@@ -392,6 +394,7 @@ export const ExamManagement: React.FC = () => {
         nameMl: (newExamNameMl || newExamNameEn).trim(),
         startDate: newStartDate,
         endDate: newEndDate,
+        attendanceCutoffDate: newAttendanceCutoffDate || '',
         passMarkPercentage: Number(newPassMark) || 35,
       };
 
@@ -415,6 +418,7 @@ export const ExamManagement: React.FC = () => {
         setNewExamNameMl('');
         setNewStartDate('');
         setNewEndDate('');
+        setNewAttendanceCutoffDate('');
         setNewPassMark('35');
         await loadData();
         setSelectedExamId(created.id);
@@ -431,6 +435,7 @@ export const ExamManagement: React.FC = () => {
     setEditAyId(exam.academicYearId);
     setEditStartDate(exam.startDate || '');
     setEditEndDate(exam.endDate || '');
+    setEditAttendanceCutoffDate(exam.attendanceCutoffDate || '');
     setEditPassMark(String(exam.passMarkPercentage || 35));
   };
 
@@ -439,12 +444,13 @@ export const ExamManagement: React.FC = () => {
     if (!editingExam) return;
 
     try {
-      const updatedData = {
+      const updatedData: Partial<Examination> = {
         academicYearId: editAyId,
         nameEn: editNameEn.trim(),
         nameMl: editNameMl.trim() || editNameEn.trim(),
         startDate: editStartDate,
         endDate: editEndDate,
+        attendanceCutoffDate: editAttendanceCutoffDate || '',
         passMarkPercentage: Number(editPassMark) || 35,
       };
 
@@ -663,6 +669,12 @@ export const ExamManagement: React.FC = () => {
                     {exam.startDate ? `${exam.startDate} to ${exam.endDate || '—'}` : 'Dates not set'}
                   </span>
                 </p>
+                {exam.attendanceCutoffDate && (
+                  <p className="text-[11px] text-emerald-800 font-semibold mt-1 flex items-center gap-1.5">
+                    <Clock className="w-3 h-3 text-emerald-700" />
+                    <span>Cut-off: <span className="font-mono">{exam.attendanceCutoffDate}</span></span>
+                  </p>
+                )}
               </div>
 
               <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-medium">
@@ -1058,6 +1070,21 @@ export const ExamManagement: React.FC = () => {
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
+                  Attendance Cut-off Date / അറ്റൻഡൻസ് പരിഗണിക്കേണ്ട അവസാന തിയ്യതി
+                </label>
+                <input
+                  type="date"
+                  value={editAttendanceCutoffDate}
+                  onChange={e => setEditAttendanceCutoffDate(e.target.value)}
+                  className="w-full p-2.5 border rounded-lg focus:outline-emerald-700"
+                />
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Only attendance marked on or before this date will be included in Score Sheets &amp; Progress Cards. Leave blank to include all dates.
+                </p>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
                   Pass Marks / Minimum Criteria (%)
                 </label>
                 <div className="flex items-center gap-2">
@@ -1167,6 +1194,21 @@ export const ExamManagement: React.FC = () => {
                     className="w-full p-2.5 border rounded-lg focus:outline-emerald-700"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Attendance Cut-off Date / അറ്റൻഡൻസ് പരിഗണിക്കേണ്ട അവസാന തിയ്യതി
+                </label>
+                <input
+                  type="date"
+                  value={newAttendanceCutoffDate}
+                  onChange={e => setNewAttendanceCutoffDate(e.target.value)}
+                  className="w-full p-2.5 border rounded-lg focus:outline-emerald-700"
+                />
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Only attendance marked on or before this date will be included in Score Sheets &amp; Progress Cards. Leave blank to include all dates.
+                </p>
               </div>
 
               <div>

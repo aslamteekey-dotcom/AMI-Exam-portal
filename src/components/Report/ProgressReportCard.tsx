@@ -626,6 +626,11 @@ export const ProgressReportCard: React.FC<Props> = ({
                   <span className="text-lg sm:text-xl md:text-2xl print:text-base font-black font-mono mt-0.5 sm:mt-1 block whitespace-nowrap">
                     {attendanceDays} / {attendanceTotal}
                   </span>
+                  {report.examination?.attendanceCutoffDate && (
+                    <span className="text-[9px] print:text-[7pt] text-emerald-300 font-mono block leading-none mt-0.5">
+                      (Up to {report.examination.attendanceCutoffDate})
+                    </span>
+                  )}
                 </div>
 
                 {/* Rank Box */}

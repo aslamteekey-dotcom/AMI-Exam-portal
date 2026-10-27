@@ -92,6 +92,7 @@ export interface Examination {
   status: 'draft' | 'ongoing' | 'evaluating' | 'ready_to_publish' | 'published' | 'approved' | 'completed' | (string & {});
   classesParticipating?: string[];
   passMarkPercentage: number;
+  attendanceCutoffDate?: string;
   publishedClasses?: string[];
   lockedClasses?: string[];
   classPublishStatus?: Record<string, boolean>;

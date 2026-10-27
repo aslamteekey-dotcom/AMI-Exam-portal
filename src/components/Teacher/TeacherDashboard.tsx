@@ -2788,12 +2788,44 @@ export const TeacherDashboard: React.FC = () => {
       });
 
       const percentage = expectedMax > 0 ? ((studentObtained / expectedMax) * 100).toFixed(2) : '0.00';
-      const totalWorking = classAttendanceConfig?.totalWorkingDays ?? attendanceTotalWorkingDays ?? 88;
-      const daysAttended =
+      const fallbackTotalWorking = classAttendanceConfig?.totalWorkingDays ?? attendanceTotalWorkingDays ?? 88;
+      const fallbackDaysAttended =
         studentDaysAttendedMap[student.id] ??
         student.attendance?.daysAttended ??
         (student as any).daysAttended ??
         86;
+
+      const activeConfig = classAttendanceConfig || allAttendanceConfigs.find(c => c.classId === inChargeClass?.id || c.classId === inChargeClass?.id.replace(/\D/g, ''));
+      const cutoffDate = selectedExam?.attendanceCutoffDate ? selectedExam.attendanceCutoffDate.trim() : '';
+
+      let totalWorking = fallbackTotalWorking;
+      let daysAttended = fallbackDaysAttended;
+
+      if (cutoffDate && activeConfig?.dailyRecords) {
+        const records = Object.values(activeConfig.dailyRecords).filter(
+          rec =>
+            rec &&
+            rec.date &&
+            rec.date <= cutoffDate &&
+            !rec.isHoliday &&
+            (rec as any).status !== 'OFF' &&
+            (rec as any).status !== 'holiday'
+        );
+        if (records.length > 0) {
+          totalWorking = records.length;
+          let attended = 0;
+          records.forEach(rec => {
+            if (rec.statusMap && rec.statusMap[student.id] !== undefined) {
+              if (rec.statusMap[student.id]) attended++;
+            } else if (rec.presentStudentIds && rec.presentStudentIds.includes(student.id)) {
+              attended++;
+            } else if (!rec.absentStudentIds?.includes(student.id)) {
+              attended++;
+            }
+          });
+          daysAttended = attended;
+        }
+      }
 
       let status: 'Passed' | 'Needs Imp' | 'Withheld' | 'Absent' | 'Pending' = 'Passed';
       if (hasAbsent) {
@@ -2944,7 +2976,7 @@ export const TeacherDashboard: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Welcome Banner */}
-      <div className="bg-gradient-to-r from-emerald-900 to-emerald-800 text-white rounded-2xl p-6 shadow-sm">
+      <div className="bg-gradient-to-r from-emerald-900 to-emerald-800 text-white rounded-2xl p-6 shadow-sm print:hidden no-print">
         <div className="text-center font-serif text-emerald-300 text-base mb-3" dir="rtl">
           أهلاً وسهلاً
         </div>
@@ -2992,7 +3024,7 @@ export const TeacherDashboard: React.FC = () => {
       {/* Primary Tabs in EXACT STRICT ORDER: 1. Home, 2. My Class, 3. Mark Entry, 4. Attendance, 5. Fees, 6. News, 7. Notification, 8. Contact, 9. About */}
       <div
         {...navScrollProps}
-        className="flex border-b border-slate-200 gap-1.5 sm:gap-2 text-xs font-bold overflow-x-auto no-scrollbar pb-1 cursor-grab active:cursor-grabbing select-none"
+        className="flex border-b border-slate-200 gap-1.5 sm:gap-2 text-xs font-bold overflow-x-auto no-scrollbar pb-1 cursor-grab active:cursor-grabbing select-none print:hidden no-print"
       >
         {/* 1. Home */}
         <button
@@ -3441,7 +3473,7 @@ export const TeacherDashboard: React.FC = () => {
           ) : (
             <div className="space-y-6">
               {/* Class In-Charge Overview Banner */}
-              <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 shadow-xs">
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 shadow-xs print:hidden no-print">
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1">
@@ -3495,7 +3527,7 @@ export const TeacherDashboard: React.FC = () => {
               </div>
 
               {/* View Toggle Bar: Students List vs Marksheet */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-2.5 rounded-2xl border border-slate-200 shadow-2xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-2.5 rounded-2xl border border-slate-200 shadow-2xs print:hidden no-print">
                 <div className="flex items-center gap-1.5 p-1 bg-slate-100/90 rounded-xl">
                   <button
                     type="button"
@@ -3695,11 +3727,11 @@ export const TeacherDashboard: React.FC = () => {
               {/* View 2: MARKSHEET VIEW */}
               {/* View 2: MARKSHEET / SCORE SHEET VIEW */}
               {myClassViewMode === 'marksheet' && (
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden print:border-none print:shadow-none print:p-0">
                   {/* Embedded Print Styling */}
                   <style>{`
                     @media print {
-                      @page { size: A4 landscape; margin: 8mm; }
+                      @page { size: A4 landscape; margin: 5mm; }
                       .score-sheet-container {
                         width: 100% !important;
                         padding: 0 !important;
@@ -3708,16 +3740,17 @@ export const TeacherDashboard: React.FC = () => {
                       .score-sheet-table { 
                         width: 100% !important; 
                         border-collapse: collapse !important; 
-                        font-size: 9pt !important;
+                        font-size: 8pt !important;
                       }
                       .score-sheet-table th, .score-sheet-table td { 
                         border: 1px solid #000 !important; 
-                        padding: 2px 4px !important; 
+                        padding: 1px 2px !important; 
                         text-align: center !important; 
                         white-space: nowrap !important; 
                       }
                       .score-sheet-table th.subject-name {
                         white-space: normal !important; 
+                        font-size: 7.5pt !important;
                       }
                       .no-print { display: none !important; }
                     }
@@ -3858,7 +3891,9 @@ export const TeacherDashboard: React.FC = () => {
                                 className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-slate-100 print:bg-transparent min-w-[80px]"
                               >
                                 Attendance
-                                <div className="text-[9px] text-slate-500 font-normal">Attended / Total</div>
+                                <div className="text-[9px] text-slate-500 font-normal">
+                                  {selectedExam?.attendanceCutoffDate ? `Up to ${selectedExam.attendanceCutoffDate}` : 'Attended / Total'}
+                                </div>
                               </th>
                               <th
                                 rowSpan={2}
@@ -3960,7 +3995,7 @@ export const TeacherDashboard: React.FC = () => {
 
                                   {/* Summary Column 1: Grand Total */}
                                   <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono font-bold text-emerald-950 whitespace-nowrap bg-emerald-50/20 print:bg-transparent">
-                                    {row.studentObtained} / {row.expectedMax}
+                                    {row.studentObtained}
                                   </td>
 
                                   {/* Summary Column 2: Percentage */}
@@ -3970,7 +4005,7 @@ export const TeacherDashboard: React.FC = () => {
 
                                   {/* Summary Column 3: Attendance */}
                                   <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono text-slate-700 whitespace-nowrap">
-                                    {row.daysAttended} / {row.totalWorking}
+                                    {row.daysAttended}
                                   </td>
 
                                   {/* Summary Column 4: Dense Rank / Status */}

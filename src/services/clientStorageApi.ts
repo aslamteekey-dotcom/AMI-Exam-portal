@@ -2082,9 +2082,39 @@ export class ClientStorageApi {
       resultStatusMl = 'Needs Improvement';
     }
 
-    const attConfig = this.db.attendanceConfigs?.find(a => a.classId === student.classId);
-    const daysAttended = attConfig?.studentDaysAttended?.[student.id] ?? student.attendance?.daysAttended ?? 88;
-    const totalWorkingDays = attConfig?.totalWorkingDays ?? student.attendance?.totalWorkingDays ?? 88;
+    const attConfig = this.db.attendanceConfigs?.find(a => a.classId === student.classId || a.classId === cls.id);
+    const fallbackDaysAttended = attConfig?.studentDaysAttended?.[student.id] ?? student.attendance?.daysAttended ?? 88;
+    const fallbackTotalWorking = attConfig?.totalWorkingDays ?? student.attendance?.totalWorkingDays ?? 88;
+
+    let daysAttended = fallbackDaysAttended;
+    let totalWorkingDays = fallbackTotalWorking;
+
+    const cutoffDate = exam?.attendanceCutoffDate ? exam.attendanceCutoffDate.trim() : '';
+    if (cutoffDate && attConfig?.dailyRecords) {
+      const records = Object.values(attConfig.dailyRecords).filter(
+        rec =>
+          rec &&
+          rec.date &&
+          rec.date <= cutoffDate &&
+          !rec.isHoliday &&
+          (rec as any).status !== 'OFF' &&
+          (rec as any).status !== 'holiday'
+      );
+      if (records.length > 0) {
+        totalWorkingDays = records.length;
+        let attended = 0;
+        records.forEach(rec => {
+          if (rec.statusMap && rec.statusMap[student.id] !== undefined) {
+            if (rec.statusMap[student.id]) attended++;
+          } else if (rec.presentStudentIds && rec.presentStudentIds.includes(student.id)) {
+            attended++;
+          } else if (!rec.absentStudentIds?.includes(student.id)) {
+            attended++;
+          }
+        });
+        daysAttended = attended;
+      }
+    }
     const examRegisterNo =
       (student as any).examRegisterNos?.[examId] ||
       (student as any).examRegNo ||
@@ -3408,6 +3438,7 @@ export class ClientStorageApi {
           nameMl: bodyData.nameMl.trim(),
           startDate: bodyData.startDate,
           endDate: bodyData.endDate,
+          attendanceCutoffDate: bodyData.attendanceCutoffDate || '',
           isPublished: false,
           status: 'draft',
           classesParticipating: bodyData.classesParticipating || this.db.classes.map(c => c.id),
@@ -3430,6 +3461,7 @@ export class ClientStorageApi {
         if (bodyData.nameMl !== undefined) exam.nameMl = bodyData.nameMl.trim();
         if (bodyData.startDate !== undefined) exam.startDate = bodyData.startDate;
         if (bodyData.endDate !== undefined) exam.endDate = bodyData.endDate;
+        if (bodyData.attendanceCutoffDate !== undefined) exam.attendanceCutoffDate = bodyData.attendanceCutoffDate;
         if (bodyData.passMarkPercentage !== undefined) exam.passMarkPercentage = Number(bodyData.passMarkPercentage);
         if (bodyData.classesParticipating !== undefined) exam.classesParticipating = bodyData.classesParticipating;
 
