@@ -1129,7 +1129,7 @@ export class FirestoreSyncService {
   public async syncMarkSheet(markSheet: MarkSheet): Promise<void> {
     if (isFirestoreQuotaExhausted()) return;
     try {
-      await setDoc(doc(db, 'marks', markSheet.id), cleanForFirestore(markSheet));
+      await setDoc(doc(db, 'marks', markSheet.id), cleanForFirestore(markSheet), { merge: true });
     } catch (e) {
       this.handleWriteError(e, OperationType.WRITE, `marks/${markSheet.id}`);
     }

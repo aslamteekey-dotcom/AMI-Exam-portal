@@ -12,6 +12,9 @@ import {
   recalculateClassRollsAndExamRegNos,
   TUITION_FEE_MONTHS,
   FeePayment,
+  SpecialFeeType,
+  ReceiptSequences,
+  InstitutionSettings,
   ClassAttendanceConfig,
   DailyAttendanceRecord,
   InstitutionHoliday,
@@ -99,6 +102,8 @@ import {
   ArrowRight,
   User as UserIcon,
   Search,
+  Tag,
+  Printer,
 } from 'lucide-react';
 
 export type TeacherPortalTab =
@@ -107,6 +112,7 @@ export type TeacherPortalTab =
   | 'mark_entry'
   | 'attendance'
   | 'fees'
+  | 'special_fees'
   | 'news'
   | 'notification'
   | 'contact'
@@ -139,11 +145,40 @@ export const getWeekMondayStr = (baseDateStr: string): string => {
   return formatLocalDate(d);
 };
 
+export const SPECIAL_FEE_TYPES: SpecialFeeType[] = [
+  'Terminal Exam Fee',
+  'Hikma Exam Fee',
+  'Public Exam Fee',
+  'Council Fund',
+  'Donation/Other',
+];
+
+export const numberToWords = (num: number): string => {
+  if (num <= 0) return 'Zero Rupees Only';
+  const a = [
+    '', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten',
+    'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'
+  ];
+  const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+  const inWords = (n: number): string => {
+    if (n < 20) return a[n];
+    if (n < 100) return b[Math.floor(n / 10)] + (n % 10 !== 0 ? ' ' + a[n % 10] : '');
+    if (n < 1000) return a[Math.floor(n / 100)] + ' Hundred' + (n % 100 !== 0 ? ' and ' + inWords(n % 100) : '');
+    if (n < 100000) return inWords(Math.floor(n / 1000)) + ' Thousand' + (n % 1000 !== 0 ? ' ' + inWords(n % 1000) : '');
+    if (n < 10000000) return inWords(Math.floor(n / 100000)) + ' Lakh' + (n % 100000 !== 0 ? ' ' + inWords(n % 100000) : '');
+    return inWords(Math.floor(n / 10000000)) + ' Crore' + (n % 10000000 !== 0 ? ' ' + inWords(n % 10000000) : '');
+  };
+
+  return inWords(num).trim() + ' Rupees Only';
+};
+
 export const TeacherDashboard: React.FC = () => {
   const { user, fetchWithAuth, lang, t } = useAuth();
+  const isMl = lang === 'ml';
   const [loading, setLoading] = useState(true);
 
-  // Tab State: 1. Home, 2. My Class, 3. Mark Entry, 4. Attendance, 5. Fees, 6. News, 7. Notification, 8. Contact, 9. About
+  // Tab State: 1. Home, 2. My Class, 3. Mark Entry, 4. Attendance, 5. Fees, 6. Special Fees, 7. News, 8. Notification, 9. Contact, 10. About
   const [activeTab, setActiveTab] = useState<TeacherPortalTab>('home');
   const { scrollProps: navScrollProps } = useHorizontalScroll();
 
@@ -180,6 +215,19 @@ export const TeacherDashboard: React.FC = () => {
   const [attendanceSaved, setAttendanceSaved] = useState(false);
   const [classFeePayments, setClassFeePayments] = useState<FeePayment[]>([]);
   const [feeClassId, setFeeClassId] = useState<string>('');
+
+  // Special Fees State (Restricted to Teacher's Designated Class)
+  const [allFeePayments, setAllFeePayments] = useState<FeePayment[]>([]);
+  const [institutionSettings, setInstitutionSettings] = useState<InstitutionSettings | null>(null);
+  const [specialFeeReceiptNo, setSpecialFeeReceiptNo] = useState<string>('01');
+  const [specialFeeStudentId, setSpecialFeeStudentId] = useState<string>('');
+  const [specialFeeDate, setSpecialFeeDate] = useState<string>(() => formatLocalDate(new Date()));
+  const [specialFeeType, setSpecialFeeType] = useState<SpecialFeeType>('Terminal Exam Fee');
+  const [specialFeeAmount, setSpecialFeeAmount] = useState<number | ''>(150);
+  const [specialFeeNotes, setSpecialFeeNotes] = useState<string>('');
+  const [isSubmittingSpecialFee, setIsSubmittingSpecialFee] = useState<boolean>(false);
+  const [activeSpecialReceipt, setActiveSpecialReceipt] = useState<FeePayment | null>(null);
+  const [specialFeeSearchQuery, setSpecialFeeSearchQuery] = useState<string>('');
 
   const todayStr = formatLocalDate(new Date());
   const [attendanceClassId, setAttendanceClassId] = useState<string>('');
@@ -338,17 +386,50 @@ export const TeacherDashboard: React.FC = () => {
   const [contactMessage, setContactMessage] = useState('');
   const [contactSent, setContactSent] = useState(false);
 
-  const isMl = lang === 'ml';
+  const refreshSpecialReceiptSequence = async (existingPayments?: FeePayment[]) => {
+    try {
+      let serverSeq: ReceiptSequences | null = null;
+      try {
+        const res = await fetchWithAuth('/api/fees/receipt-sequences');
+        if (res.ok) serverSeq = await res.json();
+      } catch {}
+
+      if (!serverSeq || !serverSeq.specialReceiptNo) {
+        const fsSeq = await firestoreSync.fetchReceiptSequences().catch(() => null);
+        if (fsSeq) serverSeq = fsSeq;
+      }
+
+      let nextSpecial = serverSeq?.specialReceiptNo ? Number(serverSeq.specialReceiptNo) : 1;
+
+      const list = existingPayments || allFeePayments;
+      (list || []).forEach(p => {
+        const raw = String(p.receiptNo || '').trim();
+        const num = parseInt(raw.replace(/\D/g, ''), 10);
+        if (!isNaN(num)) {
+          if (p.feeCategory === 'special' || (p.specialFeeAmount > 0 && !p.tuitionFeeAmount && !p.admissionFee)) {
+            if (num >= nextSpecial) nextSpecial = num + 1;
+          }
+        }
+      });
+
+      const formatted = nextSpecial < 10 ? `0${nextSpecial}` : String(nextSpecial);
+      setSpecialFeeReceiptNo(formatted);
+    } catch (e) {
+      console.warn('Error refreshing special receipt sequence:', e);
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [resAuth, resClasses, resSubjects, resExams, resStudents] = await Promise.all([
+      const [resAuth, resClasses, resSubjects, resExams, resStudents, resFees, resSettings] = await Promise.all([
         fetchWithAuth('/api/auth/me'),
         fetchWithAuth('/api/classes'),
         fetchWithAuth('/api/subjects'),
         fetchWithAuth('/api/examinations'),
         fetchWithAuth('/api/students'),
+        fetchWithAuth('/api/fees/payments').catch(() => null),
+        fetchWithAuth('/api/settings').catch(() => null),
       ]);
 
       const authData = await resAuth.json();
@@ -356,6 +437,16 @@ export const TeacherDashboard: React.FC = () => {
       const subData: SubjectItem[] = await resSubjects.json();
       const examData: Examination[] = await resExams.json();
       const stuData: Student[] = await resStudents.json();
+
+      if (resFees && resFees.ok) {
+        const allFees = await resFees.json();
+        setAllFeePayments(allFees || []);
+        refreshSpecialReceiptSequence(allFees);
+      }
+      if (resSettings && resSettings.ok) {
+        const setData = await resSettings.json();
+        setInstitutionSettings(setData);
+      }
 
       let currentAssignments: TeacherAssignment[] = authData.assignments || [];
 
@@ -857,6 +948,22 @@ export const TeacherDashboard: React.FC = () => {
         }
       );
       unsubs.push(unsubNews);
+
+      // Real-time Firestore fee_payments listener
+      const unsubFees = safeOnSnapshot(
+        collection(db, 'fee_payments'),
+        snapshot => {
+          if (!snapshot.empty) {
+            const fees = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as FeePayment));
+            setAllFeePayments(fees);
+            refreshSpecialReceiptSequence(fees);
+          }
+        },
+        error => {
+          console.warn('Firestore fee_payments listener error in TeacherDashboard:', error);
+        }
+      );
+      unsubs.push(unsubFees);
     } catch (e) {
       console.error('Failed to attach Teacher Portal real-time listeners:', e);
     }
@@ -2309,14 +2416,165 @@ export const TeacherDashboard: React.FC = () => {
 
   // In-charge class students & subjects
   const inChargeStudents = inChargeClass
-    ? sortStudentsBoysFirst(allStudents.filter(s => s.classId === inChargeClass.id && s.status === 'active')).map((s, idx) => ({
+    ? sortStudentsBoysFirst(
+        allStudents.filter(
+          s =>
+            (s.classId === inChargeClass.id ||
+              s.class === inChargeClass.name ||
+              (s.classId && inChargeClass.id && s.classId.replace(/[^0-9]/g, '') === inChargeClass.id.replace(/[^0-9]/g, '')) ||
+              isClassMatch([inChargeClass.id], s.classId)) &&
+            s.status === 'active'
+        )
+      ).map((s, idx) => ({
         ...s,
-        rollNo: idx + 1,
+        rollNo: s.rollNo || idx + 1,
       }))
     : [];
   const inChargeSubjects = inChargeClass
     ? subjects.filter(s => s.applicableClasses.includes(inChargeClass.numericGrade))
     : [];
+
+  // Filtered Special Fee Payments for Teacher's Class Only
+  const classSpecialFeePayments = useMemo(() => {
+    if (!inChargeClass) return [];
+    const inChargeIds = new Set(inChargeStudents.map(s => s.id));
+    const inChargeAdms = new Set(inChargeStudents.map(s => String(s.admissionNo || '').trim().toLowerCase()));
+
+    return allFeePayments.filter(p => {
+      // 1. Must belong to Special Fees
+      const isSpecial =
+        p.feeCategory === 'special' ||
+        Boolean(p.specialFeeType) ||
+        (p.specialFeeAmount > 0 && !p.tuitionFeeAmount && !p.admissionFee);
+      if (!isSpecial) return false;
+
+      // 2. Student must belong to Teacher's designated class
+      const matchesStudent =
+        inChargeIds.has(p.studentId) ||
+        (p.admissionNo && inChargeAdms.has(String(p.admissionNo).trim().toLowerCase()));
+      const matchesClass =
+        p.classId === inChargeClass.id ||
+        p.className === inChargeClass.name ||
+        (p.className && p.className.toLowerCase() === inChargeClass.name.toLowerCase());
+
+      return matchesStudent || matchesClass;
+    }).sort((a, b) => new Date(b.date || b.createdAt || 0).getTime() - new Date(a.date || a.createdAt || 0).getTime());
+  }, [allFeePayments, inChargeClass, inChargeStudents]);
+
+  const totalSpecialFeesCollected = useMemo(() => {
+    return classSpecialFeePayments.reduce((acc, p) => {
+      const amt = Number(p.specialFeeAmount || p.totalAmount) || 0;
+      return acc + amt;
+    }, 0);
+  }, [classSpecialFeePayments]);
+
+  // Handle Recording Special Fee by Class Teacher
+  const handleRecordSpecialFee = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inChargeClass) {
+      alert('You must be assigned as a Class In-Charge to record Special Fees.');
+      return;
+    }
+    if (!specialFeeStudentId) {
+      alert('Please select a student from your class.');
+      return;
+    }
+    const student = inChargeStudents.find(s => s.id === specialFeeStudentId);
+    if (!student) {
+      alert('Selected student not found in your class roster.');
+      return;
+    }
+    const amt = Number(specialFeeAmount);
+    if (!amt || amt <= 0) {
+      alert('Please enter a valid amount.');
+      return;
+    }
+    if (!specialFeeReceiptNo.trim()) {
+      alert('Please enter a Receipt Number.');
+      return;
+    }
+
+    setIsSubmittingSpecialFee(true);
+    try {
+      const payload: Partial<FeePayment> = {
+        date: specialFeeDate,
+        studentId: student.id,
+        studentName: student.nameEn,
+        admissionNo: student.admissionNo,
+        classId: inChargeClass.id,
+        className: inChargeClass.name,
+        receiptNo: specialFeeReceiptNo.trim(),
+        feeCategory: 'special',
+        specialFeeType: specialFeeType,
+        admissionFee: 0,
+        hasAdmissionFee: false,
+        tuitionFeeMonths: [],
+        tuitionFeeAmount: 0,
+        specialFeeComponents: { [specialFeeType]: amt },
+        specialFeeAmount: amt,
+        donationAmount: specialFeeType === 'Donation/Other' ? amt : 0,
+        totalAmount: amt,
+        amountInWords: numberToWords(amt),
+        notes: specialFeeNotes,
+        collectedBy: user?.name || 'Class Teacher',
+      };
+
+      const res = await fetchWithAuth('/api/fees/payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to record special fee');
+      }
+
+      const created: FeePayment = await res.json();
+
+      // Mirror sync to Firestore (fee_payments and special_receipts)
+      try {
+        await firestoreSync.syncFeePayment(created);
+      } catch (fErr) {
+        console.warn('Firestore payment mirror write error:', fErr);
+      }
+
+      // Propose and sync next auto-increment sequence
+      const currentNum = parseInt(specialFeeReceiptNo.replace(/\D/g, ''), 10) || 1;
+      const nextSpecial = currentNum + 1;
+      const nextSpecialStr = nextSpecial < 10 ? `0${nextSpecial}` : String(nextSpecial);
+      setSpecialFeeReceiptNo(nextSpecialStr);
+
+      firestoreSync.syncReceiptSequences({
+        tuitionReceiptNo: 4458,
+        specialReceiptNo: nextSpecial,
+      });
+
+      fetchWithAuth('/api/fees/receipt-sequences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ specialReceiptNo: nextSpecial }),
+      }).catch(() => {});
+
+      logAuditEvent({
+        action: 'SPECIAL_FEE_COLLECTED',
+        details: `Teacher ${user?.name} collected Special Fee of ₹${amt} (${specialFeeType}) for ${student.nameEn} (Adm: ${student.admissionNo}, ${inChargeClass.name}). Receipt #${specialFeeReceiptNo}.`,
+        currentUser: user,
+        recordType: 'fee_payment',
+        recordId: created.id,
+      }).catch(() => {});
+
+      // Update local state
+      setAllFeePayments(prev => [created, ...prev.filter(p => p.id !== created.id)]);
+      setSpecialFeeNotes('');
+      // Open identical printable receipt
+      setActiveSpecialReceipt(created);
+    } catch (err: any) {
+      alert(err.message || 'Error recording special fee payment');
+    } finally {
+      setIsSubmittingSpecialFee(false);
+    }
+  };
 
   // Consolidated class marksheet calculations with dense ranking
   const classMarksheetData = useMemo(() => {
@@ -2722,6 +2980,31 @@ export const TeacherDashboard: React.FC = () => {
           <span>Fees</span>
         </button>
 
+        {/* 5b. Special Fees (Restricted to Class In-Charge) */}
+        {inChargeClass && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('special_fees')}
+            className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+              activeTab === 'special_fees'
+                ? 'bg-purple-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+            }`}
+          >
+            <Tag className="w-4 h-4 text-purple-400" />
+            <span>Special Fees</span>
+            <span
+              className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                activeTab === 'special_fees'
+                  ? 'bg-purple-950 text-purple-200'
+                  : 'bg-purple-100 text-purple-800'
+              }`}
+            >
+              {inChargeClass.name}
+            </span>
+          </button>
+        )}
+
         {/* 6. News */}
         <button
           type="button"
@@ -2996,6 +3279,23 @@ export const TeacherDashboard: React.FC = () => {
                 </p>
               </div>
             </div>
+
+            {inChargeClass && (
+              <div
+                onClick={() => setActiveTab('special_fees')}
+                className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-purple-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
+              >
+                <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center shrink-0">
+                  <Tag className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm">Special Fees ({inChargeClass.name})</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Collect Exam Fees, Council Funds &amp; Donations with printable receipts.
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div
               onClick={() => setActiveTab('news')}
@@ -5781,6 +6081,392 @@ export const TeacherDashboard: React.FC = () => {
       )}
 
       {/* =========================================================================
+          TAB 5b: SPECIAL FEES (RESTRICTED TO CLASS IN-CHARGE)
+         ========================================================================= */}
+      {activeTab === 'special_fees' && (
+        <div className="space-y-6">
+          {!inChargeClass ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-8 sm:p-12 text-center max-w-xl mx-auto shadow-xs">
+              <div className="w-16 h-16 rounded-2xl bg-purple-50 text-purple-700 mx-auto flex items-center justify-center mb-4">
+                <Tag className="w-8 h-8" />
+              </div>
+              <h2 className="text-xl font-bold text-slate-900 mb-2">Class In-Charge Restricted Module</h2>
+              <p className="text-sm text-slate-500 leading-relaxed">
+                The Special Fees module allows Class Teachers to collect Exam Fees, Council Funds, and Donations strictly for their designated class. You currently do not have a Class In-Charge assignment.
+              </p>
+              <button
+                type="button"
+                onClick={() => setActiveTab('home')}
+                className="mt-6 px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition cursor-pointer"
+              >
+                Back to Dashboard
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Top Banner */}
+              <div className="bg-gradient-to-r from-purple-950 via-purple-900 to-indigo-950 rounded-2xl p-5 sm:p-6 text-white shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-purple-800/80 text-purple-200 border border-purple-700/50">
+                      Class In-Charge Faculty Module
+                    </span>
+                    <span className="text-purple-300 text-xs">•</span>
+                    <span className="text-xs text-purple-200 font-mono">Academic Year 2026–2027</span>
+                  </div>
+                  <h2 className="text-lg sm:text-xl font-bold font-serif mt-1 flex items-center gap-2 text-white">
+                    <Tag className="w-5 h-5 text-purple-300" />
+                    <span>Special Fees — {inChargeClass.name}</span>
+                    <span className="text-sm font-normal text-purple-200 font-ml">({inChargeClass.nameMl})</span>
+                  </h2>
+                  <p className="text-xs text-purple-200/80 mt-1 max-w-2xl leading-relaxed">
+                    Collect and issue official receipts for Terminal, Hikma, and Public Exam Fees, Council Funds, and Donations strictly for {inChargeStudents.length} enrolled students in {inChargeClass.name}. Synchronized with the Principal's global ledger.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 shrink-0">
+                  <div className="bg-purple-900/60 border border-purple-700/50 rounded-xl px-3.5 py-2 text-right">
+                    <span className="text-[10px] text-purple-300 font-bold block uppercase tracking-wider">Designated Class</span>
+                    <span className="text-sm font-bold text-amber-300 font-mono">{inChargeClass.name}</span>
+                  </div>
+                  <div className="bg-purple-900/60 border border-purple-700/50 rounded-xl px-3.5 py-2 text-right">
+                    <span className="text-[10px] text-purple-300 font-bold block uppercase tracking-wider">Next Receipt No</span>
+                    <span className="text-sm font-bold text-white font-mono">{specialFeeReceiptNo || '01'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Single Prominent Top Summary Card */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl bg-purple-100 text-purple-900 flex items-center justify-center shrink-0 shadow-inner">
+                    <Tag className="w-7 h-7 text-purple-800" />
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-purple-900/70 block">
+                      Total Special Fees Collected (My Class)
+                    </span>
+                    <div className="text-2xl sm:text-3xl font-black font-mono text-purple-950 mt-0.5">
+                      ₹{totalSpecialFeesCollected.toLocaleString('en-IN')}
+                    </div>
+                    <span className="text-xs text-slate-500 block mt-0.5">
+                      {numberToWords(totalSpecialFeesCollected)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 border-t sm:border-t-0 sm:border-l border-slate-100 pt-3 sm:pt-0 sm:pl-6">
+                  <div className="text-left sm:text-right">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Receipts Issued</span>
+                    <span className="text-xl font-bold font-mono text-slate-800 block">
+                      {classSpecialFeePayments.length}
+                    </span>
+                    <span className="text-[11px] text-emerald-600 font-medium block">
+                      Active for {inChargeClass.name}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Main Content Grid: Form (Left) & Ledger (Right) */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Form: Record Special Fee (4 cols on lg) */}
+                <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <CreditCard className="w-4 h-4 text-purple-700" />
+                      <h3 className="font-bold text-slate-900 text-sm sm:text-base">Record Special Fee Payment</h3>
+                    </div>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                      {inChargeClass.name} Only
+                    </span>
+                  </div>
+
+                  <form onSubmit={handleRecordSpecialFee} className="space-y-4">
+                    {/* Student Selection (Strictly inChargeStudents) */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Select Student ({inChargeClass.name}) <span className="text-rose-500">*</span>
+                      </label>
+                      <select
+                        value={specialFeeStudentId}
+                        onChange={e => setSpecialFeeStudentId(e.target.value)}
+                        required
+                        className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                      >
+                        <option value="">-- Choose Student ({inChargeStudents.length} Available) --</option>
+                        {inChargeStudents.map(st => (
+                          <option key={st.id} value={st.id}>
+                            Roll #{st.rollNo} • {st.nameEn} (Adm: {st.admissionNo})
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-[10px] text-slate-500 mt-1 block">
+                        Only students enrolled in your designated class ({inChargeClass.name}) are available.
+                      </span>
+                    </div>
+
+                    {/* Fee Type Selection */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Fee Type <span className="text-rose-500">*</span>
+                      </label>
+                      <select
+                        value={specialFeeType}
+                        onChange={e => setSpecialFeeType(e.target.value as SpecialFeeType)}
+                        required
+                        className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none font-medium"
+                      >
+                        {SPECIAL_FEE_TYPES.map(t => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Fee Amount Input */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Fee Amount (₹) <span className="text-rose-500">*</span>
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-2.5 text-slate-400 font-mono text-sm">₹</span>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={specialFeeAmount || ''}
+                          onChange={e => setSpecialFeeAmount(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                          placeholder="e.g. 150"
+                          required
+                          className="w-full pl-8 pr-3 p-2.5 text-xs font-mono font-bold border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none text-slate-900"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Receipt Number & Date Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-xs font-bold text-slate-700">Receipt No</label>
+                          <span className="text-[10px] text-purple-700 font-mono font-bold">Series 01</span>
+                        </div>
+                        <input
+                          type="text"
+                          value={specialFeeReceiptNo}
+                          onChange={e => setSpecialFeeReceiptNo(e.target.value)}
+                          placeholder="01"
+                          required
+                          className="w-full p-2.5 text-xs font-mono font-bold border border-slate-300 rounded-xl bg-purple-50/50 text-purple-950 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">Payment Date</label>
+                        <input
+                          type="date"
+                          value={specialFeeDate}
+                          onChange={e => setSpecialFeeDate(e.target.value)}
+                          required
+                          className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Notes / Remarks */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Notes / Remarks (Optional)</label>
+                      <input
+                        type="text"
+                        value={specialFeeNotes}
+                        onChange={e => setSpecialFeeNotes(e.target.value)}
+                        placeholder="e.g. Paid in cash by parent"
+                        className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                      />
+                    </div>
+
+                    {/* Summary & Submit */}
+                    <div className="p-4 rounded-xl bg-purple-950 text-white space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-[11px] text-purple-300 block">Total Amount to Collect:</span>
+                          <span className="text-2xl font-black font-mono text-amber-300">
+                            ₹{(specialFeeAmount || 0).toLocaleString('en-IN')}
+                          </span>
+                        </div>
+                        <span className="px-2.5 py-1 rounded bg-purple-800 text-[10px] font-bold uppercase tracking-wider text-purple-200">
+                          {specialFeeType}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-purple-200/90 italic border-t border-purple-800/80 pt-2">
+                        {numberToWords(specialFeeAmount || 0)}
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isSubmittingSpecialFee || !specialFeeStudentId || !specialFeeAmount || specialFeeAmount <= 0}
+                        className="w-full py-2.5 px-4 text-xs font-bold text-purple-950 bg-amber-400 hover:bg-amber-300 disabled:opacity-50 rounded-xl transition shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>{isSubmittingSpecialFee ? 'Recording & Generating...' : 'Save & Print Official Receipt'}</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                {/* Ledger: Class Special Fee Ledger (7 cols on lg) */}
+                <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs flex flex-col justify-between space-y-4">
+                  <div>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                      <div>
+                        <h3 className="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-2">
+                          <span>Special Fee Receipts Ledger</span>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800">
+                            {inChargeClass.name}
+                          </span>
+                        </h3>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Listing all special fees collected for {inChargeClass.name}
+                        </p>
+                      </div>
+
+                      {/* Search Filter */}
+                      <div className="relative w-full sm:w-56">
+                        <input
+                          type="text"
+                          value={specialFeeSearchQuery}
+                          onChange={e => setSpecialFeeSearchQuery(e.target.value)}
+                          placeholder="Search student, adm, receipt..."
+                          className="w-full pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-purple-500"
+                        />
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                        {specialFeeSearchQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setSpecialFeeSearchQuery('')}
+                            className="absolute right-2 top-2 text-slate-400 hover:text-slate-600 text-xs"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Table View */}
+                    <div className="mt-4 overflow-x-auto border border-slate-200 rounded-xl scrollbar-thin">
+                      {(() => {
+                        const q = specialFeeSearchQuery.trim().toLowerCase();
+                        const filtered = classSpecialFeePayments.filter(p => {
+                          if (!q) return true;
+                          const name = (p.studentName || '').toLowerCase();
+                          const adm = (p.admissionNo || '').toLowerCase();
+                          const rec = (p.receiptNo || '').toLowerCase();
+                          const type = (p.specialFeeType || '').toLowerCase();
+                          return name.includes(q) || adm.includes(q) || rec.includes(q) || type.includes(q);
+                        });
+
+                        if (filtered.length === 0) {
+                          return (
+                            <div className="p-8 text-center text-slate-400 text-xs">
+                              {specialFeeSearchQuery
+                                ? 'No receipts match your search term.'
+                                : `No special fee receipts recorded yet for ${inChargeClass.name}.`}
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
+                              <tr>
+                                <th className="p-2.5 text-center font-mono w-12">Roll</th>
+                                <th className="p-2.5 font-mono text-center w-16">Adm No</th>
+                                <th className="p-2.5 min-w-[150px]">Student Name</th>
+                                <th className="p-2.5 min-w-[130px]">Fee Type</th>
+                                <th className="p-2.5 font-mono text-right w-24">Amount</th>
+                                <th className="p-2.5 font-mono text-center w-20">Receipt No</th>
+                                <th className="p-2.5 font-mono text-center w-24">Date</th>
+                                <th className="p-2.5 text-center w-16">Action</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {filtered.map(p => {
+                                const matchingStudent = inChargeStudents.find(
+                                  s => s.id === p.studentId || s.admissionNo === p.admissionNo
+                                );
+                                const rollNo = matchingStudent?.rollNo || '—';
+                                const pureName = (matchingStudent?.nameEn || p.studentName || '')
+                                  .replace(/\s*-\s*Class.*$/i, '')
+                                  .trim();
+                                const feeAmount = p.specialFeeAmount || p.totalAmount || 0;
+
+                                return (
+                                  <tr key={p.id} className="hover:bg-purple-50/40 transition">
+                                    <td className="p-2.5 text-center font-mono font-bold text-slate-600">
+                                      {rollNo}
+                                    </td>
+                                    <td className="p-2.5 text-center font-mono font-semibold text-slate-700">
+                                      {p.admissionNo}
+                                    </td>
+                                    <td className="p-2.5">
+                                      <span className="font-bold text-slate-900 block">{pureName}</span>
+                                      {matchingStudent?.nameMl && (
+                                        <span className="text-[10px] text-slate-500 font-ml block">
+                                          {matchingStudent.nameMl}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="p-2.5">
+                                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-800 border border-purple-200">
+                                        {p.specialFeeType || 'Special Fee'}
+                                      </span>
+                                    </td>
+                                    <td className="p-2.5 text-right font-mono font-bold text-purple-950">
+                                      ₹{feeAmount.toLocaleString('en-IN')}
+                                    </td>
+                                    <td className="p-2.5 text-center font-mono font-bold text-purple-900 bg-purple-50/30">
+                                      {p.receiptNo}
+                                    </td>
+                                    <td className="p-2.5 text-center font-mono text-slate-600 text-[11px]">
+                                      {p.date}
+                                    </td>
+                                    <td className="p-2.5 text-center">
+                                      <button
+                                        type="button"
+                                        onClick={() => setActiveSpecialReceipt(p)}
+                                        title="Print Official Receipt"
+                                        className="p-1.5 rounded-lg text-slate-600 hover:text-purple-900 hover:bg-purple-100 transition inline-flex items-center justify-center cursor-pointer"
+                                      >
+                                        <Printer className="w-3.5 h-3.5" />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                    <span>
+                      Showing {classSpecialFeePayments.length} special fee receipts for {inChargeClass.name}
+                    </span>
+                    <span className="font-mono font-semibold text-purple-900">
+                      Total: ₹{totalSpecialFeesCollected.toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* =========================================================================
           TAB 6: NEWS TAB (WITH CREATE CAPABILITY)
          ========================================================================= */}
       {activeTab === 'news' && (
@@ -6569,6 +7255,132 @@ export const TeacherDashboard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* =========================================================================
+          PRINTABLE OFFICIAL SPECIAL FEE RECEIPT MODAL
+         ========================================================================= */}
+      {activeSpecialReceipt && (() => {
+        const matchingStudent = inChargeStudents.find(
+          s => s.id === activeSpecialReceipt.studentId || s.admissionNo === activeSpecialReceipt.admissionNo
+        );
+        const pureStudentName =
+          matchingStudent?.nameEn ||
+          activeSpecialReceipt.studentName.replace(/\s*-\s*Class.*$/i, '').trim();
+        const madrasaClassName =
+          matchingStudent?.class ||
+          activeSpecialReceipt.className ||
+          inChargeClass?.name ||
+          'Class';
+
+        return (
+          <div className="fee-receipt-modal fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 print:p-0 print:bg-transparent print:static print:inset-auto">
+            <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto print:border-none print:shadow-none print:max-h-none print:overflow-visible print:p-0 print:w-full print:max-w-none">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4 print:hidden">
+                <span className="text-xs font-bold text-slate-700">Official Special Fee Receipt</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-purple-800 hover:bg-purple-900 rounded-lg cursor-pointer transition shadow-xs"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    Print Receipt
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSpecialReceipt(null)}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Official Slip */}
+              <div className="fee-receipt-slip bg-white text-slate-900 border-2 border-emerald-900 p-6 rounded-xl font-sans relative">
+                {/* Header */}
+                <div className="text-center border-b border-emerald-800 pb-3 mb-3">
+                  <div className="font-serif text-emerald-900 text-sm font-bold" dir="rtl">
+                    {institutionSettings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
+                  </div>
+                  <h1 className="text-base font-black uppercase text-emerald-950 font-serif mt-1">
+                    {institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
+                  </h1>
+                  <h2 className="text-xs font-bold text-emerald-900">
+                    {institutionSettings?.institutionNameMl || institutionSettings?.madrasaNameMl || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്'}
+                  </h2>
+                  <div className="text-[10px] font-semibold text-emerald-800 tracking-wide mt-0.5">
+                    {institutionSettings?.institutionSubtitle || institutionSettings?.locationEn || 'Islamic Education & Digital Learning'}
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    Reg. No: {institutionSettings?.registrationNumber || institutionSettings?.registrationNo || 'KEC-8492'} • Official Fee Receipt (2026–2027)
+                  </p>
+                </div>
+
+                {/* Receipt Details Header */}
+                <div className="flex items-center justify-between text-xs mb-3 font-mono bg-purple-50/70 p-2 rounded-lg border border-purple-100">
+                  <div>
+                    <span className="text-slate-500">Receipt No: </span>
+                    <strong className="text-purple-950 text-sm">{activeSpecialReceipt.receiptNo}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Date: </span>
+                    <strong className="text-slate-800">{activeSpecialReceipt.date}</strong>
+                  </div>
+                </div>
+
+                {/* Student Metadata */}
+                <div className="text-xs space-y-1 mb-4 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Student Name:</span>
+                    <strong className="text-slate-900">{pureStudentName}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Admission No:</span>
+                    <span className="font-mono font-bold text-slate-800">{activeSpecialReceipt.admissionNo}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Class:</span>
+                    <strong className="text-emerald-900">{madrasaClassName}</strong>
+                  </div>
+                </div>
+
+                {/* Breakdown Table */}
+                <table className="w-full text-xs mb-4 border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-300 text-slate-600 font-bold">
+                      <th className="py-1.5 text-left">Description</th>
+                      <th className="py-1.5 text-right">Amount (₹)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    <tr>
+                      <td className="py-2 text-slate-800 font-medium">
+                        Special Fee: {activeSpecialReceipt.specialFeeType || 'Special Fee'}
+                      </td>
+                      <td className="py-2 text-right font-mono font-bold">
+                        ₹{activeSpecialReceipt.specialFeeAmount || activeSpecialReceipt.totalAmount}
+                      </td>
+                    </tr>
+                    <tr className="border-t-2 border-emerald-900 font-bold">
+                      <td className="py-2 text-emerald-950 uppercase text-xs">Total Received</td>
+                      <td className="py-2 text-right font-mono text-emerald-950 text-sm font-black">
+                        ₹{activeSpecialReceipt.totalAmount.toLocaleString('en-IN')}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                {/* In Words Amount */}
+                <div className="text-sm font-medium text-gray-700 mb-2">
+                  <span className="font-bold text-gray-800">In Words: </span>
+                  {activeSpecialReceipt.amountInWords || numberToWords(activeSpecialReceipt.totalAmount)}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

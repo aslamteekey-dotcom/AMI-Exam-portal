@@ -20,6 +20,7 @@ import {
 } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
 import { StudyMaterialsView } from './StudyMaterialsView';
+import { formatTuitionMonths } from '../Admin/FeeManagement';
 import { useHorizontalScroll, handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
 import {
   User,
@@ -2706,159 +2707,156 @@ export const ParentDashboard: React.FC = () => {
       )}
 
       {/* MODAL: VIEW & PRINT OFFICIAL FEE RECEIPT */}
-      {activeReceipt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4 print:hidden">
-              <span className="text-xs font-bold text-slate-700">Official Fee Receipt</span>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => window.print()}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg cursor-pointer"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  Print Receipt
-                </button>
-                <button
-                  onClick={() => setActiveReceipt(null)}
-                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
+      {activeReceipt && (() => {
+        const receiptStudent = (children || []).find(
+          s => s.id === activeReceipt.studentId || s.admissionNo === activeReceipt.admissionNo
+        );
+        const pureStudentName =
+          receiptStudent?.nameEn ||
+          activeReceipt.studentName.replace(/\s*-\s*Class.*$/i, '').trim();
+        const madrasaClassName = receiptStudent?.class || activeReceipt.className;
 
-            {/* Official Slip */}
-            <div className="bg-white text-slate-900 border-2 border-emerald-900 p-6 rounded-xl font-sans relative">
-              <div className="text-center border-b border-emerald-800 pb-3 mb-3">
-                <div className="font-serif text-emerald-900 text-sm font-bold" dir="rtl">
-                  بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
-                </div>
-                <h1 className="text-base font-black uppercase text-emerald-950 font-serif mt-1">
-                  Al-Madrasathul Islamiya Pallikkuth
-                </h1>
-                <h2 className="text-xs font-bold text-emerald-900">
-                  അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്
-                </h2>
-                <div className="text-[10px] font-semibold text-emerald-800 tracking-wide mt-0.5">
-                  Islamic Education &amp; Digital Learning
-                </div>
-                <p className="text-[10px] text-slate-500 mt-0.5">
-                  Reg. No: KEC-8492 • Official Fee Receipt (2026–2027)
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between text-xs mb-3 font-mono bg-emerald-50/70 p-2 rounded-lg border border-emerald-100">
-                <div>
-                  <span className="text-slate-500">Receipt No: </span>
-                  <strong className="text-emerald-950 text-sm">{activeReceipt.receiptNo}</strong>
-                </div>
-                <div>
-                  <span className="text-slate-500">Date: </span>
-                  <strong className="text-slate-800">{activeReceipt.date}</strong>
+        return (
+          <div className="fee-receipt-modal fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 print:p-0 print:bg-transparent print:static print:inset-auto">
+            <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto print:border-none print:shadow-none print:max-h-none print:overflow-visible print:p-0 print:w-full print:max-w-none">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4 print:hidden">
+                <span className="text-xs font-bold text-slate-700">Official Fee Receipt</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => window.print()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg cursor-pointer"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    Print Receipt
+                  </button>
+                  <button
+                    onClick={() => setActiveReceipt(null)}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
                 </div>
               </div>
 
-              <div className="text-xs space-y-1 mb-4 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Student Name:</span>
-                  <strong className="text-slate-900">
-                    {activeReceipt.className && !activeReceipt.studentName.includes(activeReceipt.className)
-                      ? `${activeReceipt.studentName} - ${activeReceipt.className}`
-                      : activeReceipt.studentName}
-                  </strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Admission No:</span>
-                  <span className="font-mono font-bold text-slate-800">{activeReceipt.admissionNo}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Class:</span>
-                  <strong className="text-emerald-900">{activeReceipt.className}</strong>
-                </div>
-              </div>
-
-              <table className="w-full text-xs mb-4 border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-300 text-slate-600 font-bold">
-                    <th className="py-1.5 text-left">Description</th>
-                    <th className="py-1.5 text-right">Amount (₹)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {(activeReceipt.admissionFee > 0 || activeReceipt.hasAdmissionFee) && (
-                    <tr>
-                      <td className="py-1 text-slate-800 font-medium">Admission Fee</td>
-                      <td className="py-1 text-right font-mono font-semibold">₹{activeReceipt.admissionFee}</td>
-                    </tr>
-                  )}
-                  {activeReceipt.tuitionFeeAmount > 0 && (
-                    <tr>
-                      <td className="py-1 text-slate-800">
-                        Tuition Fee ({activeReceipt.tuitionFeeMonths?.length || 0} months)
-                        <div className="text-[10px] text-slate-500">
-                          {(activeReceipt.tuitionFeeMonths || []).join(', ')}
-                        </div>
-                      </td>
-                      <td className="py-1 text-right font-mono font-bold">₹{activeReceipt.tuitionFeeAmount}</td>
-                    </tr>
-                  )}
-                  {activeReceipt.specialFeeType && (
-                    <tr>
-                      <td className="py-1 text-slate-800 font-medium">
-                        Special Fee: {activeReceipt.specialFeeType}
-                      </td>
-                      <td className="py-1 text-right font-mono font-bold">
-                        ₹{activeReceipt.specialFeeAmount || activeReceipt.totalAmount}
-                      </td>
-                    </tr>
-                  )}
-                  {!activeReceipt.specialFeeType &&
-                    activeReceipt.specialFeeComponents &&
-                    Object.entries(activeReceipt.specialFeeComponents).map(([k, val]) => {
-                      if (!val) return null;
-                      return (
-                        <tr key={k}>
-                          <td className="py-1 text-slate-800 capitalize">{k.replace(/([A-Z])/g, ' $1')}</td>
-                          <td className="py-1 text-right font-mono">₹{val}</td>
-                        </tr>
-                      );
-                    })}
-                  {!activeReceipt.specialFeeType && activeReceipt.donationAmount > 0 && (
-                    <tr>
-                      <td className="py-1 text-slate-800">Donation / Other</td>
-                      <td className="py-1 text-right font-mono">₹{activeReceipt.donationAmount}</td>
-                    </tr>
-                  )}
-                  <tr className="border-t-2 border-emerald-900 font-bold">
-                    <td className="py-2 text-emerald-950 uppercase text-xs">Total Received</td>
-                    <td className="py-2 text-right font-mono text-emerald-950 text-sm font-black">
-                      ₹{activeReceipt.totalAmount.toLocaleString('en-IN')}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-
-              <div className="text-[10px] text-slate-600 italic mb-6">
-                <strong>In Words: </strong> {activeReceipt.amountInWords}
-              </div>
-
-              <div className="flex items-end justify-between pt-6 border-t border-slate-200 text-xs">
-                <div>
-                  <div className="text-[10px] text-slate-400">Collected By:</div>
-                  <div className="font-semibold text-slate-700">{activeReceipt.collectedBy || 'Office'}</div>
-                </div>
-                <div className="text-center">
-                  <div className="font-serif italic font-bold text-emerald-900 text-xs mb-1">ASLAM TK</div>
-                  <div className="border-t border-slate-400 pt-1 text-[10px] font-bold text-slate-600">
-                    Authorized Signatory
+              {/* Official Slip */}
+              <div className="fee-receipt-slip bg-white text-slate-900 border-2 border-emerald-900 p-6 rounded-xl font-sans relative">
+                <div className="text-center border-b border-emerald-800 pb-3 mb-3">
+                  <div className="font-serif text-emerald-900 text-sm font-bold" dir="rtl">
+                    {settings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
                   </div>
+                  <h1 className="text-base font-black uppercase text-emerald-950 font-serif mt-1">
+                    {settings?.institutionName || settings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
+                  </h1>
+                  <h2 className="text-xs font-bold text-emerald-900">
+                    {settings?.institutionNameMl || settings?.madrasaNameMl || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്'}
+                  </h2>
+                  <div className="text-[10px] font-semibold text-emerald-800 tracking-wide mt-0.5">
+                    {settings?.institutionSubtitle || settings?.locationEn || 'Islamic Education & Digital Learning'}
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    Reg. No: {settings?.registrationNumber || settings?.registrationNo || 'KEC-8492'} • Official Fee Receipt (2026–2027)
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between text-xs mb-3 font-mono bg-emerald-50/70 p-2 rounded-lg border border-emerald-100">
+                  <div>
+                    <span className="text-slate-500">Receipt No: </span>
+                    <strong className="text-emerald-950 text-sm">{activeReceipt.receiptNo}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Date: </span>
+                    <strong className="text-slate-800">{activeReceipt.date}</strong>
+                  </div>
+                </div>
+
+                <div className="text-xs space-y-1 mb-4 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Student Name:</span>
+                    <strong className="text-slate-900">{pureStudentName}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Admission No:</span>
+                    <span className="font-mono font-bold text-slate-800">{activeReceipt.admissionNo}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Class:</span>
+                    <strong className="text-emerald-900">{madrasaClassName}</strong>
+                  </div>
+                </div>
+
+                <table className="w-full text-xs mb-4 border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-300 text-slate-600 font-bold">
+                      <th className="py-1.5 text-left">Description</th>
+                      <th className="py-1.5 text-right">Amount (₹)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {(activeReceipt.admissionFee > 0 || activeReceipt.hasAdmissionFee) && (
+                      <tr>
+                        <td className="py-2 text-slate-800 font-medium">Admission Fee</td>
+                        <td className="py-2 text-right font-mono font-semibold">₹{activeReceipt.admissionFee}</td>
+                      </tr>
+                    )}
+                    {activeReceipt.tuitionFeeAmount > 0 && (
+                      <tr>
+                        <td className="py-2 text-slate-800">
+                          <div className="font-semibold text-gray-800 text-base">
+                            Tuition Fee: {formatTuitionMonths(activeReceipt.tuitionFeeMonths)}
+                          </div>
+                          <div className="text-sm text-gray-500 font-normal">
+                            ({activeReceipt.tuitionFeeMonths?.length || 0}{' '}
+                            {activeReceipt.tuitionFeeMonths?.length === 1 ? 'month' : 'months'})
+                          </div>
+                        </td>
+                        <td className="py-2 text-right font-mono font-bold text-sm">₹{activeReceipt.tuitionFeeAmount}</td>
+                      </tr>
+                    )}
+                    {activeReceipt.specialFeeType && (
+                      <tr>
+                        <td className="py-2 text-slate-800 font-medium">
+                          Special Fee: {activeReceipt.specialFeeType}
+                        </td>
+                        <td className="py-2 text-right font-mono font-bold">
+                          ₹{activeReceipt.specialFeeAmount || activeReceipt.totalAmount}
+                        </td>
+                      </tr>
+                    )}
+                    {!activeReceipt.specialFeeType &&
+                      activeReceipt.specialFeeComponents &&
+                      Object.entries(activeReceipt.specialFeeComponents).map(([k, val]) => {
+                        if (!val) return null;
+                        return (
+                          <tr key={k}>
+                            <td className="py-1.5 text-slate-800 capitalize">{k.replace(/([A-Z])/g, ' $1')}</td>
+                            <td className="py-1.5 text-right font-mono">₹{val}</td>
+                          </tr>
+                        );
+                      })}
+                    {!activeReceipt.specialFeeType && activeReceipt.donationAmount > 0 && (
+                      <tr>
+                        <td className="py-1.5 text-slate-800">Donation / Other</td>
+                        <td className="py-1.5 text-right font-mono">₹{activeReceipt.donationAmount}</td>
+                      </tr>
+                    )}
+                    <tr className="border-t-2 border-emerald-900 font-bold">
+                      <td className="py-2 text-emerald-950 uppercase text-xs">Total Received</td>
+                      <td className="py-2 text-right font-mono text-emerald-950 text-sm font-black">
+                        ₹{activeReceipt.totalAmount.toLocaleString('en-IN')}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div className="text-sm font-medium text-gray-700 mb-2">
+                  <span className="font-bold text-gray-800">In Words: </span>
+                  {activeReceipt.amountInWords}
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

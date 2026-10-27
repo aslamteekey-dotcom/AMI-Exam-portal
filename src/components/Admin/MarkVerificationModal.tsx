@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { db } from '../../services/firebase';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, getDocs, collection, query, where } from 'firebase/firestore';
 import { MarkSheet, SubjectAssessmentRule, Student, StudentMarkEntry, sortStudentsBoysFirst, determineStudentGender } from '../../types';
 import { logAuditEvent } from '../../services/auditLogger';
 import {
@@ -62,6 +62,53 @@ export const MarkVerificationModal: React.FC<Props> = ({
             gender: determineStudentGender(s, examinationId),
           }));
         }
+
+        // Live Firestore sync check: ensure data.markSheet has all live student marks from Firestore
+        if (data?.markSheet?.id) {
+          try {
+            const remoteDoc = await getDoc(doc(db, 'marks', data.markSheet.id));
+            if (remoteDoc.exists()) {
+              const remoteData = remoteDoc.data();
+              const remoteStudentMarks = remoteData.studentMarks || remoteData.marks;
+              if (remoteStudentMarks && typeof remoteStudentMarks === 'object' && Object.keys(remoteStudentMarks).length > 0) {
+                data.markSheet.studentMarks = {
+                  ...(data.markSheet.studentMarks || {}),
+                  ...remoteStudentMarks,
+                };
+              }
+              if (remoteData.status) {
+                data.markSheet.status = remoteData.status;
+              }
+            } else {
+              // Try querying by composite keys in case the document ID is different
+              const q = query(
+                collection(db, 'marks'),
+                where('examinationId', '==', examinationId),
+                where('classId', '==', classId),
+                where('subjectId', '==', subjectId)
+              );
+              const qSnap = await getDocs(q);
+              if (!qSnap.empty) {
+                const foundDoc = qSnap.docs[0];
+                const remoteData = foundDoc.data();
+                data.markSheet.id = foundDoc.id;
+                const remoteMarks = remoteData.studentMarks || remoteData.marks;
+                if (remoteMarks && typeof remoteMarks === 'object' && Object.keys(remoteMarks).length > 0) {
+                  data.markSheet.studentMarks = {
+                    ...(data.markSheet.studentMarks || {}),
+                    ...remoteMarks,
+                  };
+                }
+                if (remoteData.status) {
+                  data.markSheet.status = remoteData.status;
+                }
+              }
+            }
+          } catch (fErr) {
+            console.warn('Firestore live read on loadData error:', fErr);
+          }
+        }
+
         setSheetData(data);
       }
     } catch (err) {
@@ -222,53 +269,199 @@ export const MarkVerificationModal: React.FC<Props> = ({
       return;
     }
 
+    if (!sheetData?.markSheet?.id) {
+      alert('Error: Mark sheet ID not found.');
+      return;
+    }
+
     setIsSavingCorrection(true);
     try {
-      // Direct persistent Firestore write
-      try {
-        const studentId = correctingStudent.id;
-        const studentMarksCopy = { ...(sheetData.markSheet.studentMarks || {}) };
-        const entry = studentMarksCopy[studentId] || { studentId, isAbsent: false, componentMarks: {} };
-        const compMarks = { ...(entry.componentMarks || {}) };
-        compMarks[selectedCompKey] = Number(newMarkVal);
-        studentMarksCopy[studentId] = { ...entry, componentMarks: compMarks };
+      const studentIdToEdit = correctingStudent.id;
+      const newMarkNumeric = Number(newMarkVal);
 
+      // 1. GATHER CURRENT MARKS FROM LOCAL STATE (BASELINE)
+      let existingSubjectMarks: Record<string, any> = {};
+      if (sheetData?.markSheet?.studentMarks && typeof sheetData.markSheet.studentMarks === 'object') {
+        existingSubjectMarks = { ...sheetData.markSheet.studentMarks };
+      }
+      if (sheetData?.markSheet?.marks && typeof sheetData.markSheet.marks === 'object') {
+        existingSubjectMarks = {
+          ...sheetData.markSheet.marks,
+          ...existingSubjectMarks,
+        };
+      }
+      if (Array.isArray(sheetData?.marks)) {
+        sheetData.marks.forEach((m: any) => {
+          if (m?.studentId && !existingSubjectMarks[m.studentId]) {
+            existingSubjectMarks[m.studentId] = {
+              studentId: m.studentId,
+              isAbsent: Boolean(m.isAbsent),
+              componentMarks: m.componentMarks || {},
+              subjectTotal: m.subjectTotal ?? m.total ?? 0,
+              total: m.total ?? m.subjectTotal ?? 0,
+            };
+          }
+        });
+      }
+      if (Array.isArray(sheetData?.students)) {
+        sheetData.students.forEach((st: any) => {
+          if (st?.id && !existingSubjectMarks[st.id]) {
+            existingSubjectMarks[st.id] = {
+              studentId: st.id,
+              isAbsent: false,
+              componentMarks: {},
+              subjectTotal: 0,
+              total: 0,
+            };
+          }
+        });
+      }
+
+      // 2. FETCH LIVE FROM FIRESTORE TO ENSURE FULL MARKS MERGE (NEVER OVERWRITE WITH MISSING STUDENTS)
+      const docRef = doc(db, 'marks', sheetData.markSheet.id);
+      try {
+        const snap = await getDoc(docRef);
+        if (snap.exists()) {
+          const liveDoc = snap.data();
+          const remoteMarks = liveDoc.studentMarks || liveDoc.marks;
+          if (remoteMarks && typeof remoteMarks === 'object' && Object.keys(remoteMarks).length > 0) {
+            existingSubjectMarks = {
+              ...remoteMarks,
+              ...existingSubjectMarks,
+            };
+          }
+        }
+      } catch (fReadErr) {
+        console.warn('Firestore live read warning before correction:', fReadErr);
+      }
+
+      // 3. TARGET SPECIFIC STUDENT'S MARK COMPONENT & RECALCULATE TOTAL
+      const targetExistingEntry = existingSubjectMarks[studentIdToEdit] || {
+        studentId: studentIdToEdit,
+        isAbsent: false,
+        componentMarks: {},
+      };
+      const oldMarkValue =
+        targetExistingEntry.componentMarks?.[selectedCompKey] ??
+        targetExistingEntry[selectedCompKey] ??
+        0;
+
+      const updatedComponentMarks = {
+        ...(targetExistingEntry.componentMarks || {}),
+        [selectedCompKey]: newMarkNumeric,
+      };
+
+      const recalculatedTotal = Object.values(updatedComponentMarks).reduce(
+        (sum: number, val: any) => sum + (Number(val) || 0),
+        0
+      );
+
+      const studentName =
+        correctingStudent?.nameEn ||
+        (correctingStudent as any)?.name ||
+        'Student';
+
+      const updatedStudentEntry = {
+        ...targetExistingEntry,
+        studentId: studentIdToEdit,
+        isAbsent: false,
+        componentMarks: updatedComponentMarks,
+        [selectedCompKey]: newMarkNumeric,
+        subjectTotal: recalculatedTotal,
+        total: recalculatedTotal,
+        lastCorrectedAt: new Date().toISOString(),
+        lastCorrectedBy: user?.name || 'Principal',
+        lastCorrectionReason: correctionReason.trim(),
+      };
+
+      // 4. IMMUTABLE COMPLETE MARKS MAP PRESERVING ALL OTHER STUDENTS
+      const updatedMarksMap: Record<string, any> = {
+        ...existingSubjectMarks,
+        [studentIdToEdit]: updatedStudentEntry,
+      };
+
+      // 5. FIRESTORE TARGETED UPDATE (PREVENT BULK OVERWRITE)
+      try {
         await setDoc(
-          doc(db, 'marks', sheetData.markSheet.id),
+          docRef,
           {
-            studentMarks: studentMarksCopy,
+            studentMarks: updatedMarksMap,
+            marks: updatedMarksMap,
             lastUpdated: new Date().toISOString(),
           },
           { merge: true }
         );
       } catch (firestoreErr: any) {
-        console.warn('Firestore admin correct warning:', firestoreErr);
+        console.warn('Firestore targeted mark correction warning:', firestoreErr);
       }
 
+      // 6. LOCAL STATE IMMUTABILITY: STRICTLY MODIFY ONLY MATCHING STUDENT
+      setSheetData((prev: any) => {
+        if (!prev) return prev;
+        const currentMarkSheet = prev.markSheet || {};
+        return {
+          ...prev,
+          markSheet: {
+            ...currentMarkSheet,
+            studentMarks: updatedMarksMap,
+            marks: updatedMarksMap,
+            lastUpdated: new Date().toISOString(),
+          },
+          marks: Array.isArray(prev.marks)
+            ? prev.marks.map((m: any) =>
+                m.studentId === studentIdToEdit || m.id === studentIdToEdit
+                  ? { ...m, ...updatedStudentEntry }
+                  : m
+              )
+            : prev.marks,
+        };
+      });
+
+      // 7. AUDIT LOGGING PRESERVATION (SAVED IN DEDICATED AUDIT LOGS)
+      try {
+        await logAuditEvent({
+          action: 'MARK_CORRECTED',
+          details: `Principal ${user?.name || 'ASLAM TK'} authorized mark correction for ${studentName} (Adm: ${correctingStudent.admissionNo || '—'}) in Class ${sheetData.classItem?.name || classId} - ${sheetData.subjectItem?.nameEn || subjectId}: ${selectedCompKey} changed from ${oldMarkValue} to ${newMarkNumeric}. Reason: ${correctionReason.trim()}`,
+          currentUser: user,
+          recordType: 'marks',
+          recordId: sheetData.markSheet.id,
+          previousValue: oldMarkValue,
+          newValue: newMarkNumeric,
+        });
+      } catch (auditErr) {
+        console.warn('Audit logging warning:', auditErr);
+      }
+
+      // 8. BACKEND API PERSISTENCE
       const res = await fetchWithAuth(`/api/mark-sheets/${sheetData.markSheet.id}/admin-correct`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          studentId: correctingStudent.id,
+          studentId: studentIdToEdit,
           componentKey: selectedCompKey,
-          newMark: Number(newMarkVal),
-          reason: correctionReason,
+          newMark: newMarkNumeric,
+          reason: correctionReason.trim(),
+          studentMarks: updatedMarksMap,
+          marks: updatedMarksMap,
         }),
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Failed to correct mark');
       }
+
+      // Dispatch global update event
+      window.dispatchEvent(new CustomEvent('madrasa_marks_updated'));
 
       alert('Mark successfully corrected and logged in audit trail!');
       setCorrectingStudent(null);
       setNewMarkVal('');
       setCorrectionReason('');
       onRefresh();
-      loadData();
+      await loadData();
     } catch (err: any) {
-      alert(err.message);
+      alert(err.message || 'Failed to save mark correction');
     } finally {
       setIsSavingCorrection(false);
     }
@@ -321,7 +514,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
     ? sheetData.marks
     : rawSortedStudents.map((st: any, idx: number) => {
         const studentId = st?.id;
-        const entry = markSheet?.studentMarks?.[studentId] || {};
+        const entry = markSheet?.studentMarks?.[studentId] || markSheet?.marks?.[studentId] || {};
         return {
           student: st,
           studentId,
@@ -560,11 +753,13 @@ export const MarkVerificationModal: React.FC<Props> = ({
                         onClick={() => {
                           setCorrectingStudent(student);
                           if (components[0]) {
-                            setSelectedCompKey(components[0].componentKey);
-                            setNewMarkVal(String(entry?.componentMarks?.[components[0].componentKey] ?? '0'));
+                            const compKey = components[0].componentKey;
+                            setSelectedCompKey(compKey);
+                            const currentVal = entry?.componentMarks?.[compKey] ?? entry?.[compKey];
+                            setNewMarkVal(currentVal !== undefined && currentVal !== '' ? String(currentVal) : '0');
                           }
                         }}
-                        className="p-1 rounded text-purple-700 hover:bg-purple-50 transition"
+                        className="p-1 rounded text-purple-700 hover:bg-purple-50 transition cursor-pointer"
                         title="Principal Mark Correction"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
@@ -601,9 +796,14 @@ export const MarkVerificationModal: React.FC<Props> = ({
                 <select
                   value={selectedCompKey}
                   onChange={e => {
-                    setSelectedCompKey(e.target.value);
-                    const old = markSheet?.studentMarks?.[correctingStudent.id]?.componentMarks?.[e.target.value];
-                    setNewMarkVal(old !== undefined ? String(old) : '0');
+                    const newKey = e.target.value;
+                    setSelectedCompKey(newKey);
+                    const studentEntry =
+                      markSheet?.studentMarks?.[correctingStudent.id] ||
+                      markSheet?.marks?.[correctingStudent.id] ||
+                      marksList.find((m: any) => m.studentId === correctingStudent.id);
+                    const old = studentEntry?.componentMarks?.[newKey] ?? studentEntry?.[newKey];
+                    setNewMarkVal(old !== undefined && old !== '' ? String(old) : '0');
                   }}
                   className="w-full p-2 bg-white border border-purple-200 rounded-lg text-xs font-semibold"
                 >

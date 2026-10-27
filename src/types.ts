@@ -223,6 +223,10 @@ export interface InstitutionSettings {
   reportHeaderNotesMl: string;
   activeAcademicYearId: string;
   activeExamId: string;
+  institutionName?: string;
+  institutionNameMl?: string;
+  institutionSubtitle?: string;
+  registrationNumber?: string;
 }
 
 export interface ProgressReportSubject {

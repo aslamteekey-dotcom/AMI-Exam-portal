@@ -3806,7 +3806,35 @@ export class ClientStorageApi {
           sheet.status = 'returned_for_correction';
           sheet.returnedReason = bodyData.reason || '';
         } else if (action === 'admin-correct') {
-          sheet.studentMarks = bodyData.studentMarks;
+          // Strictly preserve all existing student marks and merge safely
+          if (bodyData.studentMarks && typeof bodyData.studentMarks === 'object' && Object.keys(bodyData.studentMarks).length > 0) {
+            sheet.studentMarks = {
+              ...(sheet.studentMarks || {}),
+              ...bodyData.studentMarks,
+            };
+          } else if (bodyData.studentId && bodyData.componentKey) {
+            const sId = bodyData.studentId;
+            const existingMarks = sheet.studentMarks || {};
+            const existingEntry = existingMarks[sId] || { studentId: sId, isAbsent: false, componentMarks: {} };
+            const compMarks = { ...(existingEntry.componentMarks || {}) };
+            compMarks[bodyData.componentKey] = Number(bodyData.newMark);
+            const sum = Object.values(compMarks).reduce((acc: number, v: any) => acc + (Number(v) || 0), 0);
+            sheet.studentMarks = {
+              ...existingMarks,
+              [sId]: {
+                ...existingEntry,
+                studentId: sId,
+                isAbsent: false,
+                componentMarks: compMarks,
+                [bodyData.componentKey]: Number(bodyData.newMark),
+                subjectTotal: sum,
+                total: sum,
+                lastCorrectedAt: new Date().toISOString(),
+                lastCorrectedBy: 'Principal',
+                lastCorrectionReason: bodyData.reason || '',
+              },
+            };
+          }
           sheet.lastUpdated = new Date().toISOString();
         }
 

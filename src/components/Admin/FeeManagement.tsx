@@ -10,9 +10,37 @@ import {
   SpecialFeeType,
   ReceiptSequences,
   sortStudentsBoysFirst,
+  InstitutionSettings,
 } from '../../types';
 import { firestoreSync } from '../../services/firestoreSync';
 import { handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
+
+// Helper to format tuition months into readable range with 3-letter abbreviations
+export const formatTuitionMonths = (months?: string[]): string => {
+  if (!months || months.length === 0) return '';
+  if (months.length === 1) return months[0];
+
+  const first = months[0].trim();
+  const last = months[months.length - 1].trim();
+
+  const firstParts = first.split(' ');
+  const lastParts = last.split(' ');
+
+  const firstMonth = firstParts[0];
+  const lastMonth = lastParts[0];
+  const firstYear = firstParts[1] || '';
+  const lastYear = lastParts[1] || firstYear;
+
+  const firstAbbr = firstMonth.slice(0, 3);
+  const lastAbbr = lastMonth.slice(0, 3);
+
+  if (firstYear === lastYear && firstYear) {
+    return `${firstAbbr} - ${lastAbbr} ${lastYear}`;
+  } else if (firstYear && lastYear) {
+    return `${firstAbbr} ${firstYear} - ${lastAbbr} ${lastYear}`;
+  }
+  return `${firstAbbr} - ${lastAbbr}`;
+};
 import {
   CreditCard,
   Plus,
@@ -48,11 +76,12 @@ export const FeeManagement: React.FC = () => {
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [payments, setPayments] = useState<FeePayment[]>([]);
+  const [settings, setSettings] = useState<InstitutionSettings | null>(null);
 
   // Filters & State
   const [selectedClassId, setSelectedClassId] = useState('All Classes');
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeSubTab, setActiveSubTab] = useState<'ledger' | 'receipts'>('ledger');
+  const [activeSubTab, setActiveSubTab] = useState<'ledger' | 'admission' | 'special' | 'receipts'>('ledger');
 
   // New Payment Modal State: Two Distinct Tabs
   const [showPayModal, setShowPayModal] = useState(false);
@@ -75,7 +104,6 @@ export const FeeManagement: React.FC = () => {
   // Common Modal State
   const [payNotes, setPayNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isResettingClass7, setIsResettingClass7] = useState(false);
 
   // View/Print Receipt Modal State
   const [activeReceipt, setActiveReceipt] = useState<FeePayment | null>(null);
@@ -124,14 +152,19 @@ export const FeeManagement: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [resC, resS, resP] = await Promise.all([
+      const [resC, resS, resP, resSet] = await Promise.all([
         fetchWithAuth('/api/classes'),
         fetchWithAuth('/api/students'),
         fetchWithAuth('/api/fees/payments'),
+        fetchWithAuth('/api/settings').catch(() => null),
       ]);
       const cData: ClassItem[] = await resC.json();
       const sData: Student[] = await resS.json();
       const pData: FeePayment[] = await resP.json();
+      if (resSet && resSet.ok) {
+        const setData = await resSet.json();
+        setSettings(setData);
+      }
 
       setClasses(cData || []);
       const uniqueStudents = Array.from(
@@ -234,40 +267,6 @@ export const FeeManagement: React.FC = () => {
     setPayDate(new Date().toISOString().split('T')[0]);
     refreshReceiptSequences();
     setShowPayModal(true);
-  };
-
-  // Admin Utility: Reset Class 7 Test Fee Data from Firestore & Local Storage
-  const handleResetClass7TestFees = async () => {
-    const confirmed = window.confirm(
-      '⚠️ Are you sure you want to reset all test fee data for Class 7?\n\n' +
-      'This will:\n' +
-      '• Delete all fee receipt documents for Class 7 students from Firestore (tuition_receipts, special_receipts, and fee_payments)\n' +
-      '• Clear paid months tracking in local storage for Class 7\n' +
-      '• Return the Class 7 Month-by-Month Progress Ledger to completely empty/unpaid\n\n' +
-      'This action cannot be undone.'
-    );
-    if (!confirmed) return;
-
-    setIsResettingClass7(true);
-    try {
-      // 1. Call backend reset endpoint
-      await fetchWithAuth('/api/fees/reset-class-test-fees', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ className: 'Class 7' }),
-      }).catch(e => console.warn('Backend reset call warning:', e));
-
-      // 2. Direct Firestore purge
-      await firestoreSync.resetClassTestFees('Class 7').catch(e => console.warn('Firestore reset warning:', e));
-
-      // 3. Reload state
-      await loadData();
-      alert('✅ Class 7 test fee data has been successfully wiped and reset. All Class 7 students are now marked as unpaid.');
-    } catch (err: any) {
-      alert(`Error resetting Class 7 test fees: ${err.message || 'Unknown error'}`);
-    } finally {
-      setIsResettingClass7(false);
-    }
   };
 
   // Open pay modal from top action button
@@ -518,11 +517,83 @@ export const FeeManagement: React.FC = () => {
     return matchClass && matchQuery;
   });
 
-  // Overview metrics
+  // Overview metrics (accurate distribution into 3 specific categories: Tuition, Admission, Special)
   const totalCollections = payments.reduce((sum, p) => sum + (Number(p.totalAmount) || 0), 0);
-  const tuitionCollections = payments.reduce((sum, p) => sum + (Number(p.tuitionFeeAmount) || 0), 0);
-  const specialCollections = payments.reduce((sum, p) => sum + (Number(p.specialFeeAmount) || 0), 0);
+
+  const tuitionCollections = payments.reduce((sum, p) => {
+    if (p.tuitionFeeAmount && Number(p.tuitionFeeAmount) > 0) return sum + Number(p.tuitionFeeAmount);
+    if (p.feeCategory === 'tuition' && !p.admissionFee && !p.hasAdmissionFee && (!p.specialFeeAmount || p.specialFeeAmount === 0)) {
+      return sum + (Number(p.totalAmount) || 0);
+    }
+    return sum;
+  }, 0);
+
+  const admissionCollections = payments.reduce((sum, p) => {
+    if (p.admissionFee && Number(p.admissionFee) > 0) return sum + Number(p.admissionFee);
+    if ((p as any).feeType === 'Admission Fee' || (p as any).paymentType === 'Admission Fee') {
+      return sum + (Number(p.totalAmount) || 0);
+    }
+    return sum;
+  }, 0);
+
+  const specialCollections = payments.reduce((sum, p) => {
+    if (p.specialFeeAmount && Number(p.specialFeeAmount) > 0) return sum + Number(p.specialFeeAmount);
+    if (p.feeCategory === 'special' && (!p.tuitionFeeAmount || p.tuitionFeeAmount === 0) && (!p.admissionFee || p.admissionFee === 0)) {
+      return sum + (Number(p.totalAmount) || 0);
+    }
+    return sum;
+  }, 0);
+
   const totalReceipts = payments.length;
+
+  // Filtered lists for Admission Fee and Special Fee ledgers (strictly respecting selectedClassId on Madrasa class)
+  const admissionPayments = payments.filter(p => {
+    const isAdmission =
+      (p.admissionFee && Number(p.admissionFee) > 0) ||
+      p.hasAdmissionFee ||
+      (p as any).feeType === 'Admission Fee' ||
+      (p as any).paymentType === 'Admission Fee';
+    if (!isAdmission) return false;
+
+    const st = students.find(s => s.id === p.studentId || s.admissionNo === p.admissionNo);
+    const studentClass = st?.class || p.className;
+    const matchClass =
+      !selectedClassId || selectedClassId === 'All Classes' || studentClass === selectedClassId || p.className === selectedClassId;
+    if (!matchClass) return false;
+
+    const q = (searchQuery || '').toLowerCase().trim();
+    if (!q) return true;
+    return (
+      (p.studentName || '').toLowerCase().includes(q) ||
+      (p.admissionNo || '').toLowerCase().includes(q) ||
+      (p.receiptNo || '').toLowerCase().includes(q) ||
+      (st?.parentNameEn || '').toLowerCase().includes(q)
+    );
+  });
+
+  const specialPayments = payments.filter(p => {
+    const isSpecial =
+      p.feeCategory === 'special' ||
+      Boolean(p.specialFeeType) ||
+      (p.specialFeeAmount && Number(p.specialFeeAmount) > 0);
+    if (!isSpecial) return false;
+
+    const st = students.find(s => s.id === p.studentId || s.admissionNo === p.admissionNo);
+    const studentClass = st?.class || p.className;
+    const matchClass =
+      !selectedClassId || selectedClassId === 'All Classes' || studentClass === selectedClassId || p.className === selectedClassId;
+    if (!matchClass) return false;
+
+    const q = (searchQuery || '').toLowerCase().trim();
+    if (!q) return true;
+    return (
+      (p.studentName || '').toLowerCase().includes(q) ||
+      (p.admissionNo || '').toLowerCase().includes(q) ||
+      (p.receiptNo || '').toLowerCase().includes(q) ||
+      (p.specialFeeType || '').toLowerCase().includes(q) ||
+      (st?.parentNameEn || '').toLowerCase().includes(q)
+    );
+  });
 
   return (
     <div className="space-y-6">
@@ -534,66 +605,65 @@ export const FeeManagement: React.FC = () => {
           </h2>
           <p className="text-xs text-slate-500">
             {isMl
-              ? 'പ്രതിമാസ ട്യൂഷൻ ഫീസ് (₹300/മാസം), പൊതുപരീക്ഷ, ദേശീയ പരീക്ഷ, വികാസനം എന്നിവയുടെ രസീത് മാനേജ്മെന്റ്.'
-              : '12-month tuition installments (₹300/mo), board examination, special funds, and instant printable receipts.'}
+              ? 'പ്രതിമാസ ട്യൂഷൻ ഫീസ് (₹300/മാസം), അഡ്മിഷൻ ഫീസ്, പൊതുപരീക്ഷ, പ്രത്യേക ഫണ്ടുകൾ എന്നിവയുടെ രസീത് മാനേജ്മെന്റ്.'
+              : '12-month tuition installments (₹300/mo), admission fees, special/exam funds, and instant printable receipts.'}
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Temporary Admin Utility Button */}
-          <button
-            type="button"
-            onClick={handleResetClass7TestFees}
-            disabled={isResettingClass7}
-            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-amber-950 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 rounded-xl transition shadow-xs cursor-pointer border border-amber-500 disabled:opacity-50"
-            title="Wipe test fee receipts and paid months for Class 7"
-          >
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-900" />
-            <span>{isResettingClass7 ? 'Resetting Class 7...' : '⚠️ Reset Class 7 Test Fees'}</span>
-          </button>
-
-          <button
-            onClick={handleOpenNewPaymentModal}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            {isMl ? 'ഫീസ് രേഖപ്പെടുത്തുക' : 'Record Fee Payment'}
-          </button>
-        </div>
+        <button
+          onClick={handleOpenNewPaymentModal}
+          className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
+        >
+          <Plus className="w-4 h-4" />
+          {isMl ? 'ഫീസ് രേഖപ്പെടുത്തുക' : 'Record Fee Payment'}
+        </button>
       </div>
 
-      {/* Summary KPI Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 text-xs">
+      {/* Summary KPI Cards (EXACTLY 5 Stat Cards Side-by-Side) */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5 text-xs">
+        {/* 1. Total Collection */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
-          <span className="text-[11px] font-bold text-slate-500 uppercase block">Total Collections</span>
+          <span className="text-[11px] font-bold text-slate-500 uppercase block">Total Collection</span>
           <span className="text-2xl font-black text-emerald-950 font-mono mt-1 block">
             ₹{totalCollections.toLocaleString('en-IN')}
           </span>
-          <span className="text-[10px] text-slate-400">All fees & funds received</span>
+          <span className="text-[10px] text-slate-400">Sum of all fees combined</span>
         </div>
 
+        {/* 2. Tuition Fee */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
-          <span className="text-[11px] font-bold text-slate-500 uppercase block">Tuition Fees</span>
+          <span className="text-[11px] font-bold text-slate-500 uppercase block">Tuition Fee</span>
           <span className="text-2xl font-black text-blue-900 font-mono mt-1 block">
             ₹{tuitionCollections.toLocaleString('en-IN')}
           </span>
           <span className="text-[10px] text-slate-400">₹300 monthly installments</span>
         </div>
 
+        {/* 3. Admission Fee */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
-          <span className="text-[11px] font-bold text-slate-500 uppercase block">Special & Exam Fees</span>
+          <span className="text-[11px] font-bold text-slate-500 uppercase block">Admission Fee</span>
+          <span className="text-2xl font-black text-indigo-900 font-mono mt-1 block">
+            ₹{admissionCollections.toLocaleString('en-IN')}
+          </span>
+          <span className="text-[10px] text-slate-400">New admission fee payments</span>
+        </div>
+
+        {/* 4. Special Fee */}
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
+          <span className="text-[11px] font-bold text-slate-500 uppercase block">Special Fee</span>
           <span className="text-2xl font-black text-purple-900 font-mono mt-1 block">
             ₹{specialCollections.toLocaleString('en-IN')}
           </span>
-          <span className="text-[10px] text-slate-400">Board exams, Vikasanam, CCA</span>
+          <span className="text-[10px] text-slate-400">Terminal, Hikma, Board, Funds</span>
         </div>
 
+        {/* 5. Receipts Issued */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
           <span className="text-[11px] font-bold text-slate-500 uppercase block">Receipts Issued</span>
           <span className="text-2xl font-black text-slate-900 font-mono mt-1 block">
             {totalReceipts}
           </span>
-          <span className="text-[10px] text-slate-400">Sequential receipt records</span>
+          <span className="text-[10px] text-slate-400">Total receipt records</span>
         </div>
       </div>
 
@@ -617,7 +687,7 @@ export const FeeManagement: React.FC = () => {
             </select>
           </div>
 
-          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+          <div className="flex flex-wrap items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
             <button
               onClick={() => setActiveSubTab('ledger')}
               className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
@@ -629,14 +699,34 @@ export const FeeManagement: React.FC = () => {
               Month-by-Month Progress Ledger
             </button>
             <button
-              onClick={() => setActiveSubTab('receipts')}
+              onClick={() => setActiveSubTab('admission')}
               className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
-                activeSubTab === 'receipts'
+                activeSubTab === 'admission'
                   ? 'bg-white text-emerald-900 shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Receipts History ({payments.length})
+              Admission Fee Ledger ({admissionPayments.length})
+            </button>
+            <button
+              onClick={() => setActiveSubTab('special')}
+              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
+                activeSubTab === 'special'
+                  ? 'bg-white text-purple-900 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Special Fee Ledger ({specialPayments.length})
+            </button>
+            <button
+              onClick={() => setActiveSubTab('receipts')}
+              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
+                activeSubTab === 'receipts'
+                  ? 'bg-white text-slate-900 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Receipts History ({filteredPayments.length})
             </button>
           </div>
         </div>
@@ -665,21 +755,9 @@ export const FeeManagement: React.FC = () => {
                 Green badge indicates paid monthly installment (₹300). Click "Pay" to record newly received months.
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleResetClass7TestFees}
-                disabled={isResettingClass7}
-                className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold text-amber-950 bg-amber-300 hover:bg-amber-400 rounded-lg transition border border-amber-400 cursor-pointer disabled:opacity-50"
-                title="Wipe Class 7 test receipts from Firestore and reset ledger"
-              >
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-900" />
-                <span>{isResettingClass7 ? 'Resetting Class 7...' : '⚠️ Reset Class 7 Test Fees'}</span>
-              </button>
-              <span className="text-xs font-semibold px-2.5 py-1 bg-emerald-100 text-emerald-900 rounded-lg">
-                {filteredStudents.length} Students Active
-              </span>
-            </div>
+            <span className="text-xs font-semibold px-2.5 py-1 bg-emerald-100 text-emerald-900 rounded-lg">
+              {filteredStudents.length} Students Active
+            </span>
           </div>
 
           <div
@@ -784,7 +862,224 @@ export const FeeManagement: React.FC = () => {
         </div>
       )}
 
-      {/* VIEW 2: RECEIPTS HISTORY */}
+      {/* VIEW 2: ADMISSION FEE LEDGER */}
+      {activeSubTab === 'admission' && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-emerald-800" />
+                <span>Admission Fee Ledger</span>
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Official records of collected student admission fees. Filtered strictly by Madrasa class.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-semibold px-2.5 py-1 bg-emerald-100 text-emerald-900 rounded-lg">
+                Total Collected: ₹{admissionPayments.reduce((s, p) => s + (Number(p.admissionFee) || Number(p.totalAmount) || 0), 0).toLocaleString('en-IN')}
+              </span>
+              <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 text-slate-700 rounded-lg">
+                {admissionPayments.length} Records
+              </span>
+            </div>
+          </div>
+
+          <div onWheel={handleHorizontalWheel} className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                  <th className="py-2.5 px-3 w-16 text-center">Roll No</th>
+                  <th className="py-2.5 px-3 w-20">Adm No</th>
+                  <th className="py-2.5 px-3 min-w-[160px]">Student Name</th>
+                  <th className="py-2.5 px-3 w-24">Class</th>
+                  <th className="py-2.5 px-3 text-right">Amount Paid</th>
+                  <th className="py-2.5 px-3 w-24 text-center font-mono">Receipt No</th>
+                  <th className="py-2.5 px-3 w-24">Date</th>
+                  <th className="py-2.5 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {admissionPayments.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="p-8 text-center text-slate-400">
+                      No admission fee records found matching the current class and search query.
+                    </td>
+                  </tr>
+                ) : (
+                  admissionPayments.map(p => {
+                    const st = students.find(s => s.id === p.studentId || s.admissionNo === p.admissionNo);
+                    const amountPaid = Number(p.admissionFee) || Number(p.totalAmount) || 0;
+                    const rollNo = st?.rollNo || '—';
+                    const displayClass = st?.class || p.className || '—';
+
+                    return (
+                      <tr key={p.id} className="hover:bg-slate-50/80 transition">
+                        <td className="py-2 px-3 text-center font-mono font-bold text-slate-600">
+                          {rollNo}
+                        </td>
+                        <td className="py-2 px-3 font-mono font-semibold text-slate-700">
+                          {p.admissionNo}
+                        </td>
+                        <td className="py-2 px-3">
+                          <span className="font-bold text-slate-900 block">{p.studentName}</span>
+                          <span className="text-[10px] text-slate-400 block font-mono">
+                            {st?.parentNameEn || '—'}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 font-semibold text-emerald-950">
+                          {displayClass}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono font-black text-emerald-900">
+                          ₹{amountPaid.toLocaleString('en-IN')}
+                        </td>
+                        <td className="py-2 px-3 text-center font-mono font-bold text-slate-800">
+                          #{p.receiptNo}
+                        </td>
+                        <td className="py-2 px-3 font-mono text-slate-600">
+                          {p.date}
+                        </td>
+                        <td className="py-2 px-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => setActiveReceipt(p)}
+                              title="Print / View Receipt"
+                              className="p-1.5 text-emerald-800 hover:text-emerald-900 hover:bg-emerald-50 rounded-lg cursor-pointer"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeletePayment(p.id, p.receiptNo)}
+                              title="Delete Receipt"
+                              className="p-1.5 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-lg cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW 3: SPECIAL FEE LEDGER */}
+      {activeSubTab === 'special' && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-purple-800" />
+                <span>Special Fee Ledger</span>
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Records of terminal exams, board exams, council funds, and special collections. Filtered strictly by Madrasa class.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-semibold px-2.5 py-1 bg-purple-100 text-purple-900 rounded-lg">
+                Total Collected: ₹{specialPayments.reduce((s, p) => s + (Number(p.specialFeeAmount) || Number(p.totalAmount) || 0), 0).toLocaleString('en-IN')}
+              </span>
+              <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 text-slate-700 rounded-lg">
+                {specialPayments.length} Records
+              </span>
+            </div>
+          </div>
+
+          <div onWheel={handleHorizontalWheel} className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                  <th className="py-2.5 px-3 w-16 text-center">Roll No</th>
+                  <th className="py-2.5 px-3 w-20">Adm No</th>
+                  <th className="py-2.5 px-3 min-w-[160px]">Student Name</th>
+                  <th className="py-2.5 px-3 w-24">Class</th>
+                  <th className="py-2.5 px-3 min-w-[150px]">Fee Type</th>
+                  <th className="py-2.5 px-3 text-right">Amount Paid</th>
+                  <th className="py-2.5 px-3 w-24 text-center font-mono">Receipt No</th>
+                  <th className="py-2.5 px-3 w-24">Date</th>
+                  <th className="py-2.5 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {specialPayments.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="p-8 text-center text-slate-400">
+                      No special fee records found matching the current class and search query.
+                    </td>
+                  </tr>
+                ) : (
+                  specialPayments.map(p => {
+                    const st = students.find(s => s.id === p.studentId || s.admissionNo === p.admissionNo);
+                    const amountPaid = Number(p.specialFeeAmount) || Number(p.totalAmount) || 0;
+                    const rollNo = st?.rollNo || '—';
+                    const displayClass = st?.class || p.className || '—';
+                    const feeType = p.specialFeeType || 'Special Fee';
+
+                    return (
+                      <tr key={p.id} className="hover:bg-slate-50/80 transition">
+                        <td className="py-2 px-3 text-center font-mono font-bold text-slate-600">
+                          {rollNo}
+                        </td>
+                        <td className="py-2 px-3 font-mono font-semibold text-slate-700">
+                          {p.admissionNo}
+                        </td>
+                        <td className="py-2 px-3">
+                          <span className="font-bold text-slate-900 block">{p.studentName}</span>
+                          <span className="text-[10px] text-slate-400 block font-mono">
+                            {st?.parentNameEn || '—'}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 font-semibold text-purple-950">
+                          {displayClass}
+                        </td>
+                        <td className="py-2 px-3">
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 inline-block">
+                            {feeType}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono font-black text-purple-900">
+                          ₹{amountPaid.toLocaleString('en-IN')}
+                        </td>
+                        <td className="py-2 px-3 text-center font-mono font-bold text-slate-800">
+                          #{p.receiptNo}
+                        </td>
+                        <td className="py-2 px-3 font-mono text-slate-600">
+                          {p.date}
+                        </td>
+                        <td className="py-2 px-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => setActiveReceipt(p)}
+                              title="Print / View Receipt"
+                              className="p-1.5 text-purple-800 hover:text-purple-900 hover:bg-purple-50 rounded-lg cursor-pointer"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeletePayment(p.id, p.receiptNo)}
+                              title="Delete Receipt"
+                              className="p-1.5 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-lg cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW 4: RECEIPTS HISTORY */}
       {activeSubTab === 'receipts' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
@@ -1322,174 +1617,170 @@ export const FeeManagement: React.FC = () => {
       )}
 
       {/* MODAL 2: PRINTABLE OFFICIAL FEE RECEIPT */}
-      {activeReceipt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4 print:hidden">
-              <span className="text-xs font-bold text-slate-700">Official Fee Receipt</span>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => window.print()}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg cursor-pointer"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  Print Receipt
-                </button>
-                <button
-                  onClick={() => setActiveReceipt(null)}
-                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
+      {/* MODAL 2: PRINTABLE OFFICIAL FEE RECEIPT */}
+      {activeReceipt && (() => {
+        const activeStudent = students.find(
+          s => s.id === activeReceipt.studentId || s.admissionNo === activeReceipt.admissionNo
+        );
+        const pureStudentName =
+          activeStudent?.nameEn ||
+          activeReceipt.studentName.replace(/\s*-\s*Class.*$/i, '').trim();
+        const madrasaClassName = activeStudent?.class || activeReceipt.className;
 
-            {/* Official Slip */}
-            <div
-              ref={receiptPrintRef}
-              className="bg-white text-slate-900 border-2 border-emerald-900 p-6 rounded-xl font-sans relative"
-            >
-              {/* Header */}
-              <div className="text-center border-b border-emerald-800 pb-3 mb-3">
-                <div className="font-serif text-emerald-900 text-sm font-bold" dir="rtl">
-                  بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
-                </div>
-                <h1 className="text-base font-black uppercase text-emerald-950 font-serif mt-1">
-                  Al-Madrasathul Islamiya Pallikkuth
-                </h1>
-                <h2 className="text-xs font-bold text-emerald-900">
-                  അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്
-                </h2>
-                <div className="text-[10px] font-semibold text-emerald-800 tracking-wide mt-0.5">
-                  Islamic Education &amp; Digital Learning
-                </div>
-                <p className="text-[10px] text-slate-500 mt-0.5">
-                  Reg. No: KEC-8492 • Official Fee Receipt (2026–2027)
-                </p>
-              </div>
-
-              {/* Receipt Details Header */}
-              <div className="flex items-center justify-between text-xs mb-3 font-mono bg-emerald-50/70 p-2 rounded-lg border border-emerald-100">
-                <div>
-                  <span className="text-slate-500">Receipt No: </span>
-                  <strong className="text-emerald-950 text-sm">{activeReceipt.receiptNo}</strong>
-                </div>
-                <div>
-                  <span className="text-slate-500">Date: </span>
-                  <strong className="text-slate-800">{activeReceipt.date}</strong>
+        return (
+          <div className="fee-receipt-modal fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 print:p-0 print:bg-transparent print:static print:inset-auto">
+            <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto print:border-none print:shadow-none print:max-h-none print:overflow-visible print:p-0 print:w-full print:max-w-none">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4 print:hidden">
+                <span className="text-xs font-bold text-slate-700">Official Fee Receipt</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => window.print()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg cursor-pointer"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    Print Receipt
+                  </button>
+                  <button
+                    onClick={() => setActiveReceipt(null)}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
                 </div>
               </div>
 
-              {/* Student Metadata */}
-              <div className="text-xs space-y-1 mb-4 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Student Name:</span>
-                  <strong className="text-slate-900">
-                    {activeReceipt.className && !activeReceipt.studentName.includes(activeReceipt.className)
-                      ? `${activeReceipt.studentName} - ${activeReceipt.className}`
-                      : activeReceipt.studentName}
-                  </strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Admission No:</span>
-                  <span className="font-mono font-bold text-slate-800">{activeReceipt.admissionNo}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Class:</span>
-                  <strong className="text-emerald-900">{activeReceipt.className}</strong>
-                </div>
-              </div>
-
-              {/* Breakdown Table */}
-              <table className="w-full text-xs mb-4 border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-300 text-slate-600 font-bold">
-                    <th className="py-1.5 text-left">Description</th>
-                    <th className="py-1.5 text-right">Amount (₹)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {/* Admission Fee */}
-                  {(activeReceipt.admissionFee > 0 || activeReceipt.hasAdmissionFee) && (
-                    <tr>
-                      <td className="py-1 text-slate-800 font-medium">Admission Fee</td>
-                      <td className="py-1 text-right font-mono font-semibold">₹{activeReceipt.admissionFee}</td>
-                    </tr>
-                  )}
-                  {/* Tuition Fee Months */}
-                  {activeReceipt.tuitionFeeAmount > 0 && (
-                    <tr>
-                      <td className="py-1 text-slate-800">
-                        <div className="font-medium">
-                          Tuition Fee ({activeReceipt.tuitionFeeMonths?.length || 0} months)
-                        </div>
-                        <div className="text-[10px] text-slate-500">
-                          {(activeReceipt.tuitionFeeMonths || []).join(', ')}
-                        </div>
-                      </td>
-                      <td className="py-1 text-right font-mono font-bold">₹{activeReceipt.tuitionFeeAmount}</td>
-                    </tr>
-                  )}
-                  {/* Special Fee Type */}
-                  {activeReceipt.specialFeeType && (
-                    <tr>
-                      <td className="py-1 text-slate-800 font-medium">
-                        Special Fee: {activeReceipt.specialFeeType}
-                      </td>
-                      <td className="py-1 text-right font-mono font-bold">
-                        ₹{activeReceipt.specialFeeAmount || activeReceipt.totalAmount}
-                      </td>
-                    </tr>
-                  )}
-                  {/* Legacy / Object Special Fee Components */}
-                  {!activeReceipt.specialFeeType &&
-                    activeReceipt.specialFeeComponents &&
-                    Object.entries(activeReceipt.specialFeeComponents).map(([k, val]) => {
-                      if (!val) return null;
-                      return (
-                        <tr key={k}>
-                          <td className="py-1 text-slate-800 capitalize">{k.replace(/([A-Z])/g, ' $1')}</td>
-                          <td className="py-1 text-right font-mono">₹{val}</td>
-                        </tr>
-                      );
-                    })}
-                  {/* Other Donations if distinct */}
-                  {!activeReceipt.specialFeeType && activeReceipt.donationAmount > 0 && (
-                    <tr>
-                      <td className="py-1 text-slate-800">Donation / Other</td>
-                      <td className="py-1 text-right font-mono">₹{activeReceipt.donationAmount}</td>
-                    </tr>
-                  )}
-                  <tr className="border-t-2 border-emerald-900 font-bold">
-                    <td className="py-2 text-emerald-950 uppercase text-xs">Total Received</td>
-                    <td className="py-2 text-right font-mono text-emerald-950 text-sm font-black">
-                      ₹{activeReceipt.totalAmount.toLocaleString('en-IN')}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-
-              <div className="text-[10px] text-slate-600 italic mb-6">
-                <strong>In Words: </strong> {activeReceipt.amountInWords || numberToWords(activeReceipt.totalAmount)}
-              </div>
-
-              {/* Signature Row */}
-              <div className="flex items-end justify-between pt-6 border-t border-slate-200 text-xs">
-                <div>
-                  <div className="text-[10px] text-slate-400">Collected By:</div>
-                  <div className="font-semibold text-slate-700">{activeReceipt.collectedBy || 'Office'}</div>
-                </div>
-                <div className="text-center">
-                  <div className="font-serif italic font-bold text-emerald-900 text-xs mb-1">ASLAM TK</div>
-                  <div className="border-t border-slate-400 pt-1 text-[10px] font-bold text-slate-600">
-                    Authorized Signatory
+              {/* Official Slip */}
+              <div
+                ref={receiptPrintRef}
+                className="fee-receipt-slip bg-white text-slate-900 border-2 border-emerald-900 p-6 rounded-xl font-sans relative"
+              >
+                {/* Header */}
+                <div className="text-center border-b border-emerald-800 pb-3 mb-3">
+                  <div className="font-serif text-emerald-900 text-sm font-bold" dir="rtl">
+                    {settings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
                   </div>
+                  <h1 className="text-base font-black uppercase text-emerald-950 font-serif mt-1">
+                    {settings?.institutionName || settings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
+                  </h1>
+                  <h2 className="text-xs font-bold text-emerald-900">
+                    {settings?.institutionNameMl || settings?.madrasaNameMl || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്'}
+                  </h2>
+                  <div className="text-[10px] font-semibold text-emerald-800 tracking-wide mt-0.5">
+                    {settings?.institutionSubtitle || settings?.locationEn || 'Islamic Education & Digital Learning'}
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    Reg. No: {settings?.registrationNumber || settings?.registrationNo || 'KEC-8492'} • Official Fee Receipt (2026–2027)
+                  </p>
+                </div>
+
+                {/* Receipt Details Header */}
+                <div className="flex items-center justify-between text-xs mb-3 font-mono bg-emerald-50/70 p-2 rounded-lg border border-emerald-100">
+                  <div>
+                    <span className="text-slate-500">Receipt No: </span>
+                    <strong className="text-emerald-950 text-sm">{activeReceipt.receiptNo}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Date: </span>
+                    <strong className="text-slate-800">{activeReceipt.date}</strong>
+                  </div>
+                </div>
+
+                {/* Student Metadata */}
+                <div className="text-xs space-y-1 mb-4 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Student Name:</span>
+                    <strong className="text-slate-900">{pureStudentName}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Admission No:</span>
+                    <span className="font-mono font-bold text-slate-800">{activeReceipt.admissionNo}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Class:</span>
+                    <strong className="text-emerald-900">{madrasaClassName}</strong>
+                  </div>
+                </div>
+
+                {/* Breakdown Table */}
+                <table className="w-full text-xs mb-4 border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-300 text-slate-600 font-bold">
+                      <th className="py-1.5 text-left">Description</th>
+                      <th className="py-1.5 text-right">Amount (₹)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {/* Admission Fee */}
+                    {(activeReceipt.admissionFee > 0 || activeReceipt.hasAdmissionFee) && (
+                      <tr>
+                        <td className="py-2 text-slate-800 font-medium">Admission Fee</td>
+                        <td className="py-2 text-right font-mono font-semibold">₹{activeReceipt.admissionFee}</td>
+                      </tr>
+                    )}
+                    {/* Tuition Fee Months */}
+                    {activeReceipt.tuitionFeeAmount > 0 && (
+                      <tr>
+                        <td className="py-2 text-slate-800">
+                          <div className="font-semibold text-gray-800 text-base">
+                            Tuition Fee: {formatTuitionMonths(activeReceipt.tuitionFeeMonths)}
+                          </div>
+                          <div className="text-sm text-gray-500 font-normal">
+                            ({activeReceipt.tuitionFeeMonths?.length || 0}{' '}
+                            {activeReceipt.tuitionFeeMonths?.length === 1 ? 'month' : 'months'})
+                          </div>
+                        </td>
+                        <td className="py-2 text-right font-mono font-bold text-sm">₹{activeReceipt.tuitionFeeAmount}</td>
+                      </tr>
+                    )}
+                    {/* Special Fee Type */}
+                    {activeReceipt.specialFeeType && (
+                      <tr>
+                        <td className="py-2 text-slate-800 font-medium">
+                          Special Fee: {activeReceipt.specialFeeType}
+                        </td>
+                        <td className="py-2 text-right font-mono font-bold">
+                          ₹{activeReceipt.specialFeeAmount || activeReceipt.totalAmount}
+                        </td>
+                      </tr>
+                    )}
+                    {/* Legacy / Object Special Fee Components */}
+                    {!activeReceipt.specialFeeType &&
+                      activeReceipt.specialFeeComponents &&
+                      Object.entries(activeReceipt.specialFeeComponents).map(([k, val]) => {
+                        if (!val) return null;
+                        return (
+                          <tr key={k}>
+                            <td className="py-1.5 text-slate-800 capitalize">{k.replace(/([A-Z])/g, ' $1')}</td>
+                            <td className="py-1.5 text-right font-mono">₹{val}</td>
+                          </tr>
+                        );
+                      })}
+                    {/* Other Donations if distinct */}
+                    {!activeReceipt.specialFeeType && activeReceipt.donationAmount > 0 && (
+                      <tr>
+                        <td className="py-1.5 text-slate-800">Donation / Other</td>
+                        <td className="py-1.5 text-right font-mono">₹{activeReceipt.donationAmount}</td>
+                      </tr>
+                    )}
+                    <tr className="border-t-2 border-emerald-900 font-bold">
+                      <td className="py-2 text-emerald-950 uppercase text-xs">Total Received</td>
+                      <td className="py-2 text-right font-mono text-emerald-950 text-sm font-black">
+                        ₹{activeReceipt.totalAmount.toLocaleString('en-IN')}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                {/* In Words Amount */}
+                <div className="text-sm font-medium text-gray-700 mb-2">
+                  <span className="font-bold text-gray-800">In Words: </span>
+                  {activeReceipt.amountInWords || numberToWords(activeReceipt.totalAmount)}
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };
