@@ -269,3 +269,99 @@ export function computeClassLedgerRankings(reports: StudentProgressReport[], tot
 
   return resultMap;
 }
+
+export interface SubjectScoreSheetMarks {
+  isAbsent: boolean;
+  te: number | string;
+  ce: number | string;
+  tot: number | string;
+  teMax: number;
+  ceMax: number;
+  totMax: number;
+  isFail: boolean;
+}
+
+export function computeSubjectScoreSheetMarks(
+  sub: {
+    isAbsent?: boolean;
+    obtainedMarks?: number | null;
+    maxMarks?: number;
+    components?: {
+      key?: string;
+      componentKey?: string;
+      labelEn?: string;
+      maxMarks?: number;
+      obtainedMarks?: number | null;
+    }[];
+  } | undefined
+): SubjectScoreSheetMarks {
+  if (!sub) {
+    return { isAbsent: false, te: '—', ce: '—', tot: '—', teMax: 0, ceMax: 0, totMax: 0, isFail: false };
+  }
+
+  const subMax = sub.maxMarks || 50;
+
+  if (sub.isAbsent) {
+    return { isAbsent: true, te: 'AB', ce: 'AB', tot: 'AB', teMax: 0, ceMax: 0, totMax: subMax, isFail: true };
+  }
+
+  const components = sub.components || [];
+  let teSum = 0;
+  let teMax = 0;
+  let ceVal: number | null = null;
+  let ceMax = 0;
+  let hasAnyTe = false;
+  let hasAnyCe = false;
+
+  components.forEach((c) => {
+    const k = (c.key || (c as any).componentKey || '').toLowerCase();
+    const isCe = k === 'ce' || k === 'diary' || k.includes('ce') || k.includes('cie');
+    const raw = c.obtainedMarks;
+    const num = raw !== null && raw !== undefined && (raw as any) !== '' && !isNaN(Number(raw))
+      ? Number(raw)
+      : null;
+
+    if (isCe) {
+      ceMax += c.maxMarks || 10;
+      if (num !== null) {
+        ceVal = (ceVal || 0) + num;
+        hasAnyCe = true;
+      }
+    } else {
+      teMax += c.maxMarks || 20;
+      if (num !== null) {
+        teSum += num;
+        hasAnyTe = true;
+      }
+    }
+  });
+
+  const hasAnyComponent = hasAnyTe || hasAnyCe;
+
+  // Fallback if no component breakdown exists but obtainedMarks is provided
+  if (!hasAnyComponent && (sub.obtainedMarks === null || sub.obtainedMarks === undefined)) {
+    return { isAbsent: false, te: '—', ce: '—', tot: '—', teMax, ceMax, totMax: subMax, isFail: false };
+  }
+
+  const teDisplay = hasAnyTe ? teSum : (sub.obtainedMarks !== null && sub.obtainedMarks !== undefined ? Number(sub.obtainedMarks) : '—');
+  const ceDisplay = ceVal !== null ? ceVal : (hasAnyCe ? 0 : '—');
+  const totVal = typeof teDisplay === 'number' && typeof ceDisplay === 'number'
+    ? teDisplay + ceDisplay
+    : (typeof teDisplay === 'number'
+        ? teDisplay
+        : (sub.obtainedMarks !== null && sub.obtainedMarks !== undefined ? Number(sub.obtainedMarks) : '—'));
+
+  // 35% passing mark applies STRICTLY to Terminal Evaluation (TE)
+  const isFail = teMax > 0 && typeof teDisplay === 'number' && teDisplay < (teMax * 0.35);
+
+  return {
+    isAbsent: false,
+    te: teDisplay,
+    ce: ceDisplay,
+    tot: totVal,
+    teMax,
+    ceMax,
+    totMax: subMax,
+    isFail,
+  };
+}

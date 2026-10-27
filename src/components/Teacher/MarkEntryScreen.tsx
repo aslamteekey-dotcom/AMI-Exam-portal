@@ -242,11 +242,19 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
 
   const handleToggleAbsent = (studentId: string) => {
     setMarks(prev => {
-      const current = prev[studentId];
+      const current = prev[studentId] || { isAbsent: false, componentMarks: {}, remarks: '' };
       const nextAbsent = !current.isAbsent;
       const compMarks = { ...current.componentMarks };
       if (nextAbsent) {
-        Object.keys(compMarks).forEach(k => (compMarks[k] = ''));
+        effectiveComponents.forEach(c => {
+          compMarks[c.componentKey] = '0';
+        });
+      } else {
+        effectiveComponents.forEach(c => {
+          if (compMarks[c.componentKey] === '0') {
+            compMarks[c.componentKey] = '';
+          }
+        });
       }
       return {
         ...prev,
@@ -263,7 +271,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
   const calculateStudentTotal = (studentId: string): number | string => {
     const entry = marks[studentId];
     if (!entry) return 0;
-    if (entry.isAbsent) return 'Absent';
+    if (entry.isAbsent) return 'AB';
 
     let total = 0;
     let hasAny = false;
@@ -332,11 +340,16 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
       const studentMarksPayload: Record<string, any> = {};
       for (const [studentId, entry] of Object.entries(marks)) {
         if (entry.isAbsent) {
+          const compZeros: Record<string, number> = {};
+          effectiveComponents.forEach(c => {
+            compZeros[c.componentKey] = 0;
+          });
           studentMarksPayload[studentId] = {
             studentId,
             isAbsent: true,
-            componentMarks: {},
-            remarks: entry.remarks,
+            componentMarks: compZeros,
+            subjectTotal: 0,
+            remarks: entry.remarks || 'Absent',
           };
         } else {
           const compNum: Record<string, number> = {};
@@ -532,7 +545,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
   const calculateStudentSubjectStatus = (studentId: string) => {
     const entry = marks[studentId];
     if (!entry) return { isAbsent: false, total: 0, writtenTotal: 0, maxWritten: 0, cieMark: 0, maxCie: 0, isFail: false, hasAny: false };
-    if (entry.isAbsent) return { isAbsent: true, total: 'Absent', writtenTotal: 0, maxWritten: 0, cieMark: 0, maxCie: 0, isFail: true, hasAny: true };
+    if (entry.isAbsent) return { isAbsent: true, total: 'AB', writtenTotal: 0, maxWritten: 0, cieMark: 0, maxCie: 0, isFail: true, hasAny: true };
 
     let writtenTotal = 0;
     let maxWritten = 0;
@@ -774,7 +787,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                 <th className="py-3 px-2 w-20 text-center sticky left-12 bg-slate-100 z-40 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)] font-mono text-emerald-900 font-bold">Reg No</th>
                 <th className="py-3 px-4 min-w-[160px] md:min-w-[200px] text-left">Student Name</th>
                 <th className="py-3 px-2 w-16 text-center">Gender</th>
-                <th className="py-3 px-3 w-24 text-center">Status</th>
+                <th className="py-3 px-3 w-20 text-center font-bold text-rose-800">Absent</th>
                 {effectiveComponents.map(comp => (
                   <th key={comp.componentKey} className="py-3 px-3 text-center min-w-[100px]">
                     <div>{comp.labelEn}</div>
@@ -854,50 +867,49 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                       </span>
                     </td>
 
-                    {/* Present / Absent Toggle Button */}
+                    {/* Absent Checkbox Column */}
                     <td className="py-3 px-3 text-center">
-                      <button
-                        type="button"
-                        disabled={isReadOnly}
-                        onClick={() => handleToggleAbsent(student.id)}
-                        className={`px-2.5 py-1.5 text-xs font-bold rounded-lg border flex items-center justify-center gap-1 mx-auto transition cursor-pointer disabled:cursor-not-allowed ${
-                          isAbsent
-                            ? 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
-                            : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
-                        }`}
-                        title={isAbsent ? 'Mark as Present' : 'Mark as Absent'}
-                      >
-                        {isAbsent ? (
-                          <>
-                            <UserX className="w-3.5 h-3.5" />
-                            <span>Absent</span>
-                          </>
-                        ) : (
-                          <>
-                            <UserCheck className="w-3.5 h-3.5" />
-                            <span>Present</span>
-                          </>
-                        )}
-                      </button>
+                      {!isReadOnly ? (
+                        <label className="inline-flex items-center justify-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            disabled={isReadOnly}
+                            checked={isAbsent}
+                            onChange={() => handleToggleAbsent(student.id)}
+                            className="w-4.5 h-4.5 text-red-600 rounded border-slate-300 focus:ring-red-500 cursor-pointer disabled:cursor-not-allowed"
+                            title={isAbsent ? 'Uncheck to mark Present' : 'Check to mark Absent'}
+                          />
+                        </label>
+                      ) : isAbsent ? (
+                        <span className="text-red-600 font-bold font-mono">AB</span>
+                      ) : (
+                        <span className="text-slate-300 text-xs">—</span>
+                      )}
                     </td>
 
                     {/* Component Inputs with comfortable touch padding */}
                     {effectiveComponents.map(comp => (
                       <td key={comp.componentKey} className="py-3 px-2 text-center min-w-[90px]">
                         {isAbsent ? (
-                          <span className="text-slate-400 font-mono text-xs select-none">—</span>
+                          <span className="text-red-600 font-bold font-mono">AB</span>
+                        ) : isReadOnly ? (
+                          <span className="font-mono font-bold text-slate-800">
+                            {sEntry.componentMarks[comp.componentKey] !== '' && sEntry.componentMarks[comp.componentKey] !== undefined
+                              ? sEntry.componentMarks[comp.componentKey]
+                              : '0'}
+                          </span>
                         ) : (
                           <input
                             type="text"
                             inputMode="numeric"
                             pattern="[0-9]*"
-                            disabled={isReadOnly}
+                            disabled={isReadOnly || isAbsent}
                             value={sEntry.componentMarks[comp.componentKey] || ''}
                             onChange={e =>
                               handleMarkChange(student.id, comp.componentKey, e.target.value, comp.maxMarks)
                             }
                             placeholder="0"
-                            className="w-16 mx-auto text-center font-bold font-mono py-2 px-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent bg-white disabled:bg-slate-100 disabled:text-slate-500 shadow-2xs touch-manipulation"
+                            className="w-16 mx-auto text-center font-bold font-mono py-2 px-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent bg-white disabled:bg-slate-100 disabled:text-slate-400 shadow-2xs touch-manipulation"
                           />
                         )}
                       </td>
@@ -906,9 +918,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                     {/* Auto Computed Total */}
                     <td className="py-3 px-4 text-center font-mono font-extrabold text-base bg-slate-50/70 w-24">
                       {isAbsent ? (
-                        <span className="text-amber-800 text-xs font-bold bg-amber-100 px-2 py-0.5 rounded">
-                          Absent
-                        </span>
+                        <span className="text-red-600 font-bold font-mono">AB</span>
                       ) : (
                         <span className={statusInfo.isFail ? 'text-red-600 font-bold' : 'text-emerald-900 font-bold'}>
                           {statusInfo.total}
@@ -1012,14 +1022,22 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                       </td>
                       {components.map(c => (
                         <td key={c.componentKey} className="p-2 text-center font-mono">
-                          {entry?.isAbsent ? 'Absent' : entry?.componentMarks[c.componentKey] || '—'}
+                          {entry?.isAbsent ? (
+                            <span className="text-red-600 font-bold">AB</span>
+                          ) : (
+                            entry?.componentMarks[c.componentKey] || '0'
+                          )}
                         </td>
                       ))}
                       {(() => {
                         const sStatus = calculateStudentSubjectStatus(s.id);
                         return (
-                          <td className={`p-2 text-center font-mono font-bold ${sStatus.isFail ? 'text-red-600 font-bold' : 'text-emerald-950'}`}>
-                            {sStatus.total}
+                          <td className={`p-2 text-center font-mono font-bold ${entry?.isAbsent || sStatus.isFail ? 'text-red-600 font-bold' : 'text-emerald-950'}`}>
+                            {entry?.isAbsent ? (
+                              <span className="text-red-600 font-bold">AB</span>
+                            ) : (
+                              sStatus.total
+                            )}
                           </td>
                         );
                       })()}

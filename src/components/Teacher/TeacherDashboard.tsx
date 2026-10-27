@@ -228,6 +228,9 @@ export const TeacherDashboard: React.FC = () => {
   const [isSubmittingSpecialFee, setIsSubmittingSpecialFee] = useState<boolean>(false);
   const [activeSpecialReceipt, setActiveSpecialReceipt] = useState<FeePayment | null>(null);
   const [specialFeeSearchQuery, setSpecialFeeSearchQuery] = useState<string>('');
+  const [feeSubTab, setFeeSubTab] = useState<'tuition_progress' | 'special_fees'>('tuition_progress');
+  const [showSpecialFeeModal, setShowSpecialFeeModal] = useState<boolean>(false);
+  const [specialFeePaymentMode, setSpecialFeePaymentMode] = useState<'Cash' | 'UPI' | 'Bank Transfer'>('Cash');
 
   const todayStr = formatLocalDate(new Date());
   const [attendanceClassId, setAttendanceClassId] = useState<string>('');
@@ -2468,6 +2471,23 @@ export const TeacherDashboard: React.FC = () => {
     }, 0);
   }, [classSpecialFeePayments]);
 
+  const studentPaidMonthsMap = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    allFeePayments.forEach(p => {
+      if (p.studentId && Array.isArray(p.tuitionFeeMonths)) {
+        if (!map[p.studentId]) {
+          map[p.studentId] = [];
+        }
+        p.tuitionFeeMonths.forEach(m => {
+          if (!map[p.studentId].includes(m)) {
+            map[p.studentId].push(m);
+          }
+        });
+      }
+    });
+    return map;
+  }, [allFeePayments]);
+
   // Handle Recording Special Fee by Class Teacher
   const handleRecordSpecialFee = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2516,6 +2536,8 @@ export const TeacherDashboard: React.FC = () => {
         totalAmount: amt,
         amountInWords: numberToWords(amt),
         notes: specialFeeNotes,
+        paymentMode: specialFeePaymentMode,
+        paymentMethod: specialFeePaymentMode,
         collectedBy: user?.name || 'Class Teacher',
       };
 
@@ -2567,6 +2589,8 @@ export const TeacherDashboard: React.FC = () => {
       // Update local state
       setAllFeePayments(prev => [created, ...prev.filter(p => p.id !== created.id)]);
       setSpecialFeeNotes('');
+      setSpecialFeeStudentId('');
+      setShowSpecialFeeModal(false);
       // Open identical printable receipt
       setActiveSpecialReceipt(created);
     } catch (err: any) {
@@ -2594,7 +2618,16 @@ export const TeacherDashboard: React.FC = () => {
 
       const subjectMarksMap: Record<
         string,
-        { value: number | 'AB' | '—'; isAbsent: boolean; max: number; isFail: boolean; isWithheld: boolean }
+        {
+          value: number | 'AB' | '—';
+          te?: number | string;
+          ce?: number | string;
+          tot?: number | string;
+          isAbsent: boolean;
+          max: number;
+          isFail: boolean;
+          isWithheld: boolean;
+        }
       > = {};
 
       inChargeSubjects.forEach(sub => {
@@ -2605,11 +2638,11 @@ export const TeacherDashboard: React.FC = () => {
         const max = getSubjectMax(sub);
 
         if (!entry) {
-          subjectMarksMap[sub.id] = { value: '—', isAbsent: false, max, isFail: false, isWithheld: false };
+          subjectMarksMap[sub.id] = { value: '—', te: '—', ce: '—', tot: '—', isAbsent: false, max, isFail: false, isWithheld: false };
         } else if (entry.isAbsent) {
           hasAbsent = true;
           anyMarkEntered = true;
-          subjectMarksMap[sub.id] = { value: 'AB', isAbsent: true, max, isFail: true, isWithheld: false };
+          subjectMarksMap[sub.id] = { value: 'AB', te: 'AB', ce: 'AB', tot: 'AB', isAbsent: true, max, isFail: true, isWithheld: false };
         } else {
           anyMarkEntered = true;
           const compMarks = entry.componentMarks || {};
@@ -2674,6 +2707,9 @@ export const TeacherDashboard: React.FC = () => {
 
           subjectMarksMap[sub.id] = {
             value: total,
+            te: hasComponentEntries ? writtenTotal : '—',
+            ce: hasCie ? cieMark : (hasComponentEntries ? 0 : '—'),
+            tot: hasComponentEntries ? total : '—',
             isAbsent: false,
             max,
             isFail,
@@ -2966,7 +3002,7 @@ export const TeacherDashboard: React.FC = () => {
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
         </button>
 
-        {/* 5. Fees */}
+        {/* 5. Fees (Consolidated Single Tab) */}
         <button
           type="button"
           onClick={() => setActiveTab('fees')}
@@ -2977,33 +3013,19 @@ export const TeacherDashboard: React.FC = () => {
           }`}
         >
           <CreditCard className="w-4 h-4" />
-          <span>Fees</span>
-        </button>
-
-        {/* 5b. Special Fees (Restricted to Class In-Charge) */}
-        {inChargeClass && (
-          <button
-            type="button"
-            onClick={() => setActiveTab('special_fees')}
-            className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
-              activeTab === 'special_fees'
-                ? 'bg-purple-800 text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
-            }`}
-          >
-            <Tag className="w-4 h-4 text-purple-400" />
-            <span>Special Fees</span>
+          <span>{inChargeClass ? 'Class Fees' : 'Fees'}</span>
+          {inChargeClass && (
             <span
               className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                activeTab === 'special_fees'
-                  ? 'bg-purple-950 text-purple-200'
-                  : 'bg-purple-100 text-purple-800'
+                activeTab === 'fees'
+                  ? 'bg-emerald-950 text-emerald-200'
+                  : 'bg-emerald-100 text-emerald-800'
               }`}
             >
               {inChargeClass.name}
             </span>
-          </button>
-        )}
+          )}
+        </button>
 
         {/* 6. News */}
         <button
@@ -3282,7 +3304,10 @@ export const TeacherDashboard: React.FC = () => {
 
             {inChargeClass && (
               <div
-                onClick={() => setActiveTab('special_fees')}
+                onClick={() => {
+                  setActiveTab('fees');
+                  setFeeSubTab('special_fees');
+                }}
                 className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-purple-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
               >
                 <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center shrink-0">
@@ -3599,28 +3624,58 @@ export const TeacherDashboard: React.FC = () => {
               )}
 
               {/* View 2: MARKSHEET VIEW */}
+              {/* View 2: MARKSHEET / SCORE SHEET VIEW */}
               {myClassViewMode === 'marksheet' && (
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-                  <div className="p-4 sm:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  {/* Embedded Print Styling */}
+                  <style>{`
+                    @media print {
+                      @page { size: A4 landscape; margin: 8mm; }
+                      .score-sheet-container {
+                        width: 100% !important;
+                        padding: 0 !important;
+                        margin: 0 !important;
+                      }
+                      .score-sheet-table { 
+                        width: 100% !important; 
+                        border-collapse: collapse !important; 
+                        font-size: 9pt !important;
+                      }
+                      .score-sheet-table th, .score-sheet-table td { 
+                        border: 1px solid #000 !important; 
+                        padding: 2px 4px !important; 
+                        text-align: center !important; 
+                        white-space: nowrap !important; 
+                      }
+                      .score-sheet-table th.subject-name {
+                        white-space: normal !important; 
+                      }
+                      .no-print { display: none !important; }
+                    }
+                  `}</style>
+
+                  <div className="p-4 sm:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 print:hidden no-print">
                     <div>
                       <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                         <BarChart2 className="w-4 h-4 text-emerald-800" />
-                        <span>{inChargeClass.name} Examination Marksheet</span>
+                        <span>{inChargeClass.name} Examination Score Sheet</span>
                         <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
                           {selectedExam?.nameEn || 'Active Exam'}
                         </span>
                       </h3>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        Consolidated class marksheet across all {inChargeSubjects.length} subjects with dense rank, attendance, and grand totals.
+                        Consolidated class score sheet across all {inChargeSubjects.length} subjects (TE/CE structure) with dense rank, attendance, and grand totals.
                       </p>
                     </div>
                     <div className="flex items-center gap-2 text-xs">
-                      <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600 font-medium">
-                        Max per subject: 50
-                      </span>
-                      <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 font-bold border border-emerald-200">
-                        Class Max: {inChargeSubjects.length * 50}
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => window.print()}
+                        className="flex items-center gap-1.5 px-3.5 py-1.5 font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        Print Score Sheet (A4 Landscape)
+                      </button>
                     </div>
                   </div>
 
@@ -3629,187 +3684,232 @@ export const TeacherDashboard: React.FC = () => {
                       No active students enrolled in {inChargeClass.name}.
                     </div>
                   ) : (
-                    <div className="overflow-x-auto relative w-full scrollbar-thin">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead className="sticky top-0 bg-slate-100 z-30">
-                          <tr className="bg-slate-100 text-slate-700 uppercase tracking-wider border-b border-slate-200 font-semibold">
-                            {/* Sticky Frozen Column 1: Roll No */}
-                            <th className="py-3 px-3 w-12 text-center sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb] font-mono">
-                              Roll
-                            </th>
-                            {/* Sticky Frozen Column 2: Reg No */}
-                            <th className="py-3 px-2 w-20 text-center sticky left-12 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb] font-mono text-emerald-900 font-bold">
-                              Reg No
-                            </th>
-                            {/* Sticky Frozen Column 3: Student Name */}
-                            <th className="py-3 px-4 min-w-[170px] md:min-w-[200px] text-left sticky left-32 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                              Student Name
-                            </th>
+                    <div className="score-sheet-container p-4 sm:p-6 print:p-0">
+                      {/* Dynamic A4 Landscape Print Header */}
+                      <div className="score-sheet-print-header mb-4 text-center border-b border-slate-200 pb-3 print:border-black print:mb-2 print:pb-2">
+                        <div className="font-serif text-emerald-900 text-xs sm:text-sm font-bold print:text-black" dir="rtl">
+                          {institutionSettings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
+                        </div>
+                        <h1 className="text-base sm:text-lg font-black uppercase text-emerald-950 font-serif tracking-wide mt-0.5 print:text-black print:text-base">
+                          {institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
+                        </h1>
+                        <h2 className="text-xs sm:text-sm font-bold text-emerald-900 font-ml print:text-black print:text-xs">
+                          {institutionSettings?.institutionNameMl || institutionSettings?.madrasaNameMl || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്'}
+                        </h2>
+                        <div className="text-[10px] text-slate-500 font-medium print:text-black">
+                          {institutionSettings?.institutionSubtitle || (institutionSettings?.registrationNumber ? `Reg. No: ${institutionSettings.registrationNumber}` : 'Reg. No: 11425')}
+                        </div>
 
-                            {/* Columns for each Subject */}
-                            {inChargeSubjects.map(sub => {
-                              const subName =
-                                inChargeClass.numericGrade === 9 && (sub.id === 'sub_history_buhuth' || sub.code === 'HST')
-                                  ? 'ബുഹൂസ്'
-                                  : sub.nameMl || sub.nameEn;
+                        <div className="inline-block mt-2 px-3 py-0.5 bg-emerald-900 text-white rounded font-bold text-[11px] uppercase tracking-wider print:bg-transparent print:text-black print:border-b print:border-black print:mt-1">
+                          Consolidated Examination Score Sheet
+                        </div>
+
+                        {/* Dynamic Metadata Row: Institution Name, Exam, Class, Teacher */}
+                        <div className="mt-2.5 flex flex-wrap items-center justify-between text-xs px-2 text-slate-800 font-semibold border-t border-b border-slate-200 py-1.5 print:border-black print:text-[9pt] print:mt-1 print:py-1">
+                          <div>
+                            <span className="text-slate-500 print:text-black uppercase text-[10px]">Exam:</span>{' '}
+                            <span className="font-bold">{selectedExam ? selectedExam.nameEn : 'Examination'}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500 print:text-black uppercase text-[10px]">Class:</span>{' '}
+                            <span className="font-bold">{inChargeClass.name}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500 print:text-black uppercase text-[10px]">Class Teacher:</span>{' '}
+                            <span className="font-bold">{user?.name || 'Class Teacher'}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500 print:text-black uppercase text-[10px]">Academic Year:</span>{' '}
+                            <span className="font-mono font-bold">2026–2027</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="overflow-x-auto relative w-full scrollbar-thin">
+                        <table className="score-sheet-table w-full text-center text-xs border-collapse">
+                          <thead className="bg-slate-100 print:bg-slate-50">
+                            {/* Top Header Row */}
+                            <tr className="border-b border-slate-200 print:border-black text-slate-800 font-semibold">
+                              <th
+                                rowSpan={2}
+                                className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold w-12 bg-slate-100 print:bg-slate-50 font-mono"
+                              >
+                                Roll No
+                              </th>
+                              <th
+                                rowSpan={2}
+                                className="py-2 px-3 text-left border border-slate-300 print:border-black font-bold min-w-[170px] bg-slate-100 print:bg-slate-50"
+                              >
+                                Student Name
+                              </th>
+
+                              {/* Columns for each Subject */}
+                              {inChargeSubjects.map(sub => {
+                                const subName =
+                                  inChargeClass.numericGrade === 9 && (sub.id === 'sub_history_buhuth' || sub.code === 'HST')
+                                    ? 'ബുഹൂസ്'
+                                    : sub.nameMl || sub.nameEn;
+                                return (
+                                  <th
+                                    key={sub.id}
+                                    colSpan={3}
+                                    className="subject-name py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-slate-100 print:bg-slate-50"
+                                  >
+                                    <div className="font-bold text-slate-900 leading-tight">{subName}</div>
+                                    <div className="text-[10px] text-slate-500 font-mono font-normal print:text-black">
+                                      {sub.code} ({sub.defaultComponents?.reduce((acc, c) => acc + (c.maxMarks || 0), 0) || (sub as any).maxMarks || 50})
+                                    </div>
+                                  </th>
+                                );
+                              })}
+
+                              {/* Summary Columns */}
+                              <th
+                                rowSpan={2}
+                                className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-emerald-50/70 print:bg-transparent min-w-[85px]"
+                              >
+                                Grand Total
+                                <div className="text-[9px] text-slate-500 font-normal">/ {classMarksheetData[0]?.expectedMax || inChargeSubjects.length * 50}</div>
+                              </th>
+                              <th
+                                rowSpan={2}
+                                className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-emerald-50/70 print:bg-transparent min-w-[75px]"
+                              >
+                                Percentage
+                                <div className="text-[9px] text-slate-500 font-normal">%</div>
+                              </th>
+                              <th
+                                rowSpan={2}
+                                className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-slate-100 print:bg-transparent min-w-[80px]"
+                              >
+                                Attendance
+                                <div className="text-[9px] text-slate-500 font-normal">Attended / Total</div>
+                              </th>
+                              <th
+                                rowSpan={2}
+                                className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-slate-100 print:bg-transparent min-w-[80px]"
+                              >
+                                Rank
+                              </th>
+                            </tr>
+
+                            {/* Sub Header Row: TE | CE | Tot */}
+                            <tr className="border-b border-slate-200 print:border-black text-slate-700">
+                              {inChargeSubjects.map(sub => (
+                                <React.Fragment key={`tch_score_sub_cols_${sub.id}`}>
+                                  <th className="py-1 px-1 text-center border border-slate-300 print:border-black font-bold text-[10px] bg-slate-50 print:bg-slate-100">
+                                    TE
+                                  </th>
+                                  <th className="py-1 px-1 text-center border border-slate-300 print:border-black font-bold text-[10px] bg-slate-50 print:bg-slate-100">
+                                    CE
+                                  </th>
+                                  <th className="py-1 px-1 text-center border border-slate-300 print:border-black font-bold text-[10px] bg-slate-100 print:bg-slate-200 font-mono">
+                                    Tot
+                                  </th>
+                                </React.Fragment>
+                              ))}
+                            </tr>
+                          </thead>
+
+                          <tbody className="divide-y divide-slate-100 print:divide-black text-slate-800">
+                            {classMarksheetData.map((row, idx) => {
+                              const st = row.student;
+
                               return (
-                                <th key={sub.id} className="py-3 px-3 text-center min-w-[90px] border-l border-slate-200/60">
-                                  <div className="font-bold text-slate-800 whitespace-nowrap">{subName}</div>
-                                  <div className="text-[10px] text-slate-400 font-mono uppercase font-normal">{sub.code} (50)</div>
-                                </th>
+                                <tr
+                                  key={st.id}
+                                  className={`transition ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60 print:bg-transparent'} hover:bg-slate-100/50`}
+                                >
+                                  {/* Roll No */}
+                                  <td className="py-1.5 px-2 text-center font-bold font-mono text-slate-700 border border-slate-300 print:border-black">
+                                    {st.rollNo}
+                                  </td>
+
+                                  {/* Student Name */}
+                                  <td className="py-1.5 px-3 text-left font-medium text-slate-900 border border-slate-300 print:border-black whitespace-nowrap">
+                                    <div className="font-bold">{st.nameEn}</div>
+                                    {st.nameMl && (
+                                      <div className="text-[10px] text-slate-500 font-ml leading-tight">
+                                        {st.nameMl}
+                                      </div>
+                                    )}
+                                  </td>
+
+                                  {/* Columns for each Subject: TE | CE | Tot */}
+                                  {inChargeSubjects.map(sub => {
+                                    const mData = row.subjectMarksMap[sub.id];
+                                    const isAb = mData?.isAbsent;
+                                    const teVal = mData?.te;
+                                    const ceVal = mData?.ce;
+                                    const totVal = mData?.tot;
+
+                                    return (
+                                      <React.Fragment key={`tch_ss_marks_${st.id}_${sub.id}`}>
+                                        {/* TE */}
+                                        <td className="py-1.5 px-1 text-center border border-slate-300 print:border-black font-mono text-[11px]">
+                                          {isAb ? (
+                                            <span className="text-red-600 font-bold">AB</span>
+                                          ) : teVal === '—' || teVal === undefined ? (
+                                            <span className="text-slate-300 print:text-black">—</span>
+                                          ) : (
+                                            <span className={mData?.isFail ? 'text-red-600 font-bold' : 'text-slate-800'}>
+                                              {teVal}
+                                            </span>
+                                          )}
+                                        </td>
+                                        {/* CE */}
+                                        <td className="py-1.5 px-1 text-center border border-slate-300 print:border-black font-mono text-[11px]">
+                                          {isAb ? (
+                                            <span className="text-red-600 font-bold">AB</span>
+                                          ) : ceVal === '—' || ceVal === undefined ? (
+                                            <span className="text-slate-300 print:text-black">—</span>
+                                          ) : (
+                                            <span className="text-slate-700">{ceVal}</span>
+                                          )}
+                                        </td>
+                                        {/* Tot */}
+                                        <td className="py-1.5 px-1 text-center border border-slate-300 print:border-black font-mono text-[11px] font-bold bg-slate-50/60 print:bg-transparent">
+                                          {isAb ? (
+                                            <span className="text-red-600 font-bold">AB</span>
+                                          ) : totVal === '—' || totVal === undefined ? (
+                                            <span className="text-slate-300 print:text-black">—</span>
+                                          ) : (
+                                            <span className={mData?.isFail ? 'text-red-600 font-bold' : 'text-slate-900'}>
+                                              {totVal}
+                                            </span>
+                                          )}
+                                        </td>
+                                      </React.Fragment>
+                                    );
+                                  })}
+
+                                  {/* Summary Column 1: Grand Total */}
+                                  <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono font-bold text-emerald-950 whitespace-nowrap bg-emerald-50/20 print:bg-transparent">
+                                    {row.studentObtained} / {row.expectedMax}
+                                  </td>
+
+                                  {/* Summary Column 2: Percentage */}
+                                  <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono font-bold text-slate-800 whitespace-nowrap bg-emerald-50/20 print:bg-transparent">
+                                    {row.percentage}%
+                                  </td>
+
+                                  {/* Summary Column 3: Attendance */}
+                                  <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono text-slate-700 whitespace-nowrap">
+                                    {row.daysAttended} / {row.totalWorking}
+                                  </td>
+
+                                  {/* Summary Column 4: Dense Rank / Status */}
+                                  <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap">
+                                    <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-bold ${row.badgeClass}`}>
+                                      {row.rankOrStatusText}
+                                    </span>
+                                  </td>
+                                </tr>
                               );
                             })}
-
-                            {/* Summary Columns */}
-                            <th className="py-3 px-3 text-center min-w-[105px] bg-emerald-50/70 border-l border-emerald-200 font-bold text-emerald-950">
-                              Grand Total
-                              <div className="text-[10px] text-emerald-600 font-normal">/ {inChargeSubjects.length * 50}</div>
-                            </th>
-                            <th className="py-3 px-3 text-center min-w-[85px] bg-emerald-50/70 font-bold text-emerald-950">
-                              Percentage
-                              <div className="text-[10px] text-emerald-600 font-normal">%</div>
-                            </th>
-                            <th className="py-3 px-3 text-center min-w-[95px] bg-slate-100 border-l border-slate-200 font-bold text-slate-700">
-                              Attendance
-                              <div className="text-[10px] text-slate-500 font-normal">Attended / Total</div>
-                            </th>
-                            <th className="py-3 px-3 text-center min-w-[110px] bg-slate-100 border-l border-slate-200 font-bold text-slate-800">
-                              Dense Rank / Status
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 text-slate-800">
-                          {classMarksheetData.map((row, idx) => {
-                            const st = row.student;
-                            const regNo =
-                              (st as any).examRegisterNos?.[selectedExamId] ||
-                              (st as any).examRegNo ||
-                              (st as any).regNo ||
-                              st.examRegisterNumbers?.[selectedExamId] ||
-                              '—';
-
-                            const cellBg = row.hasAbsent
-                              ? 'bg-amber-50 group-hover:bg-amber-100'
-                              : idx % 2 === 0
-                              ? 'bg-white group-hover:bg-slate-50'
-                              : 'bg-slate-50/90 group-hover:bg-slate-100';
-
-                            return (
-                              <tr
-                                key={st.id}
-                                className={`transition group ${
-                                  row.hasAbsent
-                                    ? 'bg-amber-50/40 hover:bg-amber-100/50'
-                                    : idx % 2 === 0
-                                    ? 'bg-white hover:bg-slate-50/80'
-                                    : 'bg-slate-50/30 hover:bg-slate-50/80'
-                                }`}
-                              >
-                                {/* Sticky Column 1: Roll No */}
-                                <td
-                                  className={`py-3 px-3 w-12 text-center font-bold font-mono text-slate-600 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${cellBg}`}
-                                >
-                                  {st.rollNo}
-                                </td>
-
-                                {/* Sticky Column 2: Reg No */}
-                                <td
-                                  className={`py-3 px-2 w-20 text-center font-bold font-mono text-emerald-800 sticky left-12 z-20 shadow-[1px_0_0_0_#e5e7eb] ${cellBg}`}
-                                >
-                                  {regNo}
-                                </td>
-
-                                {/* Sticky Column 3: Student Name */}
-                                <td
-                                  className={`py-3 px-4 min-w-[170px] md:min-w-[200px] text-left sticky left-32 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${cellBg}`}
-                                >
-                                  <div className="font-bold text-slate-900 whitespace-nowrap">
-                                    {st.nameEn}
-                                  </div>
-                                  {st.nameMl && (
-                                    <div className="text-[11px] text-slate-500 font-ml leading-tight whitespace-nowrap">
-                                      {st.nameMl}
-                                    </div>
-                                  )}
-                                </td>
-
-                                {/* Columns for each Subject */}
-                                {inChargeSubjects.map(sub => {
-                                  const mData = row.subjectMarksMap[sub.id];
-                                  const val = mData?.value;
-                                  const isAb = mData?.isAbsent;
-
-                                  return (
-                                    <td
-                                      key={sub.id}
-                                      className="py-3 px-3 text-center whitespace-nowrap border-l border-slate-100 font-mono font-medium"
-                                    >
-                                      {isAb ? (
-                                        <span className="px-1.5 py-0.5 rounded font-bold text-rose-700 bg-rose-100 text-[11px]">
-                                          AB
-                                        </span>
-                                      ) : val === '—' ? (
-                                        <span className="text-slate-300">—</span>
-                                      ) : (
-                                        <span
-                                          className={`font-semibold ${
-                                            mData?.isFail
-                                              ? 'text-red-600 font-bold'
-                                              : 'text-slate-800'
-                                          }`}
-                                        >
-                                          {val}
-                                        </span>
-                                      )}
-                                    </td>
-                                  );
-                                })}
-
-                                {/* Summary Column 1: Grand Total */}
-                                <td className="py-3 px-3 text-center whitespace-nowrap border-l border-emerald-100 bg-emerald-50/30">
-                                  <span className="font-bold font-mono text-emerald-950 text-sm">
-                                    {row.studentObtained}
-                                  </span>
-                                  <span className="text-slate-400 font-normal font-mono text-[11px]">
-                                    {' '}
-                                    / {row.expectedMax}
-                                  </span>
-                                </td>
-
-                                {/* Summary Column 2: Percentage */}
-                                <td className="py-3 px-3 text-center whitespace-nowrap bg-emerald-50/30">
-                                  <span
-                                    className={`font-mono font-bold ${
-                                      Number(row.percentage) >= 60
-                                        ? 'text-emerald-700'
-                                        : Number(row.percentage) >= 35
-                                        ? 'text-amber-700'
-                                        : 'text-rose-700'
-                                    }`}
-                                  >
-                                    {row.percentage}%
-                                  </span>
-                                </td>
-
-                                {/* Summary Column 3: Attendance */}
-                                <td className="py-3 px-3 text-center whitespace-nowrap border-l border-slate-100 font-mono text-[11px] text-slate-700">
-                                  <span className="font-bold text-slate-800">{row.daysAttended}</span>
-                                  <span className="text-slate-400"> / {row.totalWorking}</span>
-                                </td>
-
-                                {/* Summary Column 4: Dense Rank / Status */}
-                                <td className="py-3 px-3 text-center whitespace-nowrap border-l border-slate-100">
-                                  <span
-                                    className={`inline-block px-2.5 py-1 rounded-md text-[11px] font-bold ${row.badgeClass}`}
-                                  >
-                                    {row.rankOrStatusText}
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -5924,400 +6024,276 @@ export const TeacherDashboard: React.FC = () => {
       )}
 
       {/* =========================================================================
-          TAB 5: NEW "FEES" TAB (Moved exact payment progress & fee ledger from My Class)
+          TAB 5: CONSOLIDATED FEES & FINANCIAL LEDGER (CLASS IN-CHARGE & TUITION)
          ========================================================================= */}
       {activeTab === 'fees' && (
         <div className="space-y-6">
-          {/* Header Card with Class Selector */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          {/* Header Card with Class Selector & Record Special Fee Button */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
                 <span className="p-1.5 rounded-xl bg-emerald-100 text-emerald-800">
                   <CreditCard className="w-5 h-5 text-emerald-800" />
                 </span>
-                <h2 className="text-lg font-bold text-slate-900">
-                  Class Fee Payment Progress &amp; Ledger
+                <h2 className="text-lg sm:text-xl font-bold text-slate-900">
+                  {inChargeClass ? `Class Fees & Financial Ledger — ${inChargeClass.name}` : 'Class Fees & Financial Ledger'}
                 </h2>
+                {inChargeClass && (
+                  <span className="hidden sm:inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                    Class In-Charge
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500 mt-1">
-                Live status of ₹300 monthly installments for students in {activeFeeClass?.name || 'Class'}.
+                {feeSubTab === 'tuition_progress'
+                  ? `Live status of ₹300 monthly installments for students in ${activeFeeClass?.name || 'Class'}.`
+                  : `Special fee collection and receipts ledger strictly for ${inChargeClass?.name || 'your designated class'}.`}
               </p>
             </div>
 
-            <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
-              <label className="text-xs font-bold text-slate-700 whitespace-nowrap">Class:</label>
-              <select
-                value={feeClassId}
-                onChange={e => handleFeeClassChange(e.target.value)}
-                className="bg-white text-xs font-bold text-slate-800 py-1.5 px-2.5 rounded-lg border border-slate-300 focus:outline-emerald-600 cursor-pointer"
-              >
-                {classes.map(c => {
-                  const isInCharge = inChargeClass && inChargeClass.id === c.id;
-                  return (
-                    <option key={c.id} value={c.id}>
-                      {c.name} {isInCharge ? '★ (Class In-Charge)' : ''}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-          </div>
-
-          {/* Month-by-Month Tuition Installment Progress Tracker */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-emerald-800" />
-                  Class Fee Payment Progress (12 Installments: June 2026 – May 2027)
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Live status of ₹300 monthly installments for students in {activeFeeClass?.name || 'Class'}.
-                </p>
-              </div>
-            </div>
-
-            {feeClassStudents.length === 0 ? (
-              <div className="text-center py-10 text-slate-400 text-xs">
-                No students enrolled in {activeFeeClass?.name || 'this class'}.
-              </div>
-            ) : (
-              <div
-                onWheel={handleHorizontalWheel}
-                className="border border-slate-200 rounded-xl overflow-x-auto relative w-full text-xs scrollbar-thin"
-              >
-                <table className="w-full min-w-[750px] text-left border-collapse">
-                  <thead className="sticky top-0 bg-slate-100 text-slate-700 font-bold border-b z-30">
-                    <tr>
-                      <th className="p-2.5 w-12 text-center font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
-                      <th className="p-2.5 min-w-[180px] md:min-w-[220px] sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Student Name</th>
-                      <th className="p-2.5 font-mono text-center w-20">Reg No</th>
-                      <th className="p-2.5 font-mono text-center w-20">Adm No</th>
-                      {TUITION_FEE_MONTHS.map(m => (
-                        <th key={m} className="p-2 text-center font-mono text-[10px] w-12">
-                          {m.split(' ')[0].substring(0, 3)}
-                        </th>
-                      ))}
-                      <th className="p-2.5 text-center">Paid / 12</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {feeClassStudents.map(st => {
-                      const paidMonths = new Set<string>();
-                      classFeePayments
-                        .filter(p => p.studentId === st.id)
-                        .forEach(p => {
-                          (p.tuitionFeeMonths || []).forEach(m => paidMonths.add(m));
-                        });
-                      const count = paidMonths.size;
-                      const regNo =
-                        (st as any).examRegisterNos?.[selectedExamId] ||
-                        (st as any).examRegNo ||
-                        (st as any).regNo ||
-                        st.examRegisterNumbers?.[selectedExamId] ||
-                        '—';
-
+            <div className="flex flex-wrap items-center gap-3">
+              {feeSubTab === 'tuition_progress' && (
+                <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                  <label className="text-xs font-bold text-slate-700 whitespace-nowrap">Class:</label>
+                  <select
+                    value={feeClassId}
+                    onChange={e => handleFeeClassChange(e.target.value)}
+                    className="bg-white text-xs font-bold text-slate-800 py-1.5 px-2.5 rounded-lg border border-slate-300 focus:outline-emerald-600 cursor-pointer"
+                  >
+                    {classes.map(c => {
+                      const isInCharge = inChargeClass && inChargeClass.id === c.id;
                       return (
-                        <tr key={st.id} className="hover:bg-slate-50 transition group">
-                          <td className="p-2 text-center font-mono font-bold text-slate-600 w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] bg-white group-hover:bg-slate-50">
-                            {st.rollNo}
-                          </td>
-                          <td className="p-2 min-w-[180px] md:min-w-[220px] sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] bg-white group-hover:bg-slate-50">
-                            <span className="font-bold text-slate-900 block">{st.nameEn}</span>
-                            {st.nameMl && (
-                              <span className="text-[10px] text-slate-500 font-ml block leading-tight">{st.nameMl}</span>
-                            )}
-                          </td>
-                          <td className="p-2 text-center font-mono font-bold text-emerald-950 bg-emerald-50/40 w-20">
-                            {regNo}
-                          </td>
-                          <td className="p-2 font-mono font-semibold text-slate-700 text-center w-20">
-                            {st.admissionNo}
-                          </td>
-                          {TUITION_FEE_MONTHS.map(m => {
-                            const isPaid = paidMonths.has(m);
-                            return (
-                              <td key={m} className="p-2 text-center">
-                                {isPaid ? (
-                                  <span
-                                    title={`${m}: Paid`}
-                                    className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-emerald-600 text-white text-[10px] font-bold shadow-2xs"
-                                  >
-                                    ✓
-                                  </span>
-                                ) : (
-                                  <span
-                                    title={`${m}: Pending`}
-                                    className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-slate-100 text-slate-400 text-[10px]"
-                                  >
-                                    —
-                                  </span>
-                                )}
-                              </td>
-                            );
-                          })}
-                          <td className="p-2 text-center">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                count === 12
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : count > 0
-                                  ? 'bg-blue-100 text-blue-800'
-                                  : 'bg-slate-100 text-slate-500'
-                              }`}
-                            >
-                              {count} / 12
-                            </span>
-                          </td>
-                        </tr>
+                        <option key={c.id} value={c.id}>
+                          {c.name} {isInCharge ? '★ (Class In-Charge)' : ''}
+                        </option>
                       );
                     })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+                  </select>
+                </div>
+              )}
 
-      {/* =========================================================================
-          TAB 5b: SPECIAL FEES (RESTRICTED TO CLASS IN-CHARGE)
-         ========================================================================= */}
-      {activeTab === 'special_fees' && (
-        <div className="space-y-6">
-          {!inChargeClass ? (
-            <div className="bg-white rounded-2xl border border-slate-200 p-8 sm:p-12 text-center max-w-xl mx-auto shadow-xs">
-              <div className="w-16 h-16 rounded-2xl bg-purple-50 text-purple-700 mx-auto flex items-center justify-center mb-4">
-                <Tag className="w-8 h-8" />
-              </div>
-              <h2 className="text-xl font-bold text-slate-900 mb-2">Class In-Charge Restricted Module</h2>
-              <p className="text-sm text-slate-500 leading-relaxed">
-                The Special Fees module allows Class Teachers to collect Exam Fees, Council Funds, and Donations strictly for their designated class. You currently do not have a Class In-Charge assignment.
-              </p>
+              {inChargeClass && (
+                <button
+                  type="button"
+                  onClick={() => setShowSpecialFeeModal(true)}
+                  className="px-4 py-2.5 bg-purple-800 hover:bg-purple-900 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-2 transition cursor-pointer shrink-0"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Record Special Fee Payment</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Sub-Toggles: Class Fee Payment Progress vs Special Fee Ledger */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setFeeSubTab('tuition_progress')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                feeSubTab === 'tuition_progress'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+              }`}
+            >
+              <CreditCard className="w-4 h-4" />
+              <span>Class Fee Payment Progress</span>
+            </button>
+            {inChargeClass && (
               <button
                 type="button"
-                onClick={() => setActiveTab('home')}
-                className="mt-6 px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition cursor-pointer"
+                onClick={() => setFeeSubTab('special_fees')}
+                className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                  feeSubTab === 'special_fees'
+                    ? 'bg-purple-800 text-white shadow-xs'
+                    : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                }`}
               >
-                Back to Dashboard
+                <Tag className="w-4 h-4" />
+                <span>Special Fee Ledger</span>
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                    feeSubTab === 'special_fees'
+                      ? 'bg-purple-950 text-purple-200'
+                      : 'bg-purple-100 text-purple-800'
+                  }`}
+                >
+                  {inChargeClass.name}
+                </span>
               </button>
-            </div>
-          ) : (
-            <>
-              {/* Top Banner */}
-              <div className="bg-gradient-to-r from-purple-950 via-purple-900 to-indigo-950 rounded-2xl p-5 sm:p-6 text-white shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            )}
+          </div>
+
+          {/* VIEW 1: TUITION INSTALLMENTS PROGRESS */}
+          {feeSubTab === 'tuition_progress' && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div>
-                  <div className="flex items-center gap-2">
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-purple-800/80 text-purple-200 border border-purple-700/50">
-                      Class In-Charge Faculty Module
-                    </span>
-                    <span className="text-purple-300 text-xs">•</span>
-                    <span className="text-xs text-purple-200 font-mono">Academic Year 2026–2027</span>
-                  </div>
-                  <h2 className="text-lg sm:text-xl font-bold font-serif mt-1 flex items-center gap-2 text-white">
-                    <Tag className="w-5 h-5 text-purple-300" />
-                    <span>Special Fees — {inChargeClass.name}</span>
-                    <span className="text-sm font-normal text-purple-200 font-ml">({inChargeClass.nameMl})</span>
-                  </h2>
-                  <p className="text-xs text-purple-200/80 mt-1 max-w-2xl leading-relaxed">
-                    Collect and issue official receipts for Terminal, Hikma, and Public Exam Fees, Council Funds, and Donations strictly for {inChargeStudents.length} enrolled students in {inChargeClass.name}. Synchronized with the Principal's global ledger.
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <CreditCard className="w-4 h-4 text-emerald-800" />
+                    Class Fee Payment Progress (12 Installments: June 2026 – May 2027)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Live status of ₹300 monthly installments for students in {activeFeeClass?.name || 'Class'}.
                   </p>
                 </div>
-
-                <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 shrink-0">
-                  <div className="bg-purple-900/60 border border-purple-700/50 rounded-xl px-3.5 py-2 text-right">
-                    <span className="text-[10px] text-purple-300 font-bold block uppercase tracking-wider">Designated Class</span>
-                    <span className="text-sm font-bold text-amber-300 font-mono">{inChargeClass.name}</span>
-                  </div>
-                  <div className="bg-purple-900/60 border border-purple-700/50 rounded-xl px-3.5 py-2 text-right">
-                    <span className="text-[10px] text-purple-300 font-bold block uppercase tracking-wider">Next Receipt No</span>
-                    <span className="text-sm font-bold text-white font-mono">{specialFeeReceiptNo || '01'}</span>
-                  </div>
-                </div>
               </div>
 
-              {/* Single Prominent Top Summary Card */}
-              <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-2xl bg-purple-100 text-purple-900 flex items-center justify-center shrink-0 shadow-inner">
-                    <Tag className="w-7 h-7 text-purple-800" />
-                  </div>
-                  <div>
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-purple-900/70 block">
-                      Total Special Fees Collected (My Class)
-                    </span>
-                    <div className="text-2xl sm:text-3xl font-black font-mono text-purple-950 mt-0.5">
-                      ₹{totalSpecialFeesCollected.toLocaleString('en-IN')}
-                    </div>
-                    <span className="text-xs text-slate-500 block mt-0.5">
-                      {numberToWords(totalSpecialFeesCollected)}
-                    </span>
-                  </div>
+              {feeClassStudents.length === 0 ? (
+                <div className="text-center py-10 text-slate-400 text-xs">
+                  No students enrolled in {activeFeeClass?.name || 'this class'}.
                 </div>
-
-                <div className="flex items-center gap-3 border-t sm:border-t-0 sm:border-l border-slate-100 pt-3 sm:pt-0 sm:pl-6">
-                  <div className="text-left sm:text-right">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Receipts Issued</span>
-                    <span className="text-xl font-bold font-mono text-slate-800 block">
-                      {classSpecialFeePayments.length}
-                    </span>
-                    <span className="text-[11px] text-emerald-600 font-medium block">
-                      Active for {inChargeClass.name}
-                    </span>
-                  </div>
+              ) : (
+                <div
+                  onWheel={handleHorizontalWheel}
+                  className="border border-slate-200 rounded-xl overflow-x-auto relative w-full text-xs scrollbar-thin"
+                >
+                  <table className="w-full text-left border-collapse min-w-[950px]">
+                    <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
+                      <tr>
+                        <th className="p-2.5 text-center font-mono sticky left-0 z-20 bg-slate-50 w-12 border-r border-slate-200">
+                          Roll
+                        </th>
+                        <th className="p-2.5 font-mono text-center sticky left-12 z-20 bg-slate-50 w-16 border-r border-slate-200">
+                          Adm No
+                        </th>
+                        <th className="p-2.5 sticky left-28 z-20 bg-slate-50 min-w-[170px] border-r border-slate-200 shadow-sm">
+                          Student Name
+                        </th>
+                        {TUITION_FEE_MONTHS.map(m => (
+                          <th key={m} className="p-2 text-center font-medium text-[11px] w-14">
+                            {m.slice(0, 3)}
+                          </th>
+                        ))}
+                        <th className="p-2.5 text-center font-bold text-slate-900 border-l border-slate-200 w-16">
+                          Paid
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {feeClassStudents.map(student => {
+                        const paidMonths = studentPaidMonthsMap[student.id] || [];
+                        const count = paidMonths.length;
+                        return (
+                          <tr key={student.id} className="hover:bg-slate-50 transition">
+                            <td className="p-2 text-center font-mono font-bold text-slate-600 sticky left-0 z-10 bg-white border-r border-slate-200">
+                              {student.rollNo}
+                            </td>
+                            <td className="p-2 text-center font-mono font-semibold text-slate-700 sticky left-12 z-10 bg-white border-r border-slate-200">
+                              {student.admissionNo}
+                            </td>
+                            <td className="p-2 font-medium text-slate-900 sticky left-28 z-10 bg-white border-r border-slate-200 shadow-sm">
+                              <span className="block truncate max-w-[160px] font-bold text-xs">{student.nameEn}</span>
+                              {student.nameMl && (
+                                <span className="block truncate max-w-[160px] text-[10px] text-slate-500 font-ml">
+                                  {student.nameMl}
+                                </span>
+                              )}
+                            </td>
+                            {TUITION_FEE_MONTHS.map(m => {
+                              const isPaid = paidMonths.includes(m);
+                              return (
+                                <td key={m} className="p-1.5 text-center">
+                                  {isPaid ? (
+                                    <span
+                                      title={`${m}: Paid ₹300`}
+                                      className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-emerald-600 text-white font-black text-[10px] shadow-xs"
+                                    >
+                                      ✓
+                                    </span>
+                                  ) : (
+                                    <span
+                                      title={`${m}: Unpaid`}
+                                      className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-slate-100 text-slate-300 font-bold text-[10px]"
+                                    >
+                                      —
+                                    </span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 text-center">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  count === 12
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : count > 0
+                                    ? 'bg-blue-100 text-blue-800'
+                                    : 'bg-slate-100 text-slate-500'
+                                }`}
+                              >
+                                {count} / 12
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-              </div>
+              )}
+            </div>
+          )}
 
-              {/* Main Content Grid: Form (Left) & Ledger (Right) */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* Form: Record Special Fee (4 cols on lg) */}
-                <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <div className="flex items-center gap-2">
-                      <CreditCard className="w-4 h-4 text-purple-700" />
-                      <h3 className="font-bold text-slate-900 text-sm sm:text-base">Record Special Fee Payment</h3>
-                    </div>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
-                      {inChargeClass.name} Only
-                    </span>
+          {/* VIEW 2: SPECIAL FEE LEDGER (RESTRICTED TO CLASS IN-CHARGE) */}
+          {feeSubTab === 'special_fees' && (
+            <div className="space-y-6">
+              {!inChargeClass ? (
+                <div className="bg-white rounded-2xl border border-slate-200 p-8 sm:p-12 text-center max-w-xl mx-auto shadow-xs">
+                  <div className="w-16 h-16 rounded-2xl bg-purple-50 text-purple-700 mx-auto flex items-center justify-center mb-4">
+                    <Tag className="w-8 h-8" />
                   </div>
-
-                  <form onSubmit={handleRecordSpecialFee} className="space-y-4">
-                    {/* Student Selection (Strictly inChargeStudents) */}
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Select Student ({inChargeClass.name}) <span className="text-rose-500">*</span>
-                      </label>
-                      <select
-                        value={specialFeeStudentId}
-                        onChange={e => setSpecialFeeStudentId(e.target.value)}
-                        required
-                        className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none"
-                      >
-                        <option value="">-- Choose Student ({inChargeStudents.length} Available) --</option>
-                        {inChargeStudents.map(st => (
-                          <option key={st.id} value={st.id}>
-                            Roll #{st.rollNo} • {st.nameEn} (Adm: {st.admissionNo})
-                          </option>
-                        ))}
-                      </select>
-                      <span className="text-[10px] text-slate-500 mt-1 block">
-                        Only students enrolled in your designated class ({inChargeClass.name}) are available.
-                      </span>
-                    </div>
-
-                    {/* Fee Type Selection */}
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Fee Type <span className="text-rose-500">*</span>
-                      </label>
-                      <select
-                        value={specialFeeType}
-                        onChange={e => setSpecialFeeType(e.target.value as SpecialFeeType)}
-                        required
-                        className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none font-medium"
-                      >
-                        {SPECIAL_FEE_TYPES.map(t => (
-                          <option key={t} value={t}>
-                            {t}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Fee Amount Input */}
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Fee Amount (₹) <span className="text-rose-500">*</span>
-                      </label>
-                      <div className="relative">
-                        <span className="absolute left-3 top-2.5 text-slate-400 font-mono text-sm">₹</span>
-                        <input
-                          type="number"
-                          min="1"
-                          step="1"
-                          value={specialFeeAmount || ''}
-                          onChange={e => setSpecialFeeAmount(Math.max(0, parseInt(e.target.value, 10) || 0))}
-                          placeholder="e.g. 150"
-                          required
-                          className="w-full pl-8 pr-3 p-2.5 text-xs font-mono font-bold border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none text-slate-900"
-                        />
+                  <h2 className="text-xl font-bold text-slate-900 mb-2">Class In-Charge Restricted Module</h2>
+                  <p className="text-sm text-slate-500 leading-relaxed">
+                    The Special Fees ledger allows Class Teachers to collect Exam Fees, Council Funds, and Donations strictly for their designated class. You currently do not have a Class In-Charge assignment.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {/* Single Prominent Top Summary Card */}
+                  <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                      <div className="w-14 h-14 rounded-2xl bg-purple-100 text-purple-900 flex items-center justify-center shrink-0 shadow-inner">
+                        <Tag className="w-7 h-7 text-purple-800" />
                       </div>
-                    </div>
-
-                    {/* Receipt Number & Date Grid */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="text-xs font-bold text-slate-700">Receipt No</label>
-                          <span className="text-[10px] text-purple-700 font-mono font-bold">Series 01</span>
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-purple-900/70 block">
+                          Total Special Fees Collected ({inChargeClass.name})
+                        </span>
+                        <div className="text-2xl sm:text-3xl font-black font-mono text-purple-950 mt-0.5">
+                          ₹{totalSpecialFeesCollected.toLocaleString('en-IN')}
                         </div>
-                        <input
-                          type="text"
-                          value={specialFeeReceiptNo}
-                          onChange={e => setSpecialFeeReceiptNo(e.target.value)}
-                          placeholder="01"
-                          required
-                          className="w-full p-2.5 text-xs font-mono font-bold border border-slate-300 rounded-xl bg-purple-50/50 text-purple-950 focus:ring-2 focus:ring-purple-500 focus:outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-bold text-slate-700 mb-1">Payment Date</label>
-                        <input
-                          type="date"
-                          value={specialFeeDate}
-                          onChange={e => setSpecialFeeDate(e.target.value)}
-                          required
-                          className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Notes / Remarks */}
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Notes / Remarks (Optional)</label>
-                      <input
-                        type="text"
-                        value={specialFeeNotes}
-                        onChange={e => setSpecialFeeNotes(e.target.value)}
-                        placeholder="e.g. Paid in cash by parent"
-                        className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none"
-                      />
-                    </div>
-
-                    {/* Summary & Submit */}
-                    <div className="p-4 rounded-xl bg-purple-950 text-white space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="text-[11px] text-purple-300 block">Total Amount to Collect:</span>
-                          <span className="text-2xl font-black font-mono text-amber-300">
-                            ₹{(specialFeeAmount || 0).toLocaleString('en-IN')}
-                          </span>
-                        </div>
-                        <span className="px-2.5 py-1 rounded bg-purple-800 text-[10px] font-bold uppercase tracking-wider text-purple-200">
-                          {specialFeeType}
+                        <span className="text-xs text-slate-500 block mt-0.5">
+                          {numberToWords(totalSpecialFeesCollected)}
                         </span>
                       </div>
-                      <div className="text-[11px] text-purple-200/90 italic border-t border-purple-800/80 pt-2">
-                        {numberToWords(specialFeeAmount || 0)}
+                    </div>
+
+                    <div className="flex items-center gap-4 border-t sm:border-t-0 sm:border-l border-slate-100 pt-3 sm:pt-0 sm:pl-6">
+                      <div className="text-left sm:text-right">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Receipts Issued</span>
+                        <span className="text-xl font-bold font-mono text-slate-800 block">
+                          {classSpecialFeePayments.length}
+                        </span>
+                        <span className="text-[11px] text-emerald-600 font-medium block">
+                          Active for {inChargeClass.name}
+                        </span>
                       </div>
 
-                      <button
-                        type="submit"
-                        disabled={isSubmittingSpecialFee || !specialFeeStudentId || !specialFeeAmount || specialFeeAmount <= 0}
-                        className="w-full py-2.5 px-4 text-xs font-bold text-purple-950 bg-amber-400 hover:bg-amber-300 disabled:opacity-50 rounded-xl transition shadow-xs flex items-center justify-center gap-2 cursor-pointer"
-                      >
-                        <Printer className="w-3.5 h-3.5" />
-                        <span>{isSubmittingSpecialFee ? 'Recording & Generating...' : 'Save & Print Official Receipt'}</span>
-                      </button>
+                      <div className="text-left sm:text-right border-l border-slate-100 pl-4">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Next Receipt No</span>
+                        <span className="text-xl font-bold font-mono text-purple-900 block">
+                          {specialFeeReceiptNo || '01'}
+                        </span>
+                        <span className="text-[11px] text-purple-600 font-medium block">
+                          Series 01
+                        </span>
+                      </div>
                     </div>
-                  </form>
-                </div>
+                  </div>
 
-                {/* Ledger: Class Special Fee Ledger (7 cols on lg) */}
-                <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs flex flex-col justify-between space-y-4">
-                  <div>
+                  {/* Full Width Special Fee Receipts Ledger */}
+                  <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
                       <div>
                         <h3 className="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-2">
@@ -6331,30 +6307,41 @@ export const TeacherDashboard: React.FC = () => {
                         </p>
                       </div>
 
-                      {/* Search Filter */}
-                      <div className="relative w-full sm:w-56">
-                        <input
-                          type="text"
-                          value={specialFeeSearchQuery}
-                          onChange={e => setSpecialFeeSearchQuery(e.target.value)}
-                          placeholder="Search student, adm, receipt..."
-                          className="w-full pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-purple-500"
-                        />
-                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
-                        {specialFeeSearchQuery && (
-                          <button
-                            type="button"
-                            onClick={() => setSpecialFeeSearchQuery('')}
-                            className="absolute right-2 top-2 text-slate-400 hover:text-slate-600 text-xs"
-                          >
-                            ×
-                          </button>
-                        )}
+                      {/* Search Filter & Record Button */}
+                      <div className="flex items-center gap-2.5">
+                        <div className="relative w-full sm:w-64">
+                          <input
+                            type="text"
+                            value={specialFeeSearchQuery}
+                            onChange={e => setSpecialFeeSearchQuery(e.target.value)}
+                            placeholder="Search student, adm, receipt..."
+                            className="w-full pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-purple-500"
+                          />
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                          {specialFeeSearchQuery && (
+                            <button
+                              type="button"
+                              onClick={() => setSpecialFeeSearchQuery('')}
+                              className="absolute right-2 top-2 text-slate-400 hover:text-slate-600 text-xs cursor-pointer"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setShowSpecialFeeModal(true)}
+                          className="px-3.5 py-1.5 bg-purple-800 hover:bg-purple-900 text-white font-bold text-xs rounded-lg shadow-xs flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Record Payment</span>
+                        </button>
                       </div>
                     </div>
 
                     {/* Table View */}
-                    <div className="mt-4 overflow-x-auto border border-slate-200 rounded-xl scrollbar-thin">
+                    <div className="overflow-x-auto border border-slate-200 rounded-xl scrollbar-thin">
                       {(() => {
                         const q = specialFeeSearchQuery.trim().toLowerCase();
                         const filtered = classSpecialFeePayments.filter(p => {
@@ -6400,7 +6387,6 @@ export const TeacherDashboard: React.FC = () => {
                                   .replace(/\s*-\s*Class.*$/i, '')
                                   .trim();
                                 const feeAmount = p.specialFeeAmount || p.totalAmount || 0;
-
                                 return (
                                   <tr key={p.id} className="hover:bg-purple-50/40 transition">
                                     <td className="p-2.5 text-center font-mono font-bold text-slate-600">
@@ -6449,20 +6435,242 @@ export const TeacherDashboard: React.FC = () => {
                         );
                       })()}
                     </div>
-                  </div>
 
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                    <span>
-                      Showing {classSpecialFeePayments.length} special fee receipts for {inChargeClass.name}
-                    </span>
-                    <span className="font-mono font-semibold text-purple-900">
-                      Total: ₹{totalSpecialFeesCollected.toLocaleString('en-IN')}
-                    </span>
+                    <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                      <span>
+                        Showing {classSpecialFeePayments.length} special fee receipts for {inChargeClass.name}
+                      </span>
+                      <span className="font-mono font-semibold text-purple-900">
+                        Total: ₹{totalSpecialFeesCollected.toLocaleString('en-IN')}
+                      </span>
+                    </div>
                   </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* =========================================================================
+          RECORD SPECIAL FEE PAYMENT MODAL DIALOG (OVERLAY)
+         ========================================================================= */}
+      {showSpecialFeeModal && inChargeClass && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden my-auto">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-purple-950 via-purple-900 to-indigo-950 text-white p-5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2 rounded-xl bg-purple-800/80 text-purple-200 border border-purple-700/50">
+                  <CreditCard className="w-5 h-5 text-purple-200" />
+                </span>
+                <div>
+                  <h3 className="font-bold text-base text-white">Record Special Fee Payment</h3>
+                  <p className="text-xs text-purple-200/80">
+                    Designated Class: <span className="font-bold text-amber-300">{inChargeClass.name}</span> • Next: Series 01 (#{specialFeeReceiptNo || '01'})
+                  </p>
                 </div>
               </div>
-            </>
-          )}
+              <button
+                type="button"
+                onClick={() => setShowSpecialFeeModal(false)}
+                className="p-1.5 rounded-lg text-purple-200 hover:text-white hover:bg-purple-800/60 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleRecordSpecialFee} className="p-5 sm:p-6 space-y-4">
+              {/* Student Selection (Strictly inChargeStudents) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Select Student ({inChargeClass.name}) <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={specialFeeStudentId}
+                  onChange={e => setSpecialFeeStudentId(e.target.value)}
+                  required
+                  className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                >
+                  <option value="">-- Choose Student ({inChargeStudents.length} Available) --</option>
+                  {inChargeStudents.map(st => (
+                    <option key={st.id} value={st.id}>
+                      Roll #{st.rollNo} • {st.nameEn} (Adm: {st.admissionNo})
+                    </option>
+                  ))}
+                </select>
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  Only students enrolled in your designated class ({inChargeClass.name}) are available.
+                </span>
+              </div>
+
+              {/* Fee Type Selection */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Fee Type <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={specialFeeType}
+                  onChange={e => setSpecialFeeType(e.target.value as SpecialFeeType)}
+                  required
+                  className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none font-medium"
+                >
+                  {SPECIAL_FEE_TYPES.map(t => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Fee Amount with Quick Suggestion Buttons */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-700">
+                    Fee Amount (₹) <span className="text-rose-500">*</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-medium">Click quick amounts or type</span>
+                </div>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-slate-400 font-mono text-sm">₹</span>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={specialFeeAmount || ''}
+                    onChange={e => setSpecialFeeAmount(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                    placeholder="e.g. 150"
+                    required
+                    className="w-full pl-8 pr-3 p-2.5 text-xs font-mono font-bold border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none text-slate-900"
+                  />
+                </div>
+                {/* Quick Amount Suggestion Pills */}
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                  {[50, 100, 150, 200, 250, 500, 1000].map(amt => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setSpecialFeeAmount(amt)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition cursor-pointer border ${
+                        specialFeeAmount === amt
+                          ? 'bg-purple-700 text-white border-purple-700 shadow-xs'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      ₹{amt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Payment Mode Selector */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Payment Mode
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['Cash', 'UPI', 'Bank Transfer'] as const).map(mode => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setSpecialFeePaymentMode(mode)}
+                      className={`py-2 px-3 rounded-xl text-xs font-bold text-center border transition cursor-pointer ${
+                        specialFeePaymentMode === mode
+                          ? 'bg-purple-100 text-purple-900 border-purple-400 ring-1 ring-purple-400 shadow-xs'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Receipt Number & Date Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-700">Receipt No</label>
+                    <span className="text-[10px] text-purple-700 font-mono font-bold">Series 01</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={specialFeeReceiptNo}
+                    onChange={e => setSpecialFeeReceiptNo(e.target.value)}
+                    placeholder="01"
+                    required
+                    className="w-full p-2.5 text-xs font-mono font-bold border border-slate-300 rounded-xl bg-purple-50/50 text-purple-950 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Payment Date</label>
+                  <input
+                    type="date"
+                    value={specialFeeDate}
+                    onChange={e => setSpecialFeeDate(e.target.value)}
+                    required
+                    className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Notes / Remarks */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Notes / Remarks (Optional)</label>
+                <input
+                  type="text"
+                  value={specialFeeNotes}
+                  onChange={e => setSpecialFeeNotes(e.target.value)}
+                  placeholder="e.g. Paid in cash by parent"
+                  className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Summary & Words */}
+              <div className="p-3.5 rounded-xl bg-purple-950 text-white space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] text-purple-300 block uppercase font-bold tracking-wider">
+                      Total Amount to Collect:
+                    </span>
+                    <span className="text-xl font-black font-mono text-amber-300">
+                      ₹{(specialFeeAmount || 0).toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                  <span className="px-2.5 py-1 rounded bg-purple-800 text-[10px] font-bold uppercase tracking-wider text-purple-200">
+                    {specialFeeType}
+                  </span>
+                </div>
+                <div className="text-[11px] text-purple-200/90 italic border-t border-purple-800/80 pt-1.5">
+                  {numberToWords(specialFeeAmount || 0)}
+                </div>
+              </div>
+
+              {/* Actions: Cancel & Save */}
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSpecialFeeModal(false)}
+                  className="px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingSpecialFee || !specialFeeStudentId || !specialFeeAmount || specialFeeAmount <= 0}
+                  className="py-2.5 px-5 text-xs font-bold text-purple-950 bg-amber-400 hover:bg-amber-300 disabled:opacity-50 rounded-xl transition shadow-xs flex items-center gap-2 cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>
+                    {isSubmittingSpecialFee
+                      ? 'Recording & Generating...'
+                      : `Save & Issue Receipt (₹${(specialFeeAmount || 0).toLocaleString('en-IN')})`}
+                  </span>
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

@@ -516,8 +516,8 @@ export const ProgressReportCard: React.FC<Props> = ({
                     let subjectBadgeStyle = 'bg-emerald-100 text-emerald-800';
 
                     if (isSubAbsent) {
-                      subjectResult = 'Absent';
-                      subjectBadgeStyle = 'bg-amber-100 text-amber-900';
+                      subjectResult = 'AB';
+                      subjectBadgeStyle = 'bg-rose-100 text-rose-800 font-bold';
                     } else if (isCeZero) {
                       subjectResult = 'Withheld';
                       subjectBadgeStyle = 'bg-amber-100 text-amber-900';
@@ -537,21 +537,21 @@ export const ProgressReportCard: React.FC<Props> = ({
                         </td>
                         <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-center font-mono font-medium text-slate-700 whitespace-nowrap">
                           {isSubAbsent ? (
-                            <span className="text-amber-800 font-semibold text-[11px]">Absent</span>
+                            <span className="text-red-600 font-bold">AB</span>
                           ) : (
                             omrVal
                           )}
                         </td>
                         <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-center font-mono font-medium text-slate-700 whitespace-nowrap">
                           {isSubAbsent ? (
-                            <span className="text-amber-800 font-semibold text-[11px]">Absent</span>
+                            <span className="text-red-600 font-bold">AB</span>
                           ) : (
                             ocrVal
                           )}
                         </td>
                         <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-center font-mono font-medium text-slate-700 whitespace-nowrap">
                           {isSubAbsent ? (
-                            <span className="text-amber-800 font-semibold text-[11px]">Absent</span>
+                            <span className="text-red-600 font-bold">AB</span>
                           ) : isCeZero ? (
                             <span className="text-amber-800 font-bold text-[11px]">0</span>
                           ) : (
@@ -560,7 +560,7 @@ export const ProgressReportCard: React.FC<Props> = ({
                         </td>
                         <td className="py-2 sm:py-2.5 print:py-2 px-3 print:px-2.5 text-center font-bold font-mono whitespace-nowrap">
                           {isSubAbsent ? (
-                            <span className="text-amber-800 font-bold text-[11px]">Absent</span>
+                            <span className="text-red-600 font-bold">AB</span>
                           ) : (
                             <span className={isSubFailed ? 'text-red-600 font-bold' : 'text-emerald-950 font-bold'}>
                               {subTotal}

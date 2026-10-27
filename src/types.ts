@@ -336,6 +336,8 @@ export interface FeePayment {
   className: string;
   feeCategory?: 'tuition' | 'special';
   specialFeeType?: SpecialFeeType | string;
+  paymentMode?: string;
+  paymentMethod?: string;
   admissionFee: number;
   hasAdmissionFee?: boolean;
   tuitionFeeMonths: FeeMonth[];

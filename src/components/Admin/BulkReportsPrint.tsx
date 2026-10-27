@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { ClassItem, Examination, StudentProgressReport, InstitutionSettings, sortStudentsBoysFirst, normalizeGender, determineStudentGender } from '../../types';
+import { ClassItem, Examination, StudentProgressReport, InstitutionSettings, sortStudentsBoysFirst, normalizeGender, determineStudentGender, ProgressReportSubject } from '../../types';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
-import { computeClassLedgerRankings, calculateStudentReportMetrics } from '../../utils/reportCalculations';
+import { computeClassLedgerRankings, calculateStudentReportMetrics, computeSubjectScoreSheetMarks } from '../../utils/reportCalculations';
 import { handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
 import {
   Printer,
@@ -15,6 +15,7 @@ import {
   Hash,
   Loader2,
   CheckCircle2,
+  FileSpreadsheet,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -33,7 +34,7 @@ export const BulkReportsPrint: React.FC = () => {
     settings: InstitutionSettings;
   } | null>(null);
   const [fetching, setFetching] = useState(false);
-  const [viewMode, setViewMode] = useState<'bulk_cards' | 'ledger_table'>('ledger_table');
+  const [viewMode, setViewMode] = useState<'bulk_cards' | 'ledger_table' | 'score_sheet'>('ledger_table');
   const [activeSingleReport, setActiveSingleReport] = useState<StudentProgressReport | null>(null);
   const [isBatchPrinting, setIsBatchPrinting] = useState(false);
   const [pdfProgress, setPdfProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
@@ -231,6 +232,80 @@ export const BulkReportsPrint: React.FC = () => {
 
   const ledgerBoysCount = enrichedReports.filter(r => determineStudentGender(r.student, selectedExamId) === 'Boy').length;
   const ledgerGirlsCount = enrichedReports.filter(r => determineStudentGender(r.student, selectedExamId) === 'Girl').length;
+
+  const classSubjects = useMemo(() => {
+    const map = new Map<string, ProgressReportSubject>();
+    safeReports.forEach(r => {
+      (r.subjects || []).forEach(s => {
+        if (!map.has(s.subjectId)) {
+          map.set(s.subjectId, s);
+        }
+      });
+    });
+    return Array.from(map.values());
+  }, [safeReports]);
+
+  const classTeacherName = useMemo(() => {
+    return (
+      safeReports[0]?.classTeacherName ||
+      (currentClass as any)?.classTeacherName ||
+      'Class Teacher'
+    );
+  }, [safeReports, currentClass]);
+
+  const handlePrintScoreSheet = () => {
+    setViewMode('score_sheet');
+    setTimeout(() => {
+      window.print();
+    }, 200);
+  };
+
+  const handleExportScoreSheetCsv = () => {
+    if (!enrichedReports.length) return;
+    const headerCols = ['Roll No', 'Student Name'];
+    classSubjects.forEach(sub => {
+      const sName = sub.subjectNameEn || sub.code;
+      headerCols.push(`${sName} TE`, `${sName} CE`, `${sName} Tot`);
+    });
+    headerCols.push('Grand Total', 'Percentage', 'Attendance', 'Rank');
+    let csv = headerCols.join(',') + '\n';
+
+    enrichedReports.forEach(rep => {
+      const s = rep.student;
+      const rankData = classLedgerRankings.get(s?.id || '') || (s?.admissionNo ? classLedgerRankings.get(s.admissionNo) : undefined);
+      const metrics = rankData?.metrics || calculateStudentReportMetrics(rep, classTotalExpectedMax);
+      const cleanName = `"${(s?.nameEn || '').replace(/"/g, '""')}"`;
+      const row: (string | number)[] = [s?.rollNo || '-', cleanName];
+
+      classSubjects.forEach(subDef => {
+        const subData = (rep.subjects || []).find(sub => sub.subjectId === subDef.subjectId);
+        const marks = computeSubjectScoreSheetMarks(subData);
+        row.push(marks.isAbsent ? 'AB' : marks.te);
+        row.push(marks.isAbsent ? 'AB' : marks.ce);
+        row.push(marks.isAbsent ? 'AB' : marks.tot);
+      });
+
+      row.push(`"${metrics.displayGrandObtained} / ${classTotalExpectedMax}"`);
+      row.push(`"${metrics.percentageStr}%"`);
+      row.push(`"${metrics.attendanceDays} / ${metrics.attendanceTotal}"`);
+      const rankStr = rankData?.isRankAwarded && rankData.rank !== null ? `Rank ${rankData.rank}` : (metrics.displayResultStatus === 'Absent' ? 'Absent' : (metrics.displayResultStatus === 'Withheld' ? 'Withheld' : '—'));
+      row.push(`"${rankStr}"`);
+
+      csv += row.join(',') + '\n';
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const cName = getEnglishClassName(currentClass || ({ name: 'Class', numericGrade: 1 } as any)).replace(/\s+/g, '_');
+    const eName = (currentExam?.nameEn || 'Exam').replace(/\s+/g, '_');
+    link.download = `${cName}_${eName}_Score_Sheet.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  };
 
   const handleClassChange = (cId: string) => {
     setSelectedClassId(cId);
@@ -470,12 +545,35 @@ export const BulkReportsPrint: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={handlePrintAll}
-              className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
+              onClick={() => setViewMode('score_sheet')}
+              className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-xl transition shadow-xs cursor-pointer border ${
+                viewMode === 'score_sheet'
+                  ? 'bg-emerald-100 text-emerald-950 border-emerald-400'
+                  : 'text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border-emerald-300'
+              }`}
             >
-              <Printer className="w-3.5 h-3.5" />
-              Print All Cards
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+              Score Sheet
             </button>
+            {viewMode === 'score_sheet' ? (
+              <button
+                type="button"
+                onClick={handlePrintScoreSheet}
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                Print Score Sheet
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handlePrintAll}
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                Print All Cards
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -532,7 +630,7 @@ export const BulkReportsPrint: React.FC = () => {
           </button>
         </div>
 
-        {/* View Mode Switcher Toggle: Result Ledger Table first by default */}
+        {/* View Mode Switcher Toggle: Result Ledger Table | Score Sheet | Full-Class Cards */}
         {safeReports.length > 0 && (
           <div className="pt-4 ml-auto flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
             <button
@@ -545,6 +643,17 @@ export const BulkReportsPrint: React.FC = () => {
             >
               <Table className="w-3.5 h-3.5" />
               Result Ledger Table
+            </button>
+            <button
+              onClick={() => setViewMode('score_sheet')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
+                viewMode === 'score_sheet'
+                  ? 'bg-emerald-800 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              Score Sheet
             </button>
             <button
               onClick={() => setViewMode('bulk_cards')}
@@ -655,9 +764,310 @@ export const BulkReportsPrint: React.FC = () => {
               ))}
             </div>
           </div>
+        ) : viewMode === 'score_sheet' ? (
+          /* ========================================================= */
+          /* 2. CONSOLIDATED EXAMINATION SCORE SHEET VIEW (A4 Landscape)*/
+          /* ========================================================= */
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            {/* Embedded Print Styling matching requirement 3 */}
+            <style>{`
+              @media print {
+                @page { size: A4 landscape; margin: 8mm; }
+                .score-sheet-container {
+                  width: 100% !important;
+                  padding: 0 !important;
+                  margin: 0 !important;
+                }
+                .score-sheet-table { 
+                  width: 100% !important; 
+                  border-collapse: collapse !important; 
+                  font-size: 9pt !important;
+                }
+                .score-sheet-table th, .score-sheet-table td { 
+                  border: 1px solid #000 !important; 
+                  padding: 2px 4px !important; 
+                  text-align: center !important; 
+                  white-space: nowrap !important; 
+                }
+                .score-sheet-table th.subject-name {
+                  white-space: normal !important; 
+                }
+                .no-print { display: none !important; }
+              }
+            `}</style>
+
+            {/* Screen Header & Action Bar (Hidden in Print) */}
+            <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50 print:hidden no-print">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-800" />
+                  <span>{classLabelEnglish} Consolidated Score Sheet</span>
+                  <span className="text-xs font-semibold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-lg">
+                    {classSubjects.length} Subjects (Written & Oral)
+                  </span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Dynamic TE/CE breakdown (TE = Written OMR + Descriptive or Oral; CE = Continuous Evaluation). Compact A4 Landscape print format.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportScoreSheetCsv}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-800" />
+                  Export CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePrintScoreSheet}
+                  className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Print Score Sheet (A4 Landscape)
+                </button>
+              </div>
+            </div>
+
+            {/* Score Sheet Container */}
+            <div className="score-sheet-container p-4 md:p-6 print:p-0">
+              {/* Dynamic A4 Landscape Print Header (Preservation Rule) */}
+              <div className="score-sheet-print-header mb-4 text-center border-b border-slate-200 pb-3 print:border-black print:mb-2 print:pb-2">
+                <div className="font-serif text-emerald-900 text-xs sm:text-sm font-bold print:text-black" dir="rtl">
+                  {reportsData?.settings?.madrasaArabicHeader || settings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
+                </div>
+                <h1 className="text-base sm:text-lg font-black uppercase text-emerald-950 font-serif tracking-wide mt-0.5 print:text-black print:text-base">
+                  {reportsData?.settings?.institutionName || settings?.institutionName || 'Al-Madrasathul Islamiya Pallikkuth'}
+                </h1>
+                <h2 className="text-xs sm:text-sm font-bold text-emerald-900 font-ml print:text-black print:text-xs">
+                  {reportsData?.settings?.institutionNameMl || settings?.institutionNameMl || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്'}
+                </h2>
+                <div className="text-[10px] text-slate-500 font-medium print:text-black">
+                  {reportsData?.settings?.institutionSubtitle || (reportsData?.settings?.registrationNumber ? `Reg. No: ${reportsData.settings.registrationNumber}` : 'Reg. No: 11425')}
+                </div>
+
+                <div className="inline-block mt-2 px-3 py-0.5 bg-emerald-900 text-white rounded font-bold text-[11px] uppercase tracking-wider print:bg-transparent print:text-black print:border-b print:border-black print:mt-1">
+                  Consolidated Examination Score Sheet
+                </div>
+
+                {/* Dynamic Metadata Row: Institution Name, Exam, Class, Teacher */}
+                <div className="mt-2.5 flex flex-wrap items-center justify-between text-xs px-2 text-slate-800 font-semibold border-t border-b border-slate-200 py-1.5 print:border-black print:text-[9pt] print:mt-1 print:py-1">
+                  <div>
+                    <span className="text-slate-500 print:text-black uppercase text-[10px]">Exam:</span>{' '}
+                    <span className="font-bold">{currentExam ? (isMl ? currentExam.nameMl : currentExam.nameEn) : 'Examination'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 print:text-black uppercase text-[10px]">Class:</span>{' '}
+                    <span className="font-bold">{classLabelEnglish}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 print:text-black uppercase text-[10px]">Class Teacher:</span>{' '}
+                    <span className="font-bold">{classTeacherName}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 print:text-black uppercase text-[10px]">Academic Year:</span>{' '}
+                    <span className="font-mono font-bold">2026–2027</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Table Container with Horizontal Scroll on Web, Full Width in Print */}
+              <div
+                onWheel={handleHorizontalWheel}
+                className="overflow-x-auto relative w-full scrollbar-thin"
+              >
+                <table className="score-sheet-table w-full text-center text-xs border-collapse">
+                  <thead className="bg-slate-100 print:bg-slate-50">
+                    {/* Top Header Row */}
+                    <tr className="border-b border-slate-200 print:border-black text-slate-800">
+                      <th
+                        rowSpan={2}
+                        className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold w-12 bg-slate-100 print:bg-slate-50"
+                      >
+                        Roll No
+                      </th>
+                      <th
+                        rowSpan={2}
+                        className="py-2 px-3 text-left border border-slate-300 print:border-black font-bold min-w-[170px] bg-slate-100 print:bg-slate-50"
+                      >
+                        Student Name
+                      </th>
+                      {classSubjects.map(sub => {
+                        const subName = sub.subjectNameMl || sub.subjectNameEn;
+                        return (
+                          <th
+                            key={sub.subjectId}
+                            colSpan={3}
+                            className="subject-name py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-slate-100 print:bg-slate-50"
+                          >
+                            <div className="font-bold text-slate-900 leading-tight">
+                              {subName}
+                            </div>
+                            <div className="text-[10px] font-mono text-slate-500 font-normal print:text-black">
+                              {sub.code} ({sub.maxMarks || 50})
+                            </div>
+                          </th>
+                        );
+                      })}
+                      <th
+                        rowSpan={2}
+                        className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-emerald-50/70 print:bg-transparent min-w-[85px]"
+                      >
+                        Grand Total
+                        <div className="text-[9px] text-slate-500 font-normal">/ {classTotalExpectedMax}</div>
+                      </th>
+                      <th
+                        rowSpan={2}
+                        className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-emerald-50/70 print:bg-transparent min-w-[75px]"
+                      >
+                        Percentage
+                        <div className="text-[9px] text-slate-500 font-normal">%</div>
+                      </th>
+                      <th
+                        rowSpan={2}
+                        className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-slate-100 print:bg-transparent min-w-[80px]"
+                      >
+                        Attendance
+                        <div className="text-[9px] text-slate-500 font-normal">Attended / Total</div>
+                      </th>
+                      <th
+                        rowSpan={2}
+                        className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-slate-100 print:bg-transparent min-w-[80px]"
+                      >
+                        Rank
+                      </th>
+                    </tr>
+
+                    {/* Sub Header Row: TE | CE | Tot */}
+                    <tr className="border-b border-slate-200 print:border-black text-slate-700">
+                      {classSubjects.map(sub => (
+                        <React.Fragment key={`score_sub_cols_${sub.subjectId}`}>
+                          <th className="py-1 px-1 text-center border border-slate-300 print:border-black font-bold text-[10px] bg-slate-50 print:bg-slate-100">
+                            TE
+                          </th>
+                          <th className="py-1 px-1 text-center border border-slate-300 print:border-black font-bold text-[10px] bg-slate-50 print:bg-slate-100">
+                            CE
+                          </th>
+                          <th className="py-1 px-1 text-center border border-slate-300 print:border-black font-bold text-[10px] bg-slate-100 print:bg-slate-200 font-mono">
+                            Tot
+                          </th>
+                        </React.Fragment>
+                      ))}
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-slate-200 print:divide-black">
+                    {enrichedReports.map((rep, idx) => {
+                      const s = rep?.student;
+                      const rankData = classLedgerRankings.get(s?.id || '') || (s?.admissionNo ? classLedgerRankings.get(s.admissionNo) : undefined);
+                      const metrics = rankData?.metrics || calculateStudentReportMetrics(rep, classTotalExpectedMax);
+
+                      return (
+                        <tr
+                          key={s?.id || idx}
+                          className={`transition ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60 print:bg-transparent'} hover:bg-slate-100/50`}
+                        >
+                          {/* Roll No */}
+                          <td className="py-1.5 px-2 text-center font-mono font-bold text-slate-700 border border-slate-300 print:border-black">
+                            {s?.rollNo}
+                          </td>
+                          {/* Student Name */}
+                          <td className="py-1.5 px-3 text-left font-medium text-slate-900 border border-slate-300 print:border-black whitespace-nowrap">
+                            <div className="font-bold">{s?.nameEn}</div>
+                            {s?.nameMl && (
+                              <div className="text-[10px] text-slate-500 font-ml leading-tight">
+                                {s.nameMl}
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Subject Columns: TE | CE | Tot */}
+                          {classSubjects.map(subDef => {
+                            const subData = (rep.subjects || []).find(sub => sub.subjectId === subDef.subjectId);
+                            const marks = computeSubjectScoreSheetMarks(subData);
+
+                            return (
+                              <React.Fragment key={`ss_marks_${s?.id}_${subDef.subjectId}`}>
+                                {/* TE */}
+                                <td className="py-1.5 px-1 text-center border border-slate-300 print:border-black font-mono text-[11px]">
+                                  {marks.isAbsent ? (
+                                    <span className="text-red-600 font-bold">AB</span>
+                                  ) : marks.te === '—' ? (
+                                    <span className="text-slate-300 print:text-black">—</span>
+                                  ) : (
+                                    <span className={marks.isFail ? 'text-red-600 font-bold' : 'text-slate-800'}>
+                                      {marks.te}
+                                    </span>
+                                  )}
+                                </td>
+                                {/* CE */}
+                                <td className="py-1.5 px-1 text-center border border-slate-300 print:border-black font-mono text-[11px]">
+                                  {marks.isAbsent ? (
+                                    <span className="text-red-600 font-bold">AB</span>
+                                  ) : marks.ce === '—' ? (
+                                    <span className="text-slate-300 print:text-black">—</span>
+                                  ) : (
+                                    <span className="text-slate-700">{marks.ce}</span>
+                                  )}
+                                </td>
+                                {/* Tot */}
+                                <td className="py-1.5 px-1 text-center border border-slate-300 print:border-black font-mono text-[11px] font-bold bg-slate-50/60 print:bg-transparent">
+                                  {marks.isAbsent ? (
+                                    <span className="text-red-600 font-bold">AB</span>
+                                  ) : marks.tot === '—' ? (
+                                    <span className="text-slate-300 print:text-black">—</span>
+                                  ) : (
+                                    <span className={marks.isFail ? 'text-red-600 font-bold' : 'text-slate-900'}>
+                                      {marks.tot}
+                                    </span>
+                                  )}
+                                </td>
+                              </React.Fragment>
+                            );
+                          })}
+
+                          {/* Grand Total */}
+                          <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono font-bold text-emerald-950 whitespace-nowrap bg-emerald-50/20 print:bg-transparent">
+                            {metrics.displayGrandObtained} / {classTotalExpectedMax}
+                          </td>
+
+                          {/* Percentage */}
+                          <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono font-bold text-slate-800 whitespace-nowrap bg-emerald-50/20 print:bg-transparent">
+                            {metrics.percentageStr}%
+                          </td>
+
+                          {/* Attendance */}
+                          <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono text-slate-700 whitespace-nowrap">
+                            {metrics.attendanceDays} / {metrics.attendanceTotal}
+                          </td>
+
+                          {/* Rank */}
+                          <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap">
+                            {rankData?.isRankAwarded && rankData.rank !== null ? (
+                              <span className="font-mono text-emerald-900 font-bold">
+                                Rank {rankData.rank}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 font-mono text-xs">
+                                {metrics.displayResultStatus === 'Absent'
+                                  ? 'Absent'
+                                  : (metrics.displayResultStatus === 'Withheld' ? 'Withheld' : '—')}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         ) : (
           /* ========================================================= */
-          /* 2. SPREADSHEET-STYLE RESULT LEDGER TABLE VIEW             */
+          /* 3. SPREADSHEET-STYLE RESULT LEDGER TABLE VIEW             */
           /* ========================================================= */
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
             <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">

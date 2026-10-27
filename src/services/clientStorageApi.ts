@@ -3663,6 +3663,81 @@ export class ClientStorageApi {
         return this.jsonResponse({ success: true, exam, isPublished: shouldPublish });
       }
 
+      // Global Lock All Classes endpoint (Principal locks all approved mark sheets across all classes)
+      const examLockAllMatch = path.match(/^\/api\/examinations\/([^/]+)\/lock-all$/);
+      if (examLockAllMatch && method === 'POST') {
+        const [, eId] = examLockAllMatch;
+        const exam = this.db.examinations.find(e => e.id === eId);
+        if (!exam) return this.jsonResponse({ error: 'Exam not found' }, 404);
+
+        const allClassIds = this.db.classes.map(c => c.id);
+        exam.lockedClasses = Array.from(new Set([...(exam.lockedClasses || []), ...allClassIds]));
+
+        const now = new Date().toISOString();
+        const affectedSheets = this.db.markSheets.filter(
+          s => s.examinationId === eId && s.status === 'approved'
+        );
+        affectedSheets.forEach(sheet => {
+          sheet.status = 'locked';
+          sheet.lockedAt = now;
+        });
+
+        this.saveDB();
+
+        firestoreSync.syncExam(exam).catch(() => {});
+        for (const sheet of affectedSheets) {
+          firestoreSync.syncMarkSheet(sheet).catch(() => {});
+        }
+
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_exams_updated', { detail: this.db.examinations }));
+          window.dispatchEvent(new CustomEvent('madrasa_marks_updated'));
+        }
+
+        return this.jsonResponse({ success: true, exam, lockedCount: affectedSheets.length });
+      }
+
+      // Global Publish All Results endpoint (Principal publishes results for all classes)
+      const examPublishAllMatch = path.match(/^\/api\/examinations\/([^/]+)\/publish-all$/);
+      if (examPublishAllMatch && method === 'POST') {
+        const [, eId] = examPublishAllMatch;
+        const exam = this.db.examinations.find(e => e.id === eId);
+        if (!exam) return this.jsonResponse({ error: 'Exam not found' }, 404);
+
+        const allClassIds = this.db.classes.map(c => c.id);
+        exam.publishedClasses = allClassIds;
+        exam.classPublishStatus = {};
+        allClassIds.forEach(cId => {
+          exam.classPublishStatus![cId] = true;
+        });
+        exam.isPublished = true;
+        exam.status = 'published';
+        exam.publishedAt = exam.publishedAt || new Date().toISOString();
+
+        this.db.markSheets
+          .filter(s => s.examinationId === eId)
+          .forEach(sheet => {
+            (sheet as any).isPublished = true;
+            (sheet as any).publishedAt = exam.publishedAt;
+          });
+
+        this.saveDB();
+
+        firestoreSync.syncExam(exam).catch(() => {});
+        this.db.markSheets
+          .filter(s => s.examinationId === eId)
+          .forEach(sheet => {
+            firestoreSync.syncMarkSheet(sheet).catch(() => {});
+          });
+
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_exams_updated', { detail: this.db.examinations }));
+          window.dispatchEvent(new CustomEvent('madrasa_marks_updated'));
+        }
+
+        return this.jsonResponse({ success: true, exam });
+      }
+
       // 7. Mark Sheets
       if (path === '/api/mark-sheets' && method === 'GET') {
         const examId = params.get('examinationId');
@@ -3812,21 +3887,23 @@ export class ClientStorageApi {
               ...(sheet.studentMarks || {}),
               ...bodyData.studentMarks,
             };
-          } else if (bodyData.studentId && bodyData.componentKey) {
+          } else if (bodyData.studentId && (bodyData.componentKey || bodyData.isAbsent !== undefined)) {
             const sId = bodyData.studentId;
             const existingMarks = sheet.studentMarks || {};
             const existingEntry = existingMarks[sId] || { studentId: sId, isAbsent: false, componentMarks: {} };
             const compMarks = { ...(existingEntry.componentMarks || {}) };
-            compMarks[bodyData.componentKey] = Number(bodyData.newMark);
-            const sum = Object.values(compMarks).reduce((acc: number, v: any) => acc + (Number(v) || 0), 0);
+            if (bodyData.componentKey) {
+              compMarks[bodyData.componentKey] = Number(bodyData.newMark);
+            }
+            const isAb = bodyData.isAbsent !== undefined ? Boolean(bodyData.isAbsent) : !!existingEntry.isAbsent;
+            const sum = isAb ? 0 : Object.values(compMarks).reduce((acc: number, v: any) => acc + (Number(v) || 0), 0);
             sheet.studentMarks = {
               ...existingMarks,
               [sId]: {
                 ...existingEntry,
                 studentId: sId,
-                isAbsent: false,
-                componentMarks: compMarks,
-                [bodyData.componentKey]: Number(bodyData.newMark),
+                isAbsent: isAb,
+                componentMarks: isAb ? {} : compMarks,
                 subjectTotal: sum,
                 total: sum,
                 lastCorrectedAt: new Date().toISOString(),
