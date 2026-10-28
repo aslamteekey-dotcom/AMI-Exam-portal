@@ -31,29 +31,29 @@ export const Navbar: React.FC = () => {
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs print:hidden">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+        <div className="flex items-center justify-between h-16 gap-2 sm:gap-4">
           {/* Brand Logo & Name */}
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-800 flex items-center justify-center text-white shadow-sm shrink-0">
-              <GraduationCap className="w-6 h-6" />
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-emerald-800 flex items-center justify-center text-white shadow-sm shrink-0">
+              <GraduationCap className="w-4 h-4 sm:w-6 sm:h-6" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className={`font-bold text-slate-900 text-sm sm:text-base leading-tight tracking-tight ${lang === 'ml' ? 'font-ml' : 'font-title'}`}>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <span className={`font-bold text-slate-900 text-xs sm:text-base leading-tight tracking-tight truncate block ${lang === 'ml' ? 'font-ml' : 'font-title'}`}>
                   {lang === 'ml' ? 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്' : 'Al-Madrasathul Islamiya Pallikkuth'}
                 </span>
-                <span className="hidden sm:inline-block text-[10px] bg-emerald-100 text-emerald-900 font-semibold px-1.5 py-0.5 rounded">
+                <span className="hidden sm:inline-block text-[10px] bg-emerald-100 text-emerald-900 font-semibold px-1.5 py-0.5 rounded shrink-0">
                   2026–2027
                 </span>
               </div>
-              <div className="text-[11px] text-slate-500 font-medium leading-none mt-0.5">
+              <div className="text-[10px] sm:text-xs text-slate-500 font-medium leading-tight mt-0.5 truncate sm:overflow-visible">
                 Islamic Education &amp; Digital Learning
               </div>
             </div>
           </div>
 
           {/* Controls: Storage Mode, Language, Switch Role Demo, User Info, Logout */}
-          <div className="flex items-center gap-2 sm:gap-4">
+          <div className="flex items-center gap-1.5 sm:gap-4 shrink-0">
             {/* Storage Mode Badge */}
             {isQuotaExhausted ? (
               <div

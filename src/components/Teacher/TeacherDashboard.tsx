@@ -2647,8 +2647,21 @@ export const TeacherDashboard: React.FC = () => {
   // Consolidated class marksheet calculations with dense ranking
   const classMarksheetData = useMemo(() => {
     if (!inChargeClass || inChargeStudents.length === 0) return [];
+
+    const classGrade = inChargeClass?.numericGrade;
+    const isClass2or3 =
+      inChargeClass?.name === 'Class 2' ||
+      inChargeClass?.name === 'Class 3' ||
+      classGrade === 2 ||
+      classGrade === 3 ||
+      String(inChargeClass?.id).replace(/\D/g, '') === '2' ||
+      String(inChargeClass?.id).replace(/\D/g, '') === '3';
+
     const getSubjectMax = (s: SubjectItem) => {
-      const compSum = (s.defaultComponents || []).reduce((acc, c) => acc + (c.maxMarks || 0), 0);
+      const comps =
+        (classGrade && s.classComponentOverrides?.[classGrade]) ||
+        (s.defaultComponents && s.defaultComponents.length > 0 ? s.defaultComponents : []);
+      const compSum = comps.reduce((acc, c) => acc + (c.maxMarks || 0), 0);
       return (s as any).maxMarks || (compSum > 0 ? compSum : 50);
     };
     const expectedMax = inChargeSubjects.reduce((acc, s) => acc + getSubjectMax(s), 0) || 400;
@@ -2714,15 +2727,22 @@ export const TeacherDashboard: React.FC = () => {
           subjectMarksMap[sub.id] = { value: 'AB', te: 'AB', ce: 'AB', tot: 'AB', isAbsent: true, max, isFail: true, isWithheld: false };
         } else {
           anyMarkEntered = true;
-          const compMarks = entry.componentMarks || {};
+          const compMarks = entry.componentMarks || (entry as any).marks || {};
+          const isSubTilawah =
+            sub.id === 'sub_tilawah' ||
+            sub.code === 'TIL' ||
+            (sub.nameEn && /tilaw/i.test(sub.nameEn)) ||
+            (sub.nameMl && sub.nameMl.includes('തിലാവ'));
+
           const configuredComponents =
-            sub.defaultComponents && sub.defaultComponents.length > 0
+            (classGrade && sub.classComponentOverrides?.[classGrade]) ||
+            (sub.defaultComponents && sub.defaultComponents.length > 0
               ? sub.defaultComponents
               : [
                   { componentKey: 'written', labelEn: 'OMR', maxMarks: 20 },
                   { componentKey: 'oral', labelEn: 'OCR', maxMarks: 20 },
                   { componentKey: 'ce', labelEn: 'CIE', maxMarks: 10 },
-                ];
+                ]);
 
           let writtenTotal = 0;
           let maxWritten = 0;
@@ -2732,7 +2752,7 @@ export const TeacherDashboard: React.FC = () => {
 
           configuredComponents.forEach((c, idx) => {
             const k = (c.componentKey || '').toLowerCase();
-            const val = compMarks[c.componentKey];
+            const val = compMarks[c.componentKey] ?? (entry as any)[c.componentKey] ?? (entry as any).marks?.[c.componentKey];
             const numVal = (val as any) !== '' && val !== undefined && !isNaN(Number(val)) ? Number(val) : 0;
             const isCie =
               k === 'ce' ||
@@ -2751,8 +2771,48 @@ export const TeacherDashboard: React.FC = () => {
             }
           });
 
+          // CRITICAL: Synchronize Tilawah TE calculation logic for Classes 2 & 3
+          // In Classes 2 & 3, Tilawah TE must equal the primary exam component (e.g. tilawah) PLUS the tilawati component.
+          // For Classes 4 and above, strictly preserve the existing logic (where Tilawah TE incorporates 'Tajweed').
+          if (isClass2or3 && isSubTilawah) {
+            const tilawahRaw =
+              compMarks['tilawah'] ??
+              compMarks['oral'] ??
+              compMarks['written'] ??
+              (entry as any).marks?.tilawah ??
+              (entry as any).marks?.oral ??
+              (entry as any).tilawah;
+            const tilawatiRaw =
+              compMarks['tilawati'] ??
+              (entry as any).marks?.tilawati ??
+              (entry as any).tilawati;
+
+            const tilawahNum =
+              (tilawahRaw as any) !== '' && tilawahRaw !== undefined && !isNaN(Number(tilawahRaw))
+                ? Number(tilawahRaw)
+                : 0;
+            const tilawatiNum =
+              (tilawatiRaw as any) !== '' && tilawatiRaw !== undefined && !isNaN(Number(tilawatiRaw))
+                ? Number(tilawatiRaw)
+                : 0;
+
+            // TE = primary component (tilawah) + tilawati
+            writtenTotal = tilawahNum + tilawatiNum;
+            maxWritten = 40; // 30 (oral/tilawah) + 10 (tilawati)
+
+            const ceRaw = compMarks['ce'] ?? (entry as any).marks?.ce ?? (entry as any).ce;
+            if ((ceRaw as any) !== '' && ceRaw !== undefined && !isNaN(Number(ceRaw))) {
+              cieMark = Number(ceRaw);
+              hasCie = true;
+            }
+            if (maxCie === 0) maxCie = 10;
+          }
+
           // Subject Grand Total = writtenTotal + CIE
-          const hasComponentEntries = Object.keys(compMarks).length > 0;
+          const hasComponentEntries =
+            Object.keys(compMarks).length > 0 ||
+            (isClass2or3 && isSubTilawah && (compMarks['tilawah'] !== undefined || compMarks['tilawati'] !== undefined || (entry as any).marks?.tilawati !== undefined));
+
           const total = hasComponentEntries
             ? writtenTotal + cieMark
             : typeof entry.subjectTotal === 'number' && !isNaN(entry.subjectTotal)
@@ -2909,7 +2969,9 @@ export const TeacherDashboard: React.FC = () => {
     inChargeSubjects,
     markSheets,
     selectedExamId,
+    selectedExam,
     classAttendanceConfig,
+    allAttendanceConfigs,
     attendanceTotalWorkingDays,
     studentDaysAttendedMap,
   ]);
@@ -3211,12 +3273,20 @@ export const TeacherDashboard: React.FC = () => {
                   <span className="text-slate-400 text-xs">•</span>
                   <span className="text-xs text-slate-500 font-mono">Academic Year 2026–2027</span>
                 </div>
-                <h2 className="text-lg sm:text-xl font-bold text-slate-900 font-serif mt-1">
-                  Assalamu Alaikum, {user?.name || 'Usthad'}
-                </h2>
-                <p className="text-xs text-slate-500 mt-1 leading-relaxed max-w-2xl">
-                  Welcome to your teaching and academic management console at Al-Madrasathul Islamiya Pallikkuth.
-                  Manage marks, record daily student attendance, monitor tuition fees, and publish official announcements.
+                <div className="flex flex-col mb-2 mt-2">
+                  <span className="text-lg md:text-xl font-medium text-gray-600">
+                    {lang?.toLowerCase() === 'ml' ? 'അസ്സലാമു അലൈക്കും,' : 'Assalamu Alaikum,'}
+                  </span>
+                  <span className={`text-2xl md:text-3xl font-bold text-gray-900 ${lang?.toLowerCase() === 'ml' ? 'font-ml' : ''}`}>
+                    {lang?.toLowerCase() === 'ml' && (user?.nameMl || (user as any)?.name_ml)
+                      ? (user?.nameMl || (user as any)?.name_ml)
+                      : (user?.name || 'Usthad')}
+                  </span>
+                </div>
+                <p className={`text-xs text-slate-500 mt-1 leading-relaxed max-w-2xl ${lang?.toLowerCase() === 'ml' ? 'font-ml' : ''}`}>
+                  {lang?.toLowerCase() === 'ml'
+                    ? 'പോർട്ടലിലേക്ക് സ്വാഗതം! സാങ്കേതികവിദ്യ നിങ്ങളുടെ ദൈനംദിന കാര്യങ്ങൾ എളുപ്പമാക്കട്ടെ. അതുവഴി ലാഭിക്കുന്ന സമയം, നിങ്ങളുടെ മഹത്തായ ഉത്തരവാദിത്വമായ വിദ്യാർത്ഥികളെ വാർത്തെടുക്കുന്നതിനായി പൂർണ്ണമായും വിനിയോഗിക്കാൻ നിങ്ങൾക്ക് കഴിയും.'
+                    : 'Welcome to your portal. Let technology handle the routine tasks and save your valuable time, empowering you to dedicate yourself to your noble responsibility of shaping young minds.'}
                 </p>
               </div>
 
@@ -3224,7 +3294,7 @@ export const TeacherDashboard: React.FC = () => {
                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 sm:text-right shrink-0">
                   <span className="text-[10px] uppercase font-bold text-emerald-700 block">Class In-Charge</span>
                   <span className="text-sm font-bold text-emerald-950 mt-0.5 block">
-                    {inChargeClass.name} ({inChargeClass.nameMl})
+                    {(inChargeClass.name || '').replace(/\s*\([^)]*\)/g, '').trim()}
                   </span>
                   <span className="text-xs text-emerald-800 font-mono font-medium block">
                     {inChargeStudents.length} Students Enrolled
