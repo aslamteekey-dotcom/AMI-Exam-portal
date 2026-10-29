@@ -184,6 +184,8 @@ export const numberToWords = (num: number): string => {
 export const TeacherDashboard: React.FC = () => {
   const { user, fetchWithAuth, lang, t } = useAuth();
   const isMl = lang === 'ml';
+  const language = (lang || 'en').toUpperCase();
+  const teacher = user;
   const [loading, setLoading] = useState(true);
 
   // Tab State: 1. Home, 2. My Class, 3. Mark Entry, 4. Attendance, 5. Fees, 6. Special Fees, 7. News, 8. Notification, 9. Contact, 10. About
@@ -3273,14 +3275,12 @@ export const TeacherDashboard: React.FC = () => {
                   <span className="text-slate-400 text-xs">•</span>
                   <span className="text-xs text-slate-500 font-mono">Academic Year 2026–2027</span>
                 </div>
-                <div className="flex flex-col mb-2 mt-2">
+                <div className="flex flex-col mb-2">
                   <span className="text-lg md:text-xl font-medium text-gray-600">
-                    {lang?.toLowerCase() === 'ml' ? 'അസ്സലാമു അലൈക്കും,' : 'Assalamu Alaikum,'}
+                    {language === 'ML' ? 'അസ്സലാമു അലൈക്കും,' : 'Assalamu Alaikum,'}
                   </span>
-                  <span className={`text-2xl md:text-3xl font-bold text-gray-900 ${lang?.toLowerCase() === 'ml' ? 'font-ml' : ''}`}>
-                    {lang?.toLowerCase() === 'ml' && (user?.nameMl || (user as any)?.name_ml)
-                      ? (user?.nameMl || (user as any)?.name_ml)
-                      : (user?.name || 'Usthad')}
+                  <span className={`text-2xl md:text-3xl font-bold text-gray-900 ${language === 'ML' ? 'font-ml' : ''}`}>
+                    {language === 'ML' && teacher?.nameMl ? teacher.nameMl : (teacher?.name || 'Usthad')}
                   </span>
                 </div>
                 <p className={`text-xs text-slate-500 mt-1 leading-relaxed max-w-2xl ${lang?.toLowerCase() === 'ml' ? 'font-ml' : ''}`}>
@@ -3553,10 +3553,12 @@ export const TeacherDashboard: React.FC = () => {
                     <span className="text-xs text-slate-400">• Full View &amp; Edit Permissions</span>
                   </div>
                   <h2 className="text-xl font-bold text-slate-900 mt-1">
-                    {inChargeClass.name} ({inChargeClass.nameMl}) Student Roster
+                    {(inChargeClass.name || '').replace(/\s*\([^)]*\)/g, '').trim()} Student Roster
                   </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Manage student profiles with instant edit and remove capabilities. Boys sorted A-Z first, followed by Girls A-Z.
+                  <p className={`text-xs text-slate-500 mt-0.5 ${language === 'ML' ? 'font-ml' : ''}`}>
+                    {language === 'ML'
+                      ? 'കുട്ടികളുടെ വിവരങ്ങൾ എളുപ്പത്തിൽ മാനേജ് ചെയ്യാനും, ക്ലാസിലെ മുഴുവൻ വിദ്യാർത്ഥികളുടെയും മാർക്ക് ഷീറ്റ് ഒറ്റനോട്ടത്തിൽ കാണാനും ഇവിടെ സാധിക്കും.'
+                      : 'Easily manage student profiles and access the consolidated class marksheet.'}
                   </p>
                 </div>
 
@@ -3598,20 +3600,20 @@ export const TeacherDashboard: React.FC = () => {
 
               {/* View Toggle Bar: Students List vs Marksheet */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-2.5 rounded-2xl border border-slate-200 shadow-2xs print:hidden no-print">
-                <div className="flex items-center gap-1.5 p-1 bg-slate-100/90 rounded-xl">
+                <div className="flex items-center gap-1 sm:gap-1.5 p-1 bg-slate-100/90 rounded-xl overflow-x-auto max-w-full">
                   <button
                     type="button"
                     onClick={() => setMyClassViewMode('students')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    className={`flex flex-row items-center justify-center whitespace-nowrap gap-1 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer shrink-0 ${
                       myClassViewMode === 'students'
                         ? 'bg-emerald-800 text-white shadow-xs'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
                     }`}
                   >
-                    <Users className="w-4 h-4" />
-                    <span>Students List</span>
+                    <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                    <span className="whitespace-nowrap">Students List</span>
                     <span
-                      className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                      className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold whitespace-nowrap shrink-0 ${
                         myClassViewMode === 'students'
                           ? 'bg-emerald-950/60 text-emerald-200'
                           : 'bg-slate-200 text-slate-700'
@@ -3624,16 +3626,16 @@ export const TeacherDashboard: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setMyClassViewMode('marksheet')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    className={`flex flex-row items-center justify-center whitespace-nowrap gap-1 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer shrink-0 ${
                       myClassViewMode === 'marksheet'
                         ? 'bg-emerald-800 text-white shadow-xs'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
                     }`}
                   >
-                    <BarChart2 className="w-4 h-4" />
-                    <span>Marksheet</span>
+                    <BarChart2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                    <span className="whitespace-nowrap">Marksheet</span>
                     <span
-                      className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                      className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold whitespace-nowrap shrink-0 ${
                         myClassViewMode === 'marksheet'
                           ? 'bg-emerald-950/60 text-emerald-200'
                           : 'bg-slate-200 text-slate-700'
@@ -3645,7 +3647,7 @@ export const TeacherDashboard: React.FC = () => {
                 </div>
 
                 <div className="text-xs text-slate-500 pr-2 hidden sm:flex items-center gap-2 font-medium">
-                  <span className="font-bold text-slate-700">{inChargeClass.name}</span>
+                  <span className="font-bold text-slate-700">{(inChargeClass.name || '').replace(/\s*\([^)]*\)/g, '').trim()}</span>
                   <span>•</span>
                   <span>{selectedExam?.nameEn || 'Active Examination'}</span>
                 </div>
@@ -3656,12 +3658,21 @@ export const TeacherDashboard: React.FC = () => {
                 <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                     <div>
-                      <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                        <Users className="w-4 h-4 text-emerald-800" />
-                        <span>{inChargeClass.name} Students List ({inChargeStudents.length})</span>
-                      </h3>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Click the pencil icon to modify student details. Boys sorted A-Z first, followed by Girls A-Z.
+                      {(() => {
+                        const boysCount = inChargeStudents.filter(s => s.gender?.toLowerCase() === 'boy' || normalizeGender(s.gender) === 'Boy').length;
+                        const girlsCount = inChargeStudents.filter(s => s.gender?.toLowerCase() === 'girl' || normalizeGender(s.gender) === 'Girl').length;
+                        const cleanClassName = (inChargeClass.name || '').replace(/\s*\([^)]*\)/g, '').trim();
+                        return (
+                          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                            <Users className="w-4 h-4 text-emerald-800 shrink-0" />
+                            <span>{cleanClassName || inChargeClass.name} Students List (B-{boysCount} + G-{girlsCount})</span>
+                          </h3>
+                        );
+                      })()}
+                      <p className={`text-xs text-slate-500 mt-0.5 ${language === 'ML' ? 'font-ml' : ''}`}>
+                        {language === 'ML'
+                          ? 'കുട്ടികളുടെ വിവരങ്ങൾ എളുപ്പത്തിൽ തിരുത്താനും ഒഴിവാക്കാനും സാധിക്കും.'
+                          : 'Easily edit or remove student profiles.'}
                       </p>
                     </div>
                   </div>
@@ -3802,25 +3813,30 @@ export const TeacherDashboard: React.FC = () => {
                   <style>{`
                     @media print {
                       @page { size: A4 landscape; margin: 5mm; }
+                      .overflow-x-auto { overflow: visible !important; }
                       .score-sheet-container {
                         width: 100% !important;
                         padding: 0 !important;
                         margin: 0 !important;
                       }
-                      .score-sheet-table { 
+                      .score-sheet-table, table { 
                         width: 100% !important; 
+                        min-width: auto !important; 
+                        table-layout: auto !important;
                         border-collapse: collapse !important; 
                         font-size: 8pt !important;
                       }
-                      .score-sheet-table th, .score-sheet-table td { 
+                      .score-sheet-table th.subject-name, th.subject-name {
+                        white-space: normal !important; 
+                        font-size: 7.5pt !important;
+                        padding: 2px !important;
+                      }
+                      .score-sheet-table th, .score-sheet-table td, td, th { 
                         border: 1px solid #000 !important; 
                         padding: 1px 2px !important; 
                         text-align: center !important; 
                         white-space: nowrap !important; 
-                      }
-                      .score-sheet-table th.subject-name {
-                        white-space: normal !important; 
-                        font-size: 7.5pt !important;
+                        font-size: 8pt !important;
                       }
                       .no-print { display: none !important; }
                     }
@@ -3830,13 +3846,15 @@ export const TeacherDashboard: React.FC = () => {
                     <div>
                       <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                         <BarChart2 className="w-4 h-4 text-emerald-800" />
-                        <span>{inChargeClass.name} Examination Score Sheet</span>
+                        <span>{(inChargeClass.name || '').replace(/\s*\([^)]*\)/g, '').trim()} Examination Score Sheet</span>
                         <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
                           {selectedExam?.nameEn || 'Active Exam'}
                         </span>
                       </h3>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Consolidated class score sheet across all {inChargeSubjects.length} subjects (TE/CE structure) with dense rank, attendance, and grand totals.
+                      <p className={`text-xs text-slate-500 mt-0.5 ${language === 'ML' ? 'font-ml' : ''}`}>
+                        {language === 'ML'
+                          ? 'ക്ലാസിലെ മുഴുവൻ കുട്ടികളുടെയും പൂർണ്ണമായ മാർക്ക് ഷീറ്റ് ഇവിടെ കാണാം.'
+                          : 'View the consolidated marksheet of the entire class.'}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 text-xs">
@@ -3903,20 +3921,20 @@ export const TeacherDashboard: React.FC = () => {
                         </div>
                       </div>
 
-                      <div className="overflow-x-auto relative w-full scrollbar-thin">
-                        <table className="score-sheet-table w-full text-center text-xs border-collapse">
+                      <div className="w-full overflow-x-auto pb-4 scrollbar-thin">
+                        <table className="score-sheet-table w-full min-w-max border-collapse text-center text-xs">
                           <thead className="bg-slate-100 print:bg-slate-50">
                             {/* Top Header Row */}
                             <tr className="border-b border-slate-200 print:border-black text-slate-800 font-semibold">
                               <th
                                 rowSpan={2}
-                                className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold w-12 bg-slate-100 print:bg-slate-50 font-mono"
+                                className="py-2 px-3 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap w-12 bg-slate-100 print:bg-slate-50 font-mono"
                               >
                                 Roll No
                               </th>
                               <th
                                 rowSpan={2}
-                                className="py-2 px-3 text-left border border-slate-300 print:border-black font-bold min-w-[170px] bg-slate-100 print:bg-slate-50"
+                                className="py-2 px-4 text-left border border-slate-300 print:border-black font-bold whitespace-nowrap min-w-[180px] bg-slate-100 print:bg-slate-50"
                               >
                                 Student Name
                               </th>
@@ -3931,10 +3949,10 @@ export const TeacherDashboard: React.FC = () => {
                                   <th
                                     key={sub.id}
                                     colSpan={3}
-                                    className="subject-name py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-slate-100 print:bg-slate-50"
+                                    className="subject-name py-2 px-3 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap bg-slate-100 print:bg-slate-50"
                                   >
-                                    <div className="font-bold text-slate-900 leading-tight">{subName}</div>
-                                    <div className="text-[10px] text-slate-500 font-mono font-normal print:text-black">
+                                    <div className="font-bold text-slate-900 leading-tight whitespace-nowrap">{subName}</div>
+                                    <div className="text-[10px] text-slate-500 font-mono font-normal print:text-black whitespace-nowrap">
                                       {sub.code} ({sub.defaultComponents?.reduce((acc, c) => acc + (c.maxMarks || 0), 0) || (sub as any).maxMarks || 50})
                                     </div>
                                   </th>
@@ -3944,21 +3962,21 @@ export const TeacherDashboard: React.FC = () => {
                               {/* Summary Columns */}
                               <th
                                 rowSpan={2}
-                                className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-emerald-50/70 print:bg-transparent min-w-[85px]"
+                                className="py-2 px-3 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap bg-emerald-50/70 print:bg-transparent min-w-[85px]"
                               >
                                 Grand Total
                                 <div className="text-[9px] text-slate-500 font-normal">/ {classMarksheetData[0]?.expectedMax || inChargeSubjects.length * 50}</div>
                               </th>
                               <th
                                 rowSpan={2}
-                                className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-emerald-50/70 print:bg-transparent min-w-[75px]"
+                                className="py-2 px-3 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap bg-emerald-50/70 print:bg-transparent min-w-[75px]"
                               >
                                 Percentage
                                 <div className="text-[9px] text-slate-500 font-normal">%</div>
                               </th>
                               <th
                                 rowSpan={2}
-                                className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-slate-100 print:bg-transparent min-w-[80px]"
+                                className="py-2 px-3 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap bg-slate-100 print:bg-transparent min-w-[80px]"
                               >
                                 Attendance
                                 <div className="text-[9px] text-slate-500 font-normal">
@@ -3967,7 +3985,7 @@ export const TeacherDashboard: React.FC = () => {
                               </th>
                               <th
                                 rowSpan={2}
-                                className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-slate-100 print:bg-transparent min-w-[80px]"
+                                className="py-2 px-3 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap bg-slate-100 print:bg-transparent min-w-[80px]"
                               >
                                 Rank
                               </th>
@@ -3977,13 +3995,13 @@ export const TeacherDashboard: React.FC = () => {
                             <tr className="border-b border-slate-200 print:border-black text-slate-700">
                               {inChargeSubjects.map(sub => (
                                 <React.Fragment key={`tch_score_sub_cols_${sub.id}`}>
-                                  <th className="py-1 px-1 text-center border border-slate-300 print:border-black font-bold text-[10px] bg-slate-50 print:bg-slate-100">
+                                  <th className="py-1.5 px-3 text-center border border-slate-300 print:border-black font-bold text-[10px] whitespace-nowrap bg-slate-50 print:bg-slate-100">
                                     TE
                                   </th>
-                                  <th className="py-1 px-1 text-center border border-slate-300 print:border-black font-bold text-[10px] bg-slate-50 print:bg-slate-100">
+                                  <th className="py-1.5 px-3 text-center border border-slate-300 print:border-black font-bold text-[10px] whitespace-nowrap bg-slate-50 print:bg-slate-100">
                                     CE
                                   </th>
-                                  <th className="py-1 px-1 text-center border border-slate-300 print:border-black font-bold text-[10px] bg-slate-100 print:bg-slate-200 font-mono">
+                                  <th className="py-1.5 px-3 text-center border border-slate-300 print:border-black font-bold text-[10px] whitespace-nowrap bg-slate-100 print:bg-slate-200 font-mono">
                                     Tot
                                   </th>
                                 </React.Fragment>
@@ -4001,12 +4019,12 @@ export const TeacherDashboard: React.FC = () => {
                                   className={`transition ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60 print:bg-transparent'} hover:bg-slate-100/50`}
                                 >
                                   {/* Roll No */}
-                                  <td className="py-1.5 px-2 text-center font-bold font-mono text-slate-700 border border-slate-300 print:border-black">
+                                  <td className="py-2 px-3 text-center font-bold font-mono text-slate-700 border border-slate-300 print:border-black whitespace-nowrap">
                                     {st.rollNo}
                                   </td>
 
                                   {/* Student Name */}
-                                  <td className="py-1.5 px-3 text-left font-medium text-slate-900 border border-slate-300 print:border-black whitespace-nowrap">
+                                  <td className="py-2 px-4 text-left font-medium text-slate-900 border border-slate-300 print:border-black whitespace-nowrap">
                                     <div className="font-bold">{st.nameEn}</div>
                                     {st.nameMl && (
                                       <div className="text-[10px] text-slate-500 font-ml leading-tight">
@@ -4026,7 +4044,7 @@ export const TeacherDashboard: React.FC = () => {
                                     return (
                                       <React.Fragment key={`tch_ss_marks_${st.id}_${sub.id}`}>
                                         {/* TE */}
-                                        <td className="py-1.5 px-1 text-center border border-slate-300 print:border-black font-mono text-[11px]">
+                                        <td className="py-2 px-3 text-center border border-slate-300 print:border-black font-mono text-[11px] whitespace-nowrap">
                                           {isAb ? (
                                             <span className="text-red-600 font-bold">AB</span>
                                           ) : teVal === '—' || teVal === undefined ? (
@@ -4038,7 +4056,7 @@ export const TeacherDashboard: React.FC = () => {
                                           )}
                                         </td>
                                         {/* CE */}
-                                        <td className="py-1.5 px-1 text-center border border-slate-300 print:border-black font-mono text-[11px]">
+                                        <td className="py-2 px-3 text-center border border-slate-300 print:border-black font-mono text-[11px] whitespace-nowrap">
                                           {isAb ? (
                                             <span className="text-red-600 font-bold">AB</span>
                                           ) : ceVal === '—' || ceVal === undefined ? (
@@ -4048,7 +4066,7 @@ export const TeacherDashboard: React.FC = () => {
                                           )}
                                         </td>
                                         {/* Tot */}
-                                        <td className="py-1.5 px-1 text-center border border-slate-300 print:border-black font-mono text-[11px] font-bold bg-slate-50/60 print:bg-transparent">
+                                        <td className="py-2 px-3 text-center border border-slate-300 print:border-black font-mono text-[11px] font-bold whitespace-nowrap bg-slate-50/60 print:bg-transparent">
                                           {isAb ? (
                                             <span className="text-red-600 font-bold">AB</span>
                                           ) : totVal === '—' || totVal === undefined ? (
@@ -4064,22 +4082,22 @@ export const TeacherDashboard: React.FC = () => {
                                   })}
 
                                   {/* Summary Column 1: Grand Total */}
-                                  <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono font-bold text-emerald-950 whitespace-nowrap bg-emerald-50/20 print:bg-transparent">
+                                  <td className="py-2 px-3 text-center border border-slate-300 print:border-black font-mono font-bold text-emerald-950 whitespace-nowrap bg-emerald-50/20 print:bg-transparent">
                                     {row.studentObtained}
                                   </td>
 
                                   {/* Summary Column 2: Percentage */}
-                                  <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono font-bold text-slate-800 whitespace-nowrap bg-emerald-50/20 print:bg-transparent">
+                                  <td className="py-2 px-3 text-center border border-slate-300 print:border-black font-mono font-bold text-slate-800 whitespace-nowrap bg-emerald-50/20 print:bg-transparent">
                                     {row.percentage}%
                                   </td>
 
                                   {/* Summary Column 3: Attendance */}
-                                  <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono text-slate-700 whitespace-nowrap">
+                                  <td className="py-2 px-3 text-center border border-slate-300 print:border-black font-mono text-slate-700 whitespace-nowrap">
                                     {row.daysAttended}
                                   </td>
 
                                   {/* Summary Column 4: Dense Rank / Status */}
-                                  <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap">
+                                  <td className="py-2 px-3 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap">
                                     <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-bold ${row.badgeClass}`}>
                                       {row.rankOrStatusText}
                                     </span>
@@ -4509,8 +4527,10 @@ export const TeacherDashboard: React.FC = () => {
                               }
                               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer ${
                                 status === 'submitted'
-                                  ? 'bg-blue-800 hover:bg-blue-900 text-white'
-                                  : 'bg-emerald-800 hover:bg-emerald-900 text-white'
+                                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                                  : status === 'approved' || status === 'locked' || !isMyAssignedSubject
+                                  ? 'bg-emerald-700 hover:bg-emerald-800 text-white'
+                                  : 'bg-orange-600 hover:bg-orange-700 text-white'
                               }`}
                             >
                               <Edit3 className="w-3.5 h-3.5" />
@@ -4647,7 +4667,13 @@ export const TeacherDashboard: React.FC = () => {
                                 examinationId: selectedExamId,
                               })
                             }
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs cursor-pointer"
+                            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer ${
+                              status === 'submitted' && isMyClassInCharge
+                                ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                                : status === 'submitted' || status === 'approved' || status === 'locked'
+                                ? 'bg-emerald-700 hover:bg-emerald-800 text-white'
+                                : 'bg-orange-600 hover:bg-orange-700 text-white'
+                            }`}
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                             {status === 'submitted' && isMyClassInCharge
@@ -4925,7 +4951,7 @@ export const TeacherDashboard: React.FC = () => {
                 {showRequestSentToast && (
                   <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-amber-100 text-amber-950 border border-amber-300 animate-fade-in shadow-2xs">
                     <Clock className="w-4 h-4 text-amber-700 animate-spin" />
-                    <span>⏳ Request Sent - Pending Approval</span>
+                    <span>Request Sent - Pending Approval</span>
                   </div>
                 )}
               </div>
@@ -5116,7 +5142,7 @@ export const TeacherDashboard: React.FC = () => {
                             {reqForDate?.status === 'pending' ? (
                               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-950 border border-amber-300 shadow-2xs">
                                 <Clock className="w-3.5 h-3.5 text-amber-700 animate-spin" />
-                                ⏳ Request Sent - Pending Approval
+                                Request Sent - Pending Approval
                               </span>
                             ) : reqForDate?.status === 'rejected' ? (
                               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-900 border border-rose-300 shadow-2xs">
@@ -5126,7 +5152,7 @@ export const TeacherDashboard: React.FC = () => {
                             ) : (
                               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
                                 <CheckCircle className="w-3.5 h-3.5 text-emerald-700" />
-                                ✓ Attendance Marked (Locked)
+                                Attendance Marked (Locked)
                               </span>
                             )}
                             <span className="text-[10px] text-slate-400 font-normal">
@@ -5136,7 +5162,7 @@ export const TeacherDashboard: React.FC = () => {
                         ) : isDailyEditing ? (
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
                             <Unlock className="w-3.5 h-3.5 text-emerald-700" />
-                            🔓 Unlocked by Principal - You can now edit and save attendance.
+                            Unlocked by Principal - You can now edit and save attendance.
                           </span>
                         ) : (
                           <span className="text-[11px] text-slate-400 font-normal">
@@ -5221,7 +5247,7 @@ export const TeacherDashboard: React.FC = () => {
                               reqForDate?.status === 'pending' ? (
                                 <div className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-amber-950 bg-amber-100 rounded-xl border border-amber-300 shadow-2xs">
                                   <Clock className="w-4 h-4 text-amber-700 animate-spin" />
-                                  <span>⏳ Request Sent - Pending Approval</span>
+                                  <span>Request Sent - Pending Approval</span>
                                 </div>
                               ) : (
                                 <button
@@ -5828,12 +5854,12 @@ export const TeacherDashboard: React.FC = () => {
                                     <div className="space-y-0.5">
                                       {getRequestForDate(d.dateStr, attendanceClassId)?.status === 'pending' ? (
                                         <span className="inline-flex items-center gap-0.5 text-[8.5px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-950 border border-amber-300 shadow-2xs" title="Unlock request pending Principal approval">
-                                          ⏳ Pending
+                                          Pending
                                         </span>
                                       ) : (
                                         <div className="flex items-center justify-center gap-1">
                                           <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                                            ✓ Locked
+                                            Locked
                                           </span>
                                           <button
                                             type="button"

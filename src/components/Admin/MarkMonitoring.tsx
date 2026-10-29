@@ -435,7 +435,7 @@ export const MarkMonitoring: React.FC = () => {
                 title="Updates the status of all approved subjects across ALL classes to locked"
               >
                 <Lock className="w-3.5 h-3.5" />
-                <span>{actionLoading === 'global_lock' ? 'Locking All...' : '🔒 Lock All Classes'}</span>
+                <span>{actionLoading === 'global_lock' ? 'Locking All...' : 'Lock All Classes'}</span>
               </button>
 
               <button
@@ -446,7 +446,7 @@ export const MarkMonitoring: React.FC = () => {
                 title="Updates the isPublished flag to true for ALL classes in the active examination"
               >
                 <Globe className="w-3.5 h-3.5" />
-                <span>{actionLoading === 'global_publish' ? 'Publishing All...' : '📢 Publish All Results'}</span>
+                <span>{actionLoading === 'global_publish' ? 'Publishing All...' : 'Publish All Results'}</span>
               </button>
             </div>
           </div>

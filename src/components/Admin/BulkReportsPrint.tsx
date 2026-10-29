@@ -926,25 +926,30 @@ export const BulkReportsPrint: React.FC = () => {
             <style>{`
               @media print {
                 @page { size: A4 landscape; margin: 5mm; }
+                .overflow-x-auto { overflow: visible !important; }
                 .score-sheet-container {
                   width: 100% !important;
                   padding: 0 !important;
                   margin: 0 !important;
                 }
-                .score-sheet-table { 
+                .score-sheet-table, table { 
                   width: 100% !important; 
+                  min-width: auto !important; 
+                  table-layout: auto !important;
                   border-collapse: collapse !important; 
                   font-size: 8pt !important;
                 }
-                .score-sheet-table th, .score-sheet-table td { 
+                .score-sheet-table th.subject-name, th.subject-name {
+                  white-space: normal !important; 
+                  font-size: 7.5pt !important;
+                  padding: 2px !important;
+                }
+                .score-sheet-table th, .score-sheet-table td, td, th { 
                   border: 1px solid #000 !important; 
                   padding: 1px 2px !important; 
                   text-align: center !important; 
                   white-space: nowrap !important; 
-                }
-                .score-sheet-table th.subject-name {
-                  white-space: normal !important; 
-                  font-size: 7.5pt !important;
+                  font-size: 8pt !important;
                 }
                 .no-print { display: none !important; }
               }
@@ -1036,21 +1041,21 @@ export const BulkReportsPrint: React.FC = () => {
               {/* Table Container with Horizontal Scroll on Web, Full Width in Print */}
               <div
                 onWheel={handleHorizontalWheel}
-                className="overflow-x-auto relative w-full scrollbar-thin"
+                className="w-full overflow-x-auto pb-4 relative scrollbar-thin"
               >
-                <table className="score-sheet-table w-full text-center text-xs border-collapse">
+                <table className="score-sheet-table w-full min-w-max border-collapse text-center text-xs">
                   <thead className="bg-slate-100 print:bg-slate-50">
                     {/* Top Header Row */}
                     <tr className="border-b border-slate-200 print:border-black text-slate-800">
                       <th
                         rowSpan={2}
-                        className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold w-12 bg-slate-100 print:bg-slate-50"
+                        className="py-2 px-3 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap w-12 bg-slate-100 print:bg-slate-50 font-mono"
                       >
                         Roll No
                       </th>
                       <th
                         rowSpan={2}
-                        className="py-2 px-3 text-left border border-slate-300 print:border-black font-bold min-w-[170px] bg-slate-100 print:bg-slate-50"
+                        className="py-2 px-4 text-left border border-slate-300 print:border-black font-bold whitespace-nowrap min-w-[180px] bg-slate-100 print:bg-slate-50"
                       >
                         Student Name
                       </th>
@@ -1060,12 +1065,12 @@ export const BulkReportsPrint: React.FC = () => {
                           <th
                             key={sub.subjectId}
                             colSpan={3}
-                            className="subject-name py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-slate-100 print:bg-slate-50"
+                            className="subject-name py-2 px-3 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap bg-slate-100 print:bg-slate-50"
                           >
-                            <div className="font-bold text-slate-900 leading-tight">
+                            <div className="font-bold text-slate-900 leading-tight whitespace-nowrap">
                               {subName}
                             </div>
-                            <div className="text-[10px] font-mono text-slate-500 font-normal print:text-black">
+                            <div className="text-[10px] font-mono text-slate-500 font-normal print:text-black whitespace-nowrap">
                               {sub.code} ({sub.maxMarks || 50})
                             </div>
                           </th>
@@ -1073,21 +1078,21 @@ export const BulkReportsPrint: React.FC = () => {
                       })}
                       <th
                         rowSpan={2}
-                        className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-emerald-50/70 print:bg-transparent min-w-[85px]"
+                        className="py-2 px-3 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap bg-emerald-50/70 print:bg-transparent min-w-[85px]"
                       >
                         Grand Total
                         <div className="text-[9px] text-slate-500 font-normal">/ {classTotalExpectedMax}</div>
                       </th>
                       <th
                         rowSpan={2}
-                        className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-emerald-50/70 print:bg-transparent min-w-[75px]"
+                        className="py-2 px-3 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap bg-emerald-50/70 print:bg-transparent min-w-[75px]"
                       >
                         Percentage
                         <div className="text-[9px] text-slate-500 font-normal">%</div>
                       </th>
                       <th
                         rowSpan={2}
-                        className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-slate-100 print:bg-transparent min-w-[80px]"
+                        className="py-2 px-3 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap bg-slate-100 print:bg-transparent min-w-[80px]"
                       >
                         Attendance
                         <div className="text-[9px] text-slate-500 font-normal">
@@ -1096,7 +1101,7 @@ export const BulkReportsPrint: React.FC = () => {
                       </th>
                       <th
                         rowSpan={2}
-                        className="py-2 px-2 text-center border border-slate-300 print:border-black font-bold bg-slate-100 print:bg-transparent min-w-[80px]"
+                        className="py-2 px-3 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap bg-slate-100 print:bg-transparent min-w-[80px]"
                       >
                         Rank
                       </th>
@@ -1106,13 +1111,13 @@ export const BulkReportsPrint: React.FC = () => {
                     <tr className="border-b border-slate-200 print:border-black text-slate-700">
                       {classSubjects.map(sub => (
                         <React.Fragment key={`score_sub_cols_${sub.subjectId}`}>
-                          <th className="py-1 px-1 text-center border border-slate-300 print:border-black font-bold text-[10px] bg-slate-50 print:bg-slate-100">
+                          <th className="py-1.5 px-3 text-center border border-slate-300 print:border-black font-bold text-[10px] whitespace-nowrap bg-slate-50 print:bg-slate-100">
                             TE
                           </th>
-                          <th className="py-1 px-1 text-center border border-slate-300 print:border-black font-bold text-[10px] bg-slate-50 print:bg-slate-100">
+                          <th className="py-1.5 px-3 text-center border border-slate-300 print:border-black font-bold text-[10px] whitespace-nowrap bg-slate-50 print:bg-slate-100">
                             CE
                           </th>
-                          <th className="py-1 px-1 text-center border border-slate-300 print:border-black font-bold text-[10px] bg-slate-100 print:bg-slate-200 font-mono">
+                          <th className="py-1.5 px-3 text-center border border-slate-300 print:border-black font-bold text-[10px] whitespace-nowrap bg-slate-100 print:bg-slate-200 font-mono">
                             Tot
                           </th>
                         </React.Fragment>
@@ -1132,11 +1137,11 @@ export const BulkReportsPrint: React.FC = () => {
                           className={`transition ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60 print:bg-transparent'} hover:bg-slate-100/50`}
                         >
                           {/* Roll No */}
-                          <td className="py-1.5 px-2 text-center font-mono font-bold text-slate-700 border border-slate-300 print:border-black">
+                          <td className="py-2 px-3 text-center font-mono font-bold text-slate-700 border border-slate-300 print:border-black whitespace-nowrap">
                             {s?.rollNo}
                           </td>
                           {/* Student Name */}
-                          <td className="py-1.5 px-3 text-left font-medium text-slate-900 border border-slate-300 print:border-black whitespace-nowrap">
+                          <td className="py-2 px-4 text-left font-medium text-slate-900 border border-slate-300 print:border-black whitespace-nowrap">
                             <div className="font-bold">{s?.nameEn}</div>
                             {s?.nameMl && (
                               <div className="text-[10px] text-slate-500 font-ml leading-tight">
@@ -1154,7 +1159,7 @@ export const BulkReportsPrint: React.FC = () => {
                             return (
                               <React.Fragment key={`ss_marks_${s?.id}_${subDef.subjectId}`}>
                                 {/* TE */}
-                                <td className="py-1.5 px-1 text-center border border-slate-300 print:border-black font-mono text-[11px]">
+                                <td className="py-2 px-3 text-center border border-slate-300 print:border-black font-mono text-[11px] whitespace-nowrap">
                                   {marks.isAbsent ? (
                                     <span className="text-red-600 font-bold">AB</span>
                                   ) : marks.te === '—' ? (
@@ -1166,7 +1171,7 @@ export const BulkReportsPrint: React.FC = () => {
                                   )}
                                 </td>
                                 {/* CE */}
-                                <td className="py-1.5 px-1 text-center border border-slate-300 print:border-black font-mono text-[11px]">
+                                <td className="py-2 px-3 text-center border border-slate-300 print:border-black font-mono text-[11px] whitespace-nowrap">
                                   {marks.isAbsent ? (
                                     <span className="text-red-600 font-bold">AB</span>
                                   ) : marks.ce === '—' ? (
@@ -1176,7 +1181,7 @@ export const BulkReportsPrint: React.FC = () => {
                                   )}
                                 </td>
                                 {/* Tot */}
-                                <td className="py-1.5 px-1 text-center border border-slate-300 print:border-black font-mono text-[11px] font-bold bg-slate-50/60 print:bg-transparent">
+                                <td className="py-2 px-3 text-center border border-slate-300 print:border-black font-mono text-[11px] font-bold whitespace-nowrap bg-slate-50/60 print:bg-transparent">
                                   {marks.isAbsent ? (
                                     <span className="text-red-600 font-bold">AB</span>
                                   ) : marks.tot === '—' ? (
@@ -1192,22 +1197,22 @@ export const BulkReportsPrint: React.FC = () => {
                           })}
 
                           {/* Grand Total */}
-                          <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono font-bold text-emerald-950 whitespace-nowrap bg-emerald-50/20 print:bg-transparent">
+                          <td className="py-2 px-3 text-center border border-slate-300 print:border-black font-mono font-bold text-emerald-950 whitespace-nowrap bg-emerald-50/20 print:bg-transparent">
                             {metrics.displayGrandObtained}
                           </td>
 
                           {/* Percentage */}
-                          <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono font-bold text-slate-800 whitespace-nowrap bg-emerald-50/20 print:bg-transparent">
+                          <td className="py-2 px-3 text-center border border-slate-300 print:border-black font-mono font-bold text-slate-800 whitespace-nowrap bg-emerald-50/20 print:bg-transparent">
                             {metrics.percentageStr}%
                           </td>
 
                           {/* Attendance */}
-                          <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-mono text-slate-700 whitespace-nowrap">
+                          <td className="py-2 px-3 text-center border border-slate-300 print:border-black font-mono text-slate-700 whitespace-nowrap">
                             {metrics.attendanceDays}
                           </td>
 
                           {/* Rank */}
-                          <td className="py-1.5 px-2 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap">
+                          <td className="py-2 px-3 text-center border border-slate-300 print:border-black font-bold whitespace-nowrap">
                             {rankData?.isRankAwarded && rankData.rank !== null ? (
                               <span className="font-mono text-emerald-900 font-bold">
                                 Rank {rankData.rank}

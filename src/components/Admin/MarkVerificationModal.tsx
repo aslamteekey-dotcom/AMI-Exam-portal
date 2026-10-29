@@ -729,7 +729,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
                   title="Enable inline mark editing for all students"
                 >
                   <Edit2 className="w-3.5 h-3.5 text-purple-700" />
-                  <span>✏️ Edit All</span>
+                  <span>Edit All</span>
                 </button>
               )
             )}
@@ -742,8 +742,8 @@ export const MarkVerificationModal: React.FC<Props> = ({
                 disabled={isSavingCorrection}
                 className="flex items-center gap-1.5 px-4 py-1.5 bg-purple-800 hover:bg-purple-900 text-white font-bold rounded-lg cursor-pointer transition shadow-xs disabled:opacity-50"
               >
-                <Save className="w-3.5 h-3.5 text-amber-300" />
-                <span>{isSavingCorrection ? 'Saving...' : '💾 Save Corrections'}</span>
+                <Save className="w-3.5 h-3.5" />
+                <span>{isSavingCorrection ? 'Saving...' : 'Save Corrections'}</span>
                 <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-purple-950 text-purple-200">
                   {isEditingAll ? 'All Rows' : `${editableRows.size} ${editableRows.size === 1 ? 'row' : 'rows'}`}
                 </span>

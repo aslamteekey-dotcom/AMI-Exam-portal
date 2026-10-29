@@ -618,52 +618,35 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
           </div>
 
           {/* Status Badges */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             {markSheet?.status === 'returned_for_correction' && (
-              <div className="text-xs bg-amber-50 text-amber-800 border border-amber-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
-                <AlertCircle className="w-4 h-4 text-amber-600" />
-                <span>
+              <div className="text-xs bg-amber-50 text-amber-800 border border-amber-300 px-2.5 py-1 rounded-xl flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span className="text-[11px]">
                   Returned: <strong className="font-semibold">{markSheet.returnedReason}</strong>
                 </span>
               </div>
             )}
 
-            {isDraft && isClassTeacher && !isSubjectTeacher && (
-              <div className="text-xs bg-slate-100 text-slate-700 border border-slate-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-medium">
-                <Clock className="w-4 h-4 text-slate-500 shrink-0" />
-                <span>Draft — Waiting for Subject Teacher to Submit</span>
+            {isLocked ? (
+              <div className="text-xs font-bold bg-emerald-100 text-emerald-800 px-3 py-1.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap text-center shadow-2xs">
+                <Lock className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                <span>Locked</span>
               </div>
-            )}
-
-            {isDraft && isSubjectTeacher && (
-              <div className="text-xs bg-amber-50 text-amber-800 border border-amber-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-medium">
-                <Clock className="w-4 h-4 text-amber-600 shrink-0" />
-                <span>Draft / In Progress</span>
+            ) : isApproved ? (
+              <div className="text-xs font-bold bg-emerald-100 text-emerald-800 px-3 py-1.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap text-center shadow-2xs">
+                <CheckCircle className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                <span>Approved</span>
               </div>
-            )}
-
-            {isSubmitted && (
-              <div className="text-xs bg-blue-50 text-blue-900 border border-blue-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-medium">
-                <Clock className="w-4 h-4 text-blue-600 shrink-0" />
-                <span>
-                  {isClassTeacher
-                    ? 'Submitted by Subject Teacher — Class Teacher Direct Edit & Approve Active'
-                    : 'Submitted — Awaiting Class Teacher Approval'}
-                </span>
+            ) : isSubmitted ? (
+              <div className="text-xs font-bold bg-blue-100 text-blue-800 px-3 py-1.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap text-center shadow-2xs">
+                <Clock className="w-3.5 h-3.5 text-blue-700 shrink-0" />
+                <span>Submitted</span>
               </div>
-            )}
-
-            {isApproved && (
-              <div className="text-xs bg-emerald-50 text-emerald-900 border border-emerald-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-bold">
-                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>Approved — Awaiting Principal's Lock</span>
-              </div>
-            )}
-
-            {isLocked && (
-              <div className="text-xs bg-purple-50 text-purple-900 border border-purple-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-bold">
-                <Lock className="w-4 h-4 text-purple-600 shrink-0" />
-                <span>Locked by Principal (Strictly Read-Only)</span>
+            ) : (
+              <div className="text-xs font-bold bg-orange-100 text-orange-800 px-3 py-1.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap text-center shadow-2xs">
+                <Clock className="w-3.5 h-3.5 text-orange-700 shrink-0" />
+                <span>Unsubmitted</span>
               </div>
             )}
           </div>
@@ -679,18 +662,20 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
             className={`h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap rounded-xl transition ${
               isReadOnly
                 ? 'border border-gray-200 text-gray-400 bg-gray-50 cursor-not-allowed'
-                : 'border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 shadow-2xs cursor-pointer disabled:opacity-50'
+                : isSubmitted
+                ? 'border border-blue-600 text-blue-600 hover:bg-blue-50 bg-white shadow-2xs cursor-pointer disabled:opacity-50'
+                : 'border border-orange-600 text-orange-600 hover:bg-orange-50 bg-white shadow-2xs cursor-pointer disabled:opacity-50'
             }`}
           >
             <Save className="w-4 h-4 shrink-0" />
-            <span>{isSaving ? 'Saving...' : isClassTeacher && isSubmitted ? 'Save Changes' : 'Save Draft'}</span>
+            <span>{isSaving ? 'Saving...' : 'Save'}</span>
           </button>
 
           {/* Button 2: Preview */}
           <button
             type="button"
             onClick={() => setShowPreviewModal(true)}
-            className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap border border-emerald-300 text-emerald-800 bg-emerald-50/50 hover:bg-emerald-100 rounded-xl transition shadow-2xs cursor-pointer"
+            className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 rounded-xl transition shadow-2xs cursor-pointer"
           >
             <Eye className="w-4 h-4 shrink-0" />
             <span>Preview</span>
@@ -701,19 +686,19 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
             <button
               type="button"
               disabled
-              className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-bold whitespace-nowrap bg-purple-100 text-purple-800 border border-purple-300 rounded-xl transition cursor-not-allowed shadow-2xs"
+              className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-bold whitespace-nowrap bg-emerald-700 text-white rounded-xl transition cursor-not-allowed shadow-2xs"
             >
-              <Lock className="w-4 h-4 shrink-0 text-purple-600" />
-              <span>🔒 Locked</span>
+              <Lock className="w-4 h-4 shrink-0" />
+              <span>Locked</span>
             </button>
           ) : isApproved ? (
             <button
               type="button"
               disabled
-              className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-bold whitespace-nowrap bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl transition cursor-not-allowed shadow-2xs"
+              className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-bold whitespace-nowrap bg-emerald-700 text-white rounded-xl transition cursor-not-allowed shadow-2xs"
             >
-              <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600" />
-              <span>✓ Approved</span>
+              <CheckCircle className="w-4 h-4 shrink-0" />
+              <span>Approved</span>
             </button>
           ) : isSubmitted ? (
             isClassTeacher ? (
@@ -721,10 +706,10 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                 type="button"
                 onClick={handleApprove}
                 disabled={isApproving}
-                className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-bold whitespace-nowrap bg-emerald-800 text-white shadow-sm hover:bg-emerald-900 rounded-xl transition disabled:opacity-60 cursor-pointer"
+                className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-bold whitespace-nowrap bg-blue-700 hover:bg-blue-800 text-white shadow-sm rounded-xl transition disabled:opacity-60 cursor-pointer"
               >
                 <CheckCircle className="w-4 h-4 shrink-0" />
-                <span>{isApproving ? 'Approving...' : '✓ Approve'}</span>
+                <span>{isApproving ? 'Approving...' : 'Approve'}</span>
               </button>
             ) : (
               <button
@@ -732,8 +717,8 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                 disabled
                 className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap bg-blue-100 text-blue-800 border border-blue-300 rounded-xl transition cursor-not-allowed shadow-2xs"
               >
-                <Clock className="w-4 h-4 shrink-0 text-blue-600" />
-                <span>⏳ Awaiting Approval</span>
+                <Clock className="w-4 h-4 shrink-0" />
+                <span>Awaiting Approval</span>
               </button>
             )
           ) : (
@@ -742,7 +727,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
               <button
                 type="button"
                 onClick={() => setShowSubmitModal(true)}
-                className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap bg-emerald-800 text-white shadow-sm hover:bg-emerald-900 rounded-xl transition cursor-pointer"
+                className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap bg-orange-700 hover:bg-orange-800 text-white shadow-sm rounded-xl transition cursor-pointer"
               >
                 <Send className="w-4 h-4 shrink-0" />
                 <span>Submit</span>
@@ -753,7 +738,8 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                 disabled
                 className="h-10 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap bg-gray-100 text-gray-500 border border-gray-300 rounded-xl transition cursor-not-allowed shadow-2xs"
               >
-                <span>⏳ Waiting for Submission</span>
+                <Clock className="w-4 h-4 shrink-0" />
+                <span>Waiting for Submission</span>
               </button>
             )
           )}
@@ -953,7 +939,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
               </button>
               <button
                 onClick={handleSubmit}
-                className="px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl shadow-xs"
+                className="px-4 py-2 text-xs font-bold text-white bg-orange-700 hover:bg-orange-800 rounded-xl shadow-xs"
               >
                 Confirm & Submit
               </button>

@@ -214,25 +214,30 @@ html[lang="ml"] td {
     background-color: #ffffff !important;
   }
   /* Official Score Sheet A4 Landscape Print Styling */
+  @page { size: A4 landscape; margin: 5mm; }
+  .overflow-x-auto { overflow: visible !important; }
   .score-sheet-container {
     width: 100% !important;
     padding: 0 !important;
     margin: 0 !important;
   }
-  .score-sheet-table { 
+  .score-sheet-table, table { 
     width: 100% !important; 
+    min-width: auto !important; 
+    table-layout: auto !important;
     border-collapse: collapse !important; 
     font-size: 8pt !important;
   }
-  .score-sheet-table th, .score-sheet-table td { 
+  .score-sheet-table th.subject-name, th.subject-name {
+    white-space: normal !important; 
+    font-size: 7.5pt !important;
+    padding: 2px !important;
+  }
+  .score-sheet-table th, .score-sheet-table td, td, th { 
     border: 1px solid #000 !important; 
     padding: 1px 2px !important; 
     text-align: center !important; 
     white-space: nowrap !important; 
-  }
-  .score-sheet-table th.subject-name {
-    white-space: normal !important; 
-    font-size: 7.5pt !important;
+    font-size: 8pt !important;
   }
 }
-
