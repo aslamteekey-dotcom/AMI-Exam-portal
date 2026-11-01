@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { GraduationCap, LogOut, User as UserIcon, Cloud, CloudOff } from 'lucide-react';
 import { isFirestoreQuotaExhausted, QUOTA_STATUS_EVENT } from '../services/firebase';
+import { PWAInstallButton } from './Common/PWAInstallButton';
+import { NotificationBell } from './Common/NotificationBell';
 
 export const Navbar: React.FC = () => {
   const { user, lang, setLang, t, logout } = useAuth();
@@ -93,6 +95,12 @@ export const Navbar: React.FC = () => {
                 ML
               </button>
             </div>
+
+            {/* PWA Install Button */}
+            <PWAInstallButton />
+
+            {/* In-App Notification Bell */}
+            {user && <NotificationBell />}
 
             {/* Current User Pill */}
             {user && (

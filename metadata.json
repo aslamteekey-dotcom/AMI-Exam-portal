@@ -1,6 +1,6 @@
 {
-  "name": "Al-Madrasathul Islamiya Pallikkuth - Examination & Progress Report System",
-  "description": "Comprehensive examination management, mark verification, and student progress report generation system for Al-Madrasathul Islamiya Pallikkuth with Malayalam & English bilingual support.",
+  "name": "AMI-Exam-portal 27/06.38",
+  "description": "Imported from GitHub",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

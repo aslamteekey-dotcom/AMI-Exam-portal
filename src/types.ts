@@ -909,3 +909,28 @@ export function mergeClassesWithStandard(rawClasses?: ClassItem[]): ClassItem[] 
   return list;
 }
 
+export interface NotificationSettings {
+  notifyAbsent: boolean;
+  notifyResultsPublished: boolean;
+  notifyPendingMarks: boolean;
+  notifyMarksUnlocked: boolean;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface AppNotification {
+  id: string;
+  title: string;
+  titleMl?: string;
+  body: string;
+  bodyMl?: string;
+  type: 'absent' | 'results_published' | 'marks_pending' | 'marks_unlocked' | 'announcement' | 'system';
+  targetRole: 'all' | 'parent' | 'teacher' | 'admin';
+  classId?: string;
+  studentId?: string;
+  targetUserId?: string;
+  createdAt: string;
+  readBy?: string[];
+  linkUrl?: string;
+}
+

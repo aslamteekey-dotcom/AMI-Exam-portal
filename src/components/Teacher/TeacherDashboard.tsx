@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
   TeacherAssignment,
@@ -29,6 +29,8 @@ import {
   normalizeGender,
 } from '../../types';
 import { MarkEntryScreen } from './MarkEntryScreen';
+import { MonthlyAttendanceReport } from '../Attendance/MonthlyAttendanceReport';
+import { exportScoreSheetToPdf } from '../../utils/scoreSheetPdfExport';
 import { useHorizontalScroll, handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
 import { useAttendanceLocks } from '../../hooks/useAttendanceLocks';
 import {
@@ -63,6 +65,7 @@ import {
 } from 'firebase/firestore';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
 import { logAuditEvent } from '../../services/auditLogger';
+import { sendTargetedNotification } from '../../services/notificationService';
 import {
   BookOpen,
   Users,
@@ -81,8 +84,10 @@ import {
   Sparkles,
   CreditCard,
   Save,
+  Download,
   CalendarCheck,
   CalendarDays,
+  FileSpreadsheet,
   ChevronLeft,
   ChevronRight,
   Check,
@@ -203,6 +208,8 @@ export const TeacherDashboard: React.FC = () => {
   const [markSheets, setMarkSheets] = useState<MarkSheet[]>([]);
   const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [currentTeacherInChargeClassId, setCurrentTeacherInChargeClassId] = useState<string | undefined>(user?.inChargeClassId);
+  const teacherScoreSheetRef = useRef<HTMLDivElement>(null);
+  const [isExportingScoreSheetPdf, setIsExportingScoreSheetPdf] = useState(false);
 
   // In-charge class information
   const inChargeClassId =
@@ -244,7 +251,7 @@ export const TeacherDashboard: React.FC = () => {
 
   const todayStr = formatLocalDate(new Date());
   const [attendanceClassId, setAttendanceClassId] = useState<string>('');
-  const [attendanceMode, setAttendanceMode] = useState<'daily' | 'weekly'>('daily');
+  const [attendanceMode, setAttendanceMode] = useState<'daily' | 'weekly' | 'monthly_report'>('daily');
   const [selectedAttendanceDate, setSelectedAttendanceDate] = useState<string>(() => {
     return formatLocalDate(new Date());
   });
@@ -1842,6 +1849,25 @@ export const TeacherDashboard: React.FC = () => {
         body: JSON.stringify(updatedConfig),
       });
 
+      // Dispatch automated absent notifications to parents (async, non-blocking)
+      if (Array.isArray(absentStudentIds) && absentStudentIds.length > 0) {
+        absentStudentIds.forEach(absId => {
+          const st = currentStudents.find(s => s.id === absId);
+          if (st) {
+            sendTargetedNotification({
+              title: `Absent Alert: ${st.nameEn}`,
+              titleMl: `ഹാജരില്ലായ്മ വിവരം: ${st.nameMl || st.nameEn}`,
+              body: `${st.nameEn} was marked absent on ${selectedAttendanceDate}. Please contact the class teacher if you have any questions.`,
+              bodyMl: `${selectedAttendanceDate} തിയ്യതിയിൽ ${st.nameMl || st.nameEn} ക്ലാസ്സിൽ ഹാജരായിട്ടില്ല. എന്തെങ്കിലും സംശയങ്ങളുണ്ടെങ്കിൽ ക്ലാസ്സ് ടീച്ചറുമായി ബന്ധപ്പെടുക.`,
+              type: 'absent',
+              targetRole: 'parent',
+              classId: attendanceClassId,
+              studentId: st.id,
+            });
+          }
+        });
+      }
+
       const nowIso = new Date().toISOString();
 
       // 3. Resolve active unlock requests in Firestore attendanceUnlockRequests
@@ -2978,6 +3004,24 @@ export const TeacherDashboard: React.FC = () => {
     studentDaysAttendedMap,
   ]);
 
+  const scoreSheetTotalWorkingDays = useMemo(() => {
+    return classMarksheetData[0]?.totalWorking ?? classAttendanceConfig?.totalWorkingDays ?? attendanceTotalWorkingDays ?? 88;
+  }, [classMarksheetData, classAttendanceConfig?.totalWorkingDays, attendanceTotalWorkingDays]);
+
+  const handleSaveScoreSheetPdf = async () => {
+    setIsExportingScoreSheetPdf(true);
+    try {
+      const cName = ((inChargeClass?.name || 'Class').replace(/\s*\([^)]*\)/g, '').trim()).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const eName = (selectedExam?.nameEn || 'Exam').replace(/[^a-zA-Z0-9_-]/g, '_');
+      await exportScoreSheetToPdf({
+        element: teacherScoreSheetRef.current,
+        filename: `${cName}_${eName}_Score_Sheet.pdf`,
+      });
+    } finally {
+      setIsExportingScoreSheetPdf(false);
+    }
+  };
+
   // Mark Entry Segregation: "My Class" (In-charge) vs "Teaching Subjects" (Consolidated all classes including own class)
   const myClassAssignments = assignments.filter(a => {
     if (!inChargeClass) return false;
@@ -3857,14 +3901,23 @@ export const TeacherDashboard: React.FC = () => {
                           : 'View the consolidated marksheet of the entire class.'}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-2 text-xs mt-2 sm:mt-0">
+                      <button
+                        type="button"
+                        onClick={handleSaveScoreSheetPdf}
+                        disabled={isExportingScoreSheetPdf}
+                        className="flex items-center gap-1.5 px-3.5 py-1.5 font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer whitespace-nowrap disabled:opacity-50"
+                      >
+                        <Download className="w-3.5 h-3.5 text-slate-700" />
+                        <span>{isExportingScoreSheetPdf ? 'Saving...' : 'Save'}</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => window.print()}
-                        className="flex items-center gap-1.5 px-3.5 py-1.5 font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
+                        className="flex items-center gap-1.5 px-3.5 py-1.5 font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer whitespace-nowrap"
                       >
                         <Printer className="w-3.5 h-3.5" />
-                        Print Score Sheet (A4 Landscape)
+                        <span>Print</span>
                       </button>
                     </div>
                   </div>
@@ -3874,7 +3927,7 @@ export const TeacherDashboard: React.FC = () => {
                       No active students enrolled in {inChargeClass.name}.
                     </div>
                   ) : (
-                    <div className="score-sheet-container p-4 sm:p-6 print:p-0">
+                    <div ref={teacherScoreSheetRef} className="score-sheet-container p-4 sm:p-6 print:p-0">
                       {/* Dynamic A4 Landscape Print Header (Official Formatting Style matching Fee Receipts) */}
                       <div className="score-sheet-print-header hidden print:block text-center border-b border-black pb-2 mb-2">
                         <div className="font-serif text-black text-xs font-bold" dir="rtl">
@@ -3980,7 +4033,7 @@ export const TeacherDashboard: React.FC = () => {
                               >
                                 Attendance
                                 <div className="text-[9px] text-slate-500 font-normal">
-                                  {selectedExam?.attendanceCutoffDate ? `Up to ${selectedExam.attendanceCutoffDate}` : 'Attended / Total'}
+                                  Out of {scoreSheetTotalWorkingDays}
                                 </div>
                               </th>
                               <th
@@ -4936,6 +4989,19 @@ export const TeacherDashboard: React.FC = () => {
                   >
                     <CalendarDays className="w-4 h-4" />
                     <span>Weekly Marking</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAttendanceMode('monthly_report')}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition cursor-pointer ${
+                      attendanceMode === 'monthly_report'
+                        ? 'bg-emerald-800 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>Monthly Report</span>
                   </button>
                 </div>
 
@@ -6111,7 +6177,17 @@ export const TeacherDashboard: React.FC = () => {
               </div>
             )}
 
+            {/* VIEW 3: MONTHLY ATTENDANCE SUMMARY REPORT */}
+            {attendanceMode === 'monthly_report' && (
+              <MonthlyAttendanceReport
+                initialClassId={attendanceClassId || inChargeClass?.id || classes[0]?.id || 'cls_1'}
+                classes={classes}
+                allowClassSelection={true}
+              />
+            )}
+
             {/* SECTION: MONTH-WISE ATTENDANCE OVERVIEW SHEET */}
+            {attendanceMode !== 'monthly_report' && (
             <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden space-y-4">
               <div className="p-5 border-b border-slate-200 bg-slate-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
@@ -6231,6 +6307,7 @@ export const TeacherDashboard: React.FC = () => {
                 </div>
               </div>
             </div>
+            )}
 
           </div>
         );

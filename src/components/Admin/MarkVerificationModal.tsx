@@ -4,6 +4,7 @@ import { db } from '../../services/firebase';
 import { doc, setDoc, getDoc, getDocs, collection, query, where } from 'firebase/firestore';
 import { MarkSheet, SubjectAssessmentRule, Student, StudentMarkEntry, sortStudentsBoysFirst, determineStudentGender } from '../../types';
 import { logAuditEvent } from '../../services/auditLogger';
+import { sendTargetedNotification } from '../../services/notificationService';
 import {
   CheckCircle,
   Lock,
@@ -221,6 +222,17 @@ export const MarkVerificationModal: React.FC<Props> = ({
         method: 'POST',
       });
       if (res.ok) {
+        // Dispatch instant notification to teachers
+        sendTargetedNotification({
+          title: 'Mark Sheet Unlocked by Principal',
+          titleMl: 'മാർക്ക് ഷീറ്റ് തിരുത്തലിനായി അൺലോക്ക് ചെയ്തു',
+          body: `Mark sheet for ${sheetData.subject?.nameEn || 'Subject'} (${sheetData.classItem?.name || 'Class'}) has been unlocked by Principal for corrections.`,
+          bodyMl: `പ്രിൻസിപ്പാൾ മാർക്ക് ഷീറ്റ് അൺലോക്ക് ചെയ്തിരിക്കുന്നു.`,
+          type: 'marks_unlocked',
+          targetRole: 'teacher',
+          classId: classId,
+        });
+
         alert('Mark sheet unlocked for authorized corrections.');
         onRefresh();
         loadData();

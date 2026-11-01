@@ -22,6 +22,7 @@ import {
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { ExamRegisterModal } from './ExamRegisterModal';
+import { exportScoreSheetToPdf } from '../../utils/scoreSheetPdfExport';
 
 export const BulkReportsPrint: React.FC = () => {
   const { fetchWithAuth, lang, t } = useAuth();
@@ -44,6 +45,8 @@ export const BulkReportsPrint: React.FC = () => {
   const [showRegModal, setShowRegModal] = useState(false);
   const [subjectStatusesMap, setSubjectStatusesMap] = useState<Record<string, string>>({});
   const bulkCardsContainerRef = useRef<HTMLDivElement>(null);
+  const adminScoreSheetRef = useRef<HTMLDivElement>(null);
+  const [isExportingScoreSheetPdf, setIsExportingScoreSheetPdf] = useState(false);
 
   const isMl = lang === 'ml';
 
@@ -405,11 +408,33 @@ export const BulkReportsPrint: React.FC = () => {
     );
   }, [safeReports, currentClass]);
 
+  const scoreSheetTotalWorkingDays = useMemo(() => {
+    return classAttendanceConfig?.totalWorkingDays ?? safeReports[0]?.attendance?.totalWorkingDays ?? 88;
+  }, [classAttendanceConfig?.totalWorkingDays, safeReports]);
+
   const handlePrintScoreSheet = () => {
     setViewMode('score_sheet');
     setTimeout(() => {
       window.print();
     }, 200);
+  };
+
+  const handleSaveScoreSheetPdf = async () => {
+    if (viewMode !== 'score_sheet') {
+      setViewMode('score_sheet');
+      await new Promise(r => setTimeout(r, 120));
+    }
+    setIsExportingScoreSheetPdf(true);
+    try {
+      const cName = getEnglishClassName(currentClass || ({ name: 'Class', numericGrade: 1 } as any)).replace(/\s+/g, '_');
+      const eName = (currentExam?.nameEn || 'Exam').replace(/\s+/g, '_');
+      await exportScoreSheetToPdf({
+        element: adminScoreSheetRef.current,
+        filename: `${cName}_${eName}_Score_Sheet.pdf`,
+      });
+    } finally {
+      setIsExportingScoreSheetPdf(false);
+    }
   };
 
   const handleExportScoreSheetCsv = () => {
@@ -970,28 +995,37 @@ export const BulkReportsPrint: React.FC = () => {
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 mt-2 sm:mt-0">
                 <button
                   type="button"
                   onClick={handleExportScoreSheetCsv}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer whitespace-nowrap"
                 >
                   <Download className="w-3.5 h-3.5 text-emerald-800" />
                   Export CSV
                 </button>
                 <button
                   type="button"
+                  onClick={handleSaveScoreSheetPdf}
+                  disabled={isExportingScoreSheetPdf}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer whitespace-nowrap disabled:opacity-50"
+                >
+                  <Download className="w-3.5 h-3.5 text-slate-700" />
+                  <span>{isExportingScoreSheetPdf ? 'Saving...' : 'Save'}</span>
+                </button>
+                <button
+                  type="button"
                   onClick={handlePrintScoreSheet}
-                  className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs cursor-pointer whitespace-nowrap"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  Print Score Sheet (A4 Landscape)
+                  <span>Print</span>
                 </button>
               </div>
             </div>
 
             {/* Score Sheet Container */}
-            <div className="score-sheet-container p-4 md:p-6 print:p-0">
+            <div ref={adminScoreSheetRef} className="score-sheet-container p-4 md:p-6 print:p-0">
               {/* Dynamic A4 Landscape Print Header (Official Formatting Style matching Fee Receipts) */}
               <div className="score-sheet-print-header hidden print:block text-center border-b border-black pb-2 mb-2">
                 <div className="font-serif text-black text-xs font-bold" dir="rtl">
@@ -1096,7 +1130,7 @@ export const BulkReportsPrint: React.FC = () => {
                       >
                         Attendance
                         <div className="text-[9px] text-slate-500 font-normal">
-                          {currentExam?.attendanceCutoffDate ? `Up to ${currentExam.attendanceCutoffDate}` : 'Attended / Total'}
+                          Out of {scoreSheetTotalWorkingDays}
                         </div>
                       </th>
                       <th

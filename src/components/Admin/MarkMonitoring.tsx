@@ -6,6 +6,7 @@ import { db, isFirestoreQuotaExhausted } from '../../services/firebase';
 import { collection, doc, writeBatch, getDocs, query, where, setDoc } from 'firebase/firestore';
 import { cleanForFirestore } from '../../services/firestoreSync';
 import { logAuditEvent } from '../../services/auditLogger';
+import { sendTargetedNotification } from '../../services/notificationService';
 import {
   Search,
   Filter,
@@ -136,6 +137,18 @@ export const MarkMonitoring: React.FC = () => {
         const updatedExam = await res.json();
         setExaminations(prev => prev.map(e => (e.id === updatedExam.id ? updatedExam : e)));
         await loadMatrix(selectedExamId);
+
+        // Notify teachers of unlocked marks
+        sendTargetedNotification({
+          title: 'Class Marks Unlocked',
+          titleMl: 'ക്ലാസ്സ് മാർക്കുകൾ അൺലോക്ക് ചെയ്തു',
+          body: `Marks for Class ${classes.find(c => c.id === classId)?.name || classId} have been unlocked by the Principal for corrections.`,
+          bodyMl: `പ്രിൻസിപ്പാൾ മാർക്കുകൾ അൺലോക്ക് ചെയ്തിരിക്കുന്നു.`,
+          type: 'marks_unlocked',
+          targetRole: 'teacher',
+          classId: classId,
+        });
+
         alert('Class marks unlocked. Reverted to approved status.');
       } else {
         const err = await res.json().catch(() => ({}));
@@ -169,6 +182,19 @@ export const MarkMonitoring: React.FC = () => {
       if (res.ok) {
         const updatedExam = await res.json();
         setExaminations(prev => prev.map(e => (e.id === updatedExam.id ? updatedExam : e)));
+
+        if (!currentPublished) {
+          sendTargetedNotification({
+            title: 'Exam Results Published',
+            titleMl: 'പരീക്ഷാ ഫലം പ്രസിദ്ധീകരിച്ചു',
+            body: `Verified progress cards for Class ${classes.find(c => c.id === classId)?.name || classId} are now available for parents.`,
+            bodyMl: `പരീക്ഷാ ഫലങ്ങൾ പാരന്റ് പോർട്ടലിൽ ലഭ്യമാണ്.`,
+            type: 'results_published',
+            targetRole: 'parent',
+            classId: classId,
+          });
+        }
+
         alert(
           currentPublished
             ? 'Results unpublished for this class.'
@@ -322,6 +348,16 @@ export const MarkMonitoring: React.FC = () => {
           recordType: 'examination',
           recordId: selectedExamId,
         }).catch(e => console.warn('Audit log error:', e));
+
+        // Dispatch instant notification to all parents
+        sendTargetedNotification({
+          title: `Exam Results Published: ${selectedExam?.nameEn || 'All Classes'}`,
+          titleMl: `പരീക്ഷാ ഫലം പ്രസിദ്ധീകരിച്ചു: ${selectedExam?.nameMl || selectedExam?.nameEn || 'എല്ലാ ക്ലാസുകളും'}`,
+          body: `Official examination results and progress cards for ${selectedExam?.nameEn || 'the active exam'} are now available in the Parent Portal.`,
+          bodyMl: `${selectedExam?.nameMl || selectedExam?.nameEn || 'പരീക്ഷാ'} ഫലങ്ങൾ പാരന്റ് പോർട്ടലിൽ ലഭ്യമാണ്.`,
+          type: 'results_published',
+          targetRole: 'parent',
+        });
 
         alert('All class results have been officially published for parents!');
       } else {

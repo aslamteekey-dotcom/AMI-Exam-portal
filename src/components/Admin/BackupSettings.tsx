@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { InstitutionSettings, User, AdminPermissions } from '../../types';
+import { InstitutionSettings, User, AdminPermissions, NotificationSettings } from '../../types';
 import { firestoreSync } from '../../services/firestoreSync';
+import { getNotificationSettings, saveNotificationSettings, sendTargetedNotification } from '../../services/notificationService';
 import {
   isFirestoreQuotaExhausted,
   markFirestoreQuotaExhausted,
@@ -30,6 +31,9 @@ import {
   ShieldCheck,
   Cloud,
   CloudOff,
+  Bell,
+  Smartphone,
+  Send,
 } from 'lucide-react';
 
 export const BackupSettings: React.FC = () => {
@@ -38,6 +42,17 @@ export const BackupSettings: React.FC = () => {
   const [settings, setSettings] = useState<InstitutionSettings | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Notification Settings State
+  const [notifSettings, setNotifSettings] = useState<NotificationSettings>({
+    notifyAbsent: true,
+    notifyResultsPublished: true,
+    notifyPendingMarks: true,
+    notifyMarksUnlocked: true,
+  });
+  const [isSavingNotif, setIsSavingNotif] = useState(false);
+  const [notifSaveSuccess, setNotifSaveSuccess] = useState(false);
+  const [isSendingTestNotif, setIsSendingTestNotif] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
 
@@ -155,10 +170,17 @@ export const BackupSettings: React.FC = () => {
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const res = await fetchWithAuth('/api/settings');
-      if (res.ok) {
-        const data = await res.json();
+      const [settingsRes, nSettings] = await Promise.all([
+        fetchWithAuth('/api/settings').catch(() => null),
+        getNotificationSettings().catch(() => null),
+      ]);
+
+      if (settingsRes && settingsRes.ok) {
+        const data = await settingsRes.json();
         setSettings(data);
+      }
+      if (nSettings) {
+        setNotifSettings(nSettings);
       }
     } catch (err) {
       console.error('Error loading settings:', err);
@@ -170,6 +192,41 @@ export const BackupSettings: React.FC = () => {
   useEffect(() => {
     loadSettings();
   }, []);
+
+  const handleSaveNotificationSettings = async () => {
+    setIsSavingNotif(true);
+    setNotifSaveSuccess(false);
+    try {
+      const saved = await saveNotificationSettings(notifSettings, user?.name || 'Principal');
+      setNotifSettings(saved);
+      setNotifSaveSuccess(true);
+      setTimeout(() => setNotifSaveSuccess(false), 3000);
+      alert('Notification settings successfully saved and synced to Firestore!');
+    } catch (err: any) {
+      alert(err.message || 'Failed to save notification settings');
+    } finally {
+      setIsSavingNotif(false);
+    }
+  };
+
+  const handleSendTestNotification = async () => {
+    setIsSendingTestNotif(true);
+    try {
+      await sendTargetedNotification({
+        title: 'AMI Pallikkuth Alert Test',
+        titleMl: 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത് അറിയിപ്പ്',
+        body: 'Automated notification test sent from the Admin Communications panel.',
+        bodyMl: 'അഡ്മിൻ പാനലിൽ നിന്നുള്ള സിസ്റ്റം നോട്ടിഫിക്കേഷൻ ടെസ്റ്റ് വിജയകരമായി അയച്ചു.',
+        type: 'system',
+        targetRole: 'all',
+      });
+      alert('Test notification broadcasted! Check the Notification Bell icon in the header.');
+    } catch (err: any) {
+      alert(err.message || 'Error sending test notification');
+    } finally {
+      setIsSendingTestNotif(false);
+    }
+  };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -753,6 +810,159 @@ export const BackupSettings: React.FC = () => {
             ))}
           </div>
         )}
+      </div>
+
+      {/* =========================================================================
+          Notification & Push Messaging Configuration Panel
+         ========================================================================= */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2">
+            <Bell className="w-5 h-5 text-emerald-800" />
+            <div>
+              <h3 className="text-base font-bold text-slate-900">Push Notifications &amp; Automated Alert Settings</h3>
+              <p className="text-xs text-slate-500">
+                Configure Firebase Cloud Messaging (FCM) automated push triggers for Parents and Teachers.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSendTestNotification}
+              disabled={isSendingTestNotif}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer disabled:opacity-50"
+              title="Broadcast a test alert to verify real-time push and notification bell"
+            >
+              <Send className="w-3.5 h-3.5 text-emerald-700" />
+              <span>{isSendingTestNotif ? 'Sending...' : 'Send Test Alert'}</span>
+            </button>
+
+            {notifSaveSuccess && (
+              <span className="text-xs font-bold text-emerald-700 flex items-center gap-1 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                <CheckCircle className="w-4 h-4" /> Saved!
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+          {/* Toggle 1: Absent Parent Alerts */}
+          <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex items-start justify-between gap-3">
+            <div className="space-y-0.5">
+              <label htmlFor="toggle-absent" className="font-bold text-xs text-slate-800 cursor-pointer block">
+                Notify Parents when a student is marked Absent
+              </label>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Automatically dispatches an urgent push alert and in-app notice to the parent when attendance is recorded as Absent.
+              </p>
+              <span className="inline-block mt-1 text-[10px] font-semibold text-rose-800 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                Parent Target
+              </span>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+              <input
+                id="toggle-absent"
+                type="checkbox"
+                checked={notifSettings.notifyAbsent}
+                onChange={e => setNotifSettings({ ...notifSettings, notifyAbsent: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-700"></div>
+            </label>
+          </div>
+
+          {/* Toggle 2: Exam Results Published */}
+          <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex items-start justify-between gap-3">
+            <div className="space-y-0.5">
+              <label htmlFor="toggle-results" className="font-bold text-xs text-slate-800 cursor-pointer block">
+                Notify Parents when Exam Results are published
+              </label>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Broadcasts an instant publication notice to parents when the Principal officially releases examination mark sheets.
+              </p>
+              <span className="inline-block mt-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                Parent Target
+              </span>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+              <input
+                id="toggle-results"
+                type="checkbox"
+                checked={notifSettings.notifyResultsPublished}
+                onChange={e => setNotifSettings({ ...notifSettings, notifyResultsPublished: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-700"></div>
+            </label>
+          </div>
+
+          {/* Toggle 3: Pending Mark Submissions */}
+          <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex items-start justify-between gap-3">
+            <div className="space-y-0.5">
+              <label htmlFor="toggle-pending-marks" className="font-bold text-xs text-slate-800 cursor-pointer block">
+                Notify Teachers for pending mark submissions
+              </label>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Sends automated deadline reminders to subject teachers with draft mark sheets awaiting submission.
+              </p>
+              <span className="inline-block mt-1 text-[10px] font-semibold text-blue-800 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                Teacher Target
+              </span>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+              <input
+                id="toggle-pending-marks"
+                type="checkbox"
+                checked={notifSettings.notifyPendingMarks}
+                onChange={e => setNotifSettings({ ...notifSettings, notifyPendingMarks: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-700"></div>
+            </label>
+          </div>
+
+          {/* Toggle 4: Marks Unlocked by Principal */}
+          <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex items-start justify-between gap-3">
+            <div className="space-y-0.5">
+              <label htmlFor="toggle-unlock" className="font-bold text-xs text-slate-800 cursor-pointer block">
+                Notify Teachers when marks are unlocked by Principal
+              </label>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Alerts the class teacher and subject teacher immediately when the Principal unlocks a mark sheet or attendance record for revisions.
+              </p>
+              <span className="inline-block mt-1 text-[10px] font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                Teacher Target
+              </span>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+              <input
+                id="toggle-unlock"
+                type="checkbox"
+                checked={notifSettings.notifyMarksUnlocked}
+                onChange={e => setNotifSettings({ ...notifSettings, notifyMarksUnlocked: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-700"></div>
+            </label>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+          <span className="text-[11px] text-slate-400">
+            Saved to Firestore collection: <code className="font-mono text-slate-600">settings/notifications</code>
+          </span>
+          <button
+            type="button"
+            onClick={handleSaveNotificationSettings}
+            disabled={isSavingNotif}
+            className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs disabled:opacity-50 cursor-pointer"
+          >
+            <Save className="w-4 h-4" />
+            <span>{isSavingNotif ? 'Saving...' : 'Save Notification Preferences'}</span>
+          </button>
+        </div>
       </div>
 
       {showSubAdminModal && (

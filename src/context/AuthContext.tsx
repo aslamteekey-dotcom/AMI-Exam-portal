@@ -5,6 +5,7 @@ import { clientStorageApi } from '../services/clientStorageApi';
 import { db, isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, isQuotaError } from '../services/firebase';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { logAuditEvent } from '../services/auditLogger';
+import { requestNotificationPermissionAndToken } from '../services/notificationService';
 
 // Pure client-side authentication and mock API routes running 100% in-browser on Vercel
 
@@ -157,6 +158,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setToken(res.token);
       setUser(res.user);
+
+      // On user login (Teacher, Parent, or Admin), prompt for Notification Permissions & store FCM token
+      requestNotificationPermissionAndToken(res.user).catch(e =>
+        console.warn('[FCM] Notification token request error:', e)
+      );
 
       // Trigger immutable audit logging for system access
       if (res.user.role === 'admin') {

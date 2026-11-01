@@ -7,6 +7,7 @@ import { TeacherDashboard } from './components/Teacher/TeacherDashboard';
 import { ParentDashboard } from './components/Parent/ParentDashboard';
 import { GraduationCap } from 'lucide-react';
 import { ErrorBoundary } from './components/Common/ErrorBoundary';
+import { OfflineFallback } from './components/Common/OfflineFallback';
 
 const AppContent: React.FC = () => {
   const { user, isLoading, lang, t } = useAuth();
@@ -46,6 +47,9 @@ const AppContent: React.FC = () => {
           <LoginForm />
         )}
       </main>
+
+      {/* Progressive Web App Offline Connectivity Fallback */}
+      <OfflineFallback />
 
       {/* Global Footer */}
       <footer className="bg-white border-t border-slate-200 py-6 mt-12 print:hidden text-xs text-slate-600">

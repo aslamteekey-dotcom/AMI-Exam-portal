@@ -23,6 +23,7 @@ import {
   normalizeGender,
   determineStudentGender,
 } from '../../types';
+import { MonthlyAttendanceReport } from '../Attendance/MonthlyAttendanceReport';
 import { firestoreSync } from '../../services/firestoreSync';
 import { logAuditEvent } from '../../services/auditLogger';
 import {
@@ -124,8 +125,8 @@ export const AdminAttendanceView: React.FC = () => {
   const [students, setStudents] = useState<Student[]>([]);
   const [classAttendanceConfig, setClassAttendanceConfig] = useState<ClassAttendanceConfig | null>(null);
 
-  // Tab Modes: 'overview' (Ledger & Summary) | 'daily' | 'weekly' | 'holidays' | 'requests'
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'daily' | 'weekly' | 'holidays' | 'requests'>('overview');
+  // Tab Modes: 'overview' (Ledger & Summary) | 'daily' | 'weekly' | 'holidays' | 'requests' | 'monthly_report'
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'daily' | 'weekly' | 'holidays' | 'requests' | 'monthly_report'>('overview');
 
   const [todayStr] = useState<string>(() => formatLocalDate(new Date()));
   const [selectedDate, setSelectedDate] = useState<string>(() => formatLocalDate(new Date()));
@@ -2233,6 +2234,19 @@ export const AdminAttendanceView: React.FC = () => {
 
           <button
             type="button"
+            onClick={() => setActiveSubTab('monthly_report')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+              activeSubTab === 'monthly_report'
+                ? 'bg-emerald-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>Monthly Summary Report</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveSubTab('holidays')}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
               activeSubTab === 'holidays'
@@ -3966,6 +3980,15 @@ export const AdminAttendanceView: React.FC = () => {
             )}
           </div>
         </div>
+      )}
+
+      {/* SUB-TAB: MONTHLY ATTENDANCE SUMMARY REPORT */}
+      {activeSubTab === 'monthly_report' && (
+        <MonthlyAttendanceReport
+          initialClassId={selectedClassId}
+          classes={classes}
+          allowClassSelection={true}
+        />
       )}
 
       {/* HOLIDAY DESIGNATION POPUP MODAL */}
