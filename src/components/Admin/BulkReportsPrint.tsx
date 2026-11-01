@@ -1291,9 +1291,9 @@ export const BulkReportsPrint: React.FC = () => {
 
             <div
               onWheel={handleHorizontalWheel}
-              className="overflow-x-auto relative w-full scrollbar-thin"
+              className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 relative scrollbar-thin"
             >
-              <table className="w-full text-left text-xs border-collapse">
+              <table className="w-full min-w-max text-left text-xs border-collapse">
                 <thead className="sticky top-0 bg-slate-100 z-30">
                   <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                     <th className="py-2.5 px-3 w-12 text-center sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>

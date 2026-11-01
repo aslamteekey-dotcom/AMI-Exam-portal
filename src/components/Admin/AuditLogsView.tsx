@@ -394,8 +394,8 @@ export const AuditLogsView: React.FC = () => {
             No audit logs found matching the selected filters.
           </div>
         ) : (
-          <div className="overflow-x-auto w-full">
-            <table className="w-full text-xs text-left min-w-[700px]">
+          <div className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200">
+            <table className="w-full min-w-max text-xs text-left">
               <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                 <tr>
                   <th className="p-3 w-40 whitespace-nowrap">Timestamp</th>

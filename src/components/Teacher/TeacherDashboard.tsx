@@ -5467,9 +5467,9 @@ export const TeacherDashboard: React.FC = () => {
                       /* Daily Table Roster with Frozen Columns */
                       <div
                         onWheel={handleHorizontalWheel}
-                        className="overflow-x-auto relative w-full scrollbar-thin rounded-xl border border-slate-200"
+                        className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 relative scrollbar-thin"
                       >
-                        <table className="w-full text-left text-xs min-w-[660px] border-collapse">
+                        <table className="w-full min-w-max text-left text-xs border-collapse">
                           <thead className="sticky top-0 bg-slate-100 z-30">
                             <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                               <th className="py-3 px-3 text-center w-12 font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">
@@ -5839,9 +5839,9 @@ export const TeacherDashboard: React.FC = () => {
 
                   <div
                     onWheel={handleHorizontalWheel}
-                    className="overflow-x-auto w-full scrollbar-thin relative"
+                    className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 scrollbar-thin relative"
                   >
-                    <table className="w-full text-left text-xs min-w-[780px] border-collapse">
+                    <table className="w-full min-w-max text-left text-xs border-collapse">
                       <thead className="sticky top-0 bg-slate-100 z-30">
                         <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                           <th className="py-3 px-3 text-center w-12 font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
@@ -6213,9 +6213,9 @@ export const TeacherDashboard: React.FC = () => {
 
               <div
                 onWheel={handleHorizontalWheel}
-                className="overflow-x-auto w-full scrollbar-thin px-4 pb-4 relative"
+                className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 scrollbar-thin px-4 pb-4 relative"
               >
-                <table className="w-full text-left text-xs min-w-[850px] border-collapse">
+                <table className="w-full min-w-max text-left text-xs border-collapse">
                   <thead className="sticky top-0 bg-slate-100 z-30">
                     <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                       <th className="py-2.5 px-3 text-center w-12 font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
@@ -6601,9 +6601,9 @@ export const TeacherDashboard: React.FC = () => {
               ) : (
                 <div
                   onWheel={handleHorizontalWheel}
-                  className="border border-slate-200 rounded-xl overflow-x-auto relative w-full text-xs scrollbar-thin"
+                  className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 relative text-xs scrollbar-thin"
                 >
-                  <table className="w-full text-left border-collapse min-w-[950px]">
+                  <table className="w-full min-w-max text-left border-collapse">
                     <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
                       <tr>
                         <th className="p-2.5 text-center font-mono sticky left-0 z-20 bg-slate-50 w-12 border-r border-slate-200">
@@ -6819,19 +6819,20 @@ export const TeacherDashboard: React.FC = () => {
                         }
 
                         return (
-                          <table className="w-full text-left text-xs border-collapse">
-                            <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
-                              <tr>
-                                <th className="p-2.5 text-center font-mono w-12">Roll</th>
-                                <th className="p-2.5 font-mono text-center w-16">Adm No</th>
-                                <th className="p-2.5 min-w-[150px]">Student Name</th>
-                                <th className="p-2.5 min-w-[130px]">Fee Type</th>
-                                <th className="p-2.5 font-mono text-right w-24">Amount</th>
-                                <th className="p-2.5 font-mono text-center w-20">Receipt No</th>
-                                <th className="p-2.5 font-mono text-center w-24">Date</th>
-                                <th className="p-2.5 text-center w-16">Action</th>
-                              </tr>
-                            </thead>
+                          <div className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200">
+                            <table className="w-full min-w-max text-left text-xs border-collapse">
+                              <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
+                                <tr>
+                                  <th className="p-2.5 text-center font-mono w-12 whitespace-nowrap">Roll</th>
+                                  <th className="p-2.5 font-mono text-center w-16 whitespace-nowrap">Adm No</th>
+                                  <th className="p-2.5 min-w-[150px] whitespace-nowrap">Student Name</th>
+                                  <th className="p-2.5 min-w-[130px] whitespace-nowrap">Fee Type</th>
+                                  <th className="p-2.5 font-mono text-right w-24 whitespace-nowrap">Amount</th>
+                                  <th className="p-2.5 font-mono text-center w-20 whitespace-nowrap">Receipt No</th>
+                                  <th className="p-2.5 font-mono text-center w-24 whitespace-nowrap">Date</th>
+                                  <th className="p-2.5 text-center w-16 whitespace-nowrap">Action</th>
+                                </tr>
+                              </thead>
                             <tbody className="divide-y divide-slate-100">
                               {filtered.map(p => {
                                 const matchingStudent = inChargeStudents.find(
@@ -6887,8 +6888,9 @@ export const TeacherDashboard: React.FC = () => {
                               })}
                             </tbody>
                           </table>
-                        );
-                      })()}
+                        </div>
+                      );
+                    })()}
                     </div>
 
                     <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">

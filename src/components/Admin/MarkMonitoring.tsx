@@ -700,9 +700,8 @@ export const MarkMonitoring: React.FC = () => {
           </div>
 
           {/* Monitoring Matrix Table */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden w-full">
-            <div className="overflow-x-auto w-full scrollbar-thin">
-              <table className="w-full min-w-[680px] text-xs text-left">
+          <div className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200">
+            <table className="w-full min-w-max text-xs text-left">
                 <thead className="bg-slate-100 text-slate-700 font-bold border-b">
                   <tr>
                     <th className="p-3 w-28 whitespace-nowrap">Class</th>
@@ -777,7 +776,7 @@ export const MarkMonitoring: React.FC = () => {
                             </span>
                           )}
                         </td>
-                        <td className="p-3 text-center">
+                        <td className="p-3 text-center whitespace-nowrap">
                           <button
                             onClick={() =>
                               setInspectTarget({
@@ -799,8 +798,7 @@ export const MarkMonitoring: React.FC = () => {
               </table>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
       {/* Inspect and Verification Modal */}
       {inspectTarget && (

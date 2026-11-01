@@ -835,8 +835,8 @@ export const MarkVerificationModal: React.FC<Props> = ({
         )}
 
         {/* Marks Table with Inline Row Editing */}
-        <div className="border border-slate-200 rounded-xl overflow-x-auto relative w-full scrollbar-thin">
-          <table className="w-full min-w-[560px] text-xs text-left border-collapse">
+        <div className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 relative scrollbar-thin">
+          <table className="w-full min-w-max text-xs text-left border-collapse">
             <thead className="sticky top-0 bg-slate-100 font-bold text-slate-700 border-b z-30">
               <tr>
                 <th className="p-2.5 text-center w-12 whitespace-nowrap sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
@@ -987,7 +987,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
                       )}
                     </td>
 
-                    <td className="p-2.5 text-center">
+                    <td className="p-2.5 text-center whitespace-nowrap">
                       <button
                         type="button"
                         onClick={() => handleToggleRowEdit(studentId, entry)}

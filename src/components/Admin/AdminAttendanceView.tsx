@@ -2365,8 +2365,8 @@ export const AdminAttendanceView: React.FC = () => {
               </button>
             </div>
 
-            <div className="overflow-x-auto w-full scrollbar-thin" onWheel={handleHorizontalWheel}>
-              <table className="w-full text-left text-xs min-w-[760px] border-collapse">
+            <div className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 scrollbar-thin" onWheel={handleHorizontalWheel}>
+              <table className="w-full min-w-max text-left text-xs border-collapse">
                 <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
                   <tr>
                     <th className="py-3 px-4">Academic Month</th>
@@ -2491,9 +2491,9 @@ export const AdminAttendanceView: React.FC = () => {
 
             <div
               onWheel={handleHorizontalWheel}
-              className="overflow-x-auto relative w-full scrollbar-thin rounded-b-2xl border-t border-slate-100"
+              className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 relative scrollbar-thin"
             >
-              <table className="w-full text-left text-xs min-w-[700px] border-collapse">
+              <table className="w-full min-w-max text-left text-xs border-collapse">
                 <thead className="sticky top-0 bg-slate-100 z-30">
                   <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                     <th className="py-3 px-3 text-center w-12 font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">
@@ -2922,9 +2922,9 @@ export const AdminAttendanceView: React.FC = () => {
             ) : dailyViewLayout === 'table' ? (
               <div
                 onWheel={handleHorizontalWheel}
-                className="overflow-x-auto relative w-full scrollbar-thin rounded-xl border border-slate-200"
+                className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 relative scrollbar-thin"
               >
-                <table className="w-full text-left text-xs min-w-[660px] border-collapse">
+                <table className="w-full min-w-max text-left text-xs border-collapse">
                   <thead className="sticky top-0 bg-slate-100 z-30">
                     <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                       <th className="py-3 px-3 text-center w-12 font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">
@@ -3194,9 +3194,9 @@ export const AdminAttendanceView: React.FC = () => {
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
             <div
               onWheel={handleHorizontalWheel}
-              className="overflow-x-auto w-full scrollbar-thin relative"
+              className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 scrollbar-thin relative"
             >
-              <table className="w-full text-left text-xs min-w-[780px] border-collapse">
+              <table className="w-full min-w-max text-left text-xs border-collapse">
                 <thead className="sticky top-0 bg-slate-100 z-30">
                   <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                     <th className="py-3 px-3 text-center w-12 font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>

@@ -13,6 +13,22 @@
   --font-title: 'Cinzel', serif;
 }
 
+/* Lock native body scrolling and disable overscroll bounce for native app feel */
+html, body {
+  height: 100%;
+  height: 100dvh; /* For mobile browsers with dynamic UI */
+  overflow: hidden; /* Lock native body scrolling */
+  overscroll-behavior: none; /* Prevent pull-to-refresh bounce */
+}
+
+#root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto; /* Allow internal app container to scroll normally */
+  overscroll-behavior-y: contain;
+}
+
 /* Apply clean Inter for English/Latin and Noto Serif Malayalam for Malayalam characters */
 html,
 body,
@@ -83,12 +99,20 @@ html[lang="ml"] td {
   html, body {
     width: 100% !important;
     min-height: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    overscroll-behavior: auto !important;
     margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
     font-family: 'Inter', 'Noto Serif Malayalam', serif !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+  }
+  #root {
+    height: auto !important;
+    overflow: visible !important;
+    display: block !important;
   }
   table {
     border-collapse: collapse !important;
@@ -243,6 +267,12 @@ html[lang="ml"] td {
 }
 
 /* Mobile & Web A4 Landscape PDF Export Capture Styling */
+.pdf-export-active html,
+.pdf-export-active body,
+.pdf-export-active #root {
+  overflow: visible !important;
+  height: auto !important;
+}
 .pdf-export-active .print\:hidden {
   display: none !important;
 }

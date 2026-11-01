@@ -331,15 +331,15 @@ export const ExamRegisterModal: React.FC<Props> = ({
             Loading class students...
           </div>
         ) : (
-          <div className="border border-slate-200 rounded-xl overflow-hidden">
-            <table className="w-full text-left text-xs">
+          <div className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200">
+            <table className="w-full min-w-max text-left text-xs">
               <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                 <tr>
-                  <th className="py-2.5 px-3 w-12 text-center font-mono">Roll</th>
-                  <th className="py-2.5 px-3 w-16 text-center">Gender</th>
-                  <th className="py-2.5 px-2 w-20 text-center font-mono">Adm No</th>
-                  <th className="py-2.5 px-3">Student Name</th>
-                  <th className="py-2.5 px-3 w-28 text-center font-mono">Reg No</th>
+                  <th className="py-2.5 px-3 w-12 text-center font-mono whitespace-nowrap">Roll</th>
+                  <th className="py-2.5 px-3 w-16 text-center whitespace-nowrap">Gender</th>
+                  <th className="py-2.5 px-2 w-20 text-center font-mono whitespace-nowrap">Adm No</th>
+                  <th className="py-2.5 px-3 min-w-[150px] whitespace-nowrap">Student Name</th>
+                  <th className="py-2.5 px-3 w-28 text-center font-mono whitespace-nowrap">Reg No</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">

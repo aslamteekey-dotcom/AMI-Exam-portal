@@ -837,14 +837,14 @@ export const ExamManagement: React.FC = () => {
               </div>
             </div>
 
-            <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
-              <table className="w-full text-xs text-left">
+            <div className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200">
+              <table className="w-full min-w-max text-xs text-left">
                 <thead className="bg-slate-100 font-bold text-slate-700 border-b">
                   <tr>
-                    <th className="p-3">Class</th>
-                    <th className="p-3 text-center">Marks Status</th>
-                    <th className="p-3 text-center">Action 1: Lock Marks</th>
-                    <th className="p-3 text-center">Action 2: Publish to Parents</th>
+                    <th className="p-3 whitespace-nowrap min-w-[120px]">Class</th>
+                    <th className="p-3 text-center whitespace-nowrap min-w-[140px]">Marks Status</th>
+                    <th className="p-3 text-center whitespace-nowrap">Action 1: Lock Marks</th>
+                    <th className="p-3 text-center whitespace-nowrap">Action 2: Publish to Parents</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -890,7 +890,7 @@ export const ExamManagement: React.FC = () => {
                               )}
                             </div>
                           </td>
-                          <td className="p-3 text-center">
+                          <td className="p-3 text-center whitespace-nowrap">
                             {isClassLocked ? (
                               <button
                                 type="button"
@@ -914,7 +914,7 @@ export const ExamManagement: React.FC = () => {
                               </button>
                             )}
                           </td>
-                          <td className="p-3 text-center">
+                          <td className="p-3 text-center whitespace-nowrap">
                             <button
                               type="button"
                               onClick={() => handleTogglePublishClass(cls.id, isClassPublished)}
@@ -950,15 +950,15 @@ export const ExamManagement: React.FC = () => {
             <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">
               Publication Readiness Checklist
             </h4>
-            <div className="border border-slate-200 rounded-xl overflow-hidden">
-              <table className="w-full text-xs text-left">
+            <div className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200">
+              <table className="w-full min-w-max text-xs text-left">
                 <thead className="bg-slate-100 font-bold text-slate-700">
                   <tr>
-                    <th className="p-2.5">Class</th>
-                    <th className="p-2.5">Subject</th>
-                    <th className="p-2.5">Assigned Teacher</th>
-                    <th className="p-2.5 text-center">Status</th>
-                    <th className="p-2.5 text-center">Ready for Publication</th>
+                    <th className="p-2.5 whitespace-nowrap min-w-[100px]">Class</th>
+                    <th className="p-2.5 whitespace-nowrap min-w-[140px]">Subject</th>
+                    <th className="p-2.5 whitespace-nowrap min-w-[140px]">Assigned Teacher</th>
+                    <th className="p-2.5 text-center whitespace-nowrap">Status</th>
+                    <th className="p-2.5 text-center whitespace-nowrap">Ready for Publication</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">

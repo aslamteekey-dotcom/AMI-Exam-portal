@@ -762,21 +762,21 @@ export const FeeManagement: React.FC = () => {
 
           <div
             onWheel={handleHorizontalWheel}
-            className="overflow-x-auto"
+            className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200"
           >
-            <table className="w-full text-left text-xs border-collapse">
+            <table className="w-full min-w-max text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                  <th className="py-2.5 px-3 w-12 text-center">Roll</th>
-                  <th className="py-2.5 px-3 w-24">Adm No</th>
-                  <th className="py-2.5 px-3 min-w-[150px]">Student Name</th>
+                  <th className="py-2.5 px-3 w-12 text-center whitespace-nowrap">Roll</th>
+                  <th className="py-2.5 px-3 w-24 whitespace-nowrap">Adm No</th>
+                  <th className="py-2.5 px-3 min-w-[150px] whitespace-nowrap">Student Name</th>
                   {TUITION_FEE_MONTHS.map(m => (
-                    <th key={m} className="py-2 px-1 text-center font-mono text-[10px] w-12">
+                    <th key={m} className="py-2 px-1 text-center font-mono text-[10px] w-12 whitespace-nowrap">
                       {m.split(' ')[0].substring(0, 3)}
                     </th>
                   ))}
-                  <th className="py-2.5 px-3 text-center">Paid / 12</th>
-                  <th className="py-2.5 px-3 text-right">Action</th>
+                  <th className="py-2.5 px-3 text-center whitespace-nowrap">Paid / 12</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -844,7 +844,7 @@ export const FeeManagement: React.FC = () => {
                           </span>
                         </td>
 
-                        <td className="py-2 px-3 text-right">
+                        <td className="py-2 px-3 text-right whitespace-nowrap">
                           <button
                             onClick={() => handleOpenPayForStudent(student)}
                             className="px-2.5 py-1 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg transition shadow-2xs cursor-pointer"
@@ -885,18 +885,18 @@ export const FeeManagement: React.FC = () => {
             </div>
           </div>
 
-          <div onWheel={handleHorizontalWheel} className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+          <div onWheel={handleHorizontalWheel} className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200">
+            <table className="w-full min-w-max text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                  <th className="py-2.5 px-3 w-16 text-center">Roll No</th>
-                  <th className="py-2.5 px-3 w-20">Adm No</th>
-                  <th className="py-2.5 px-3 min-w-[160px]">Student Name</th>
-                  <th className="py-2.5 px-3 w-24">Class</th>
-                  <th className="py-2.5 px-3 text-right">Amount Paid</th>
-                  <th className="py-2.5 px-3 w-24 text-center font-mono">Receipt No</th>
-                  <th className="py-2.5 px-3 w-24">Date</th>
-                  <th className="py-2.5 px-3 text-right">Actions</th>
+                  <th className="py-2.5 px-3 w-16 text-center whitespace-nowrap">Roll No</th>
+                  <th className="py-2.5 px-3 w-20 whitespace-nowrap">Adm No</th>
+                  <th className="py-2.5 px-3 min-w-[160px] whitespace-nowrap">Student Name</th>
+                  <th className="py-2.5 px-3 w-24 whitespace-nowrap">Class</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Amount Paid</th>
+                  <th className="py-2.5 px-3 w-24 text-center font-mono whitespace-nowrap">Receipt No</th>
+                  <th className="py-2.5 px-3 w-24 whitespace-nowrap">Date</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -939,7 +939,7 @@ export const FeeManagement: React.FC = () => {
                         <td className="py-2 px-3 font-mono text-slate-600">
                           {p.date}
                         </td>
-                        <td className="py-2 px-3 text-right">
+                        <td className="py-2 px-3 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
                               onClick={() => setActiveReceipt(p)}
@@ -990,19 +990,19 @@ export const FeeManagement: React.FC = () => {
             </div>
           </div>
 
-          <div onWheel={handleHorizontalWheel} className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+          <div onWheel={handleHorizontalWheel} className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200">
+            <table className="w-full min-w-max text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                  <th className="py-2.5 px-3 w-16 text-center">Roll No</th>
-                  <th className="py-2.5 px-3 w-20">Adm No</th>
-                  <th className="py-2.5 px-3 min-w-[160px]">Student Name</th>
-                  <th className="py-2.5 px-3 w-24">Class</th>
-                  <th className="py-2.5 px-3 min-w-[150px]">Fee Type</th>
-                  <th className="py-2.5 px-3 text-right">Amount Paid</th>
-                  <th className="py-2.5 px-3 w-24 text-center font-mono">Receipt No</th>
-                  <th className="py-2.5 px-3 w-24">Date</th>
-                  <th className="py-2.5 px-3 text-right">Actions</th>
+                  <th className="py-2.5 px-3 w-16 text-center whitespace-nowrap">Roll No</th>
+                  <th className="py-2.5 px-3 w-20 whitespace-nowrap">Adm No</th>
+                  <th className="py-2.5 px-3 min-w-[160px] whitespace-nowrap">Student Name</th>
+                  <th className="py-2.5 px-3 w-24 whitespace-nowrap">Class</th>
+                  <th className="py-2.5 px-3 min-w-[150px] whitespace-nowrap">Fee Type</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Amount Paid</th>
+                  <th className="py-2.5 px-3 w-24 text-center font-mono whitespace-nowrap">Receipt No</th>
+                  <th className="py-2.5 px-3 w-24 whitespace-nowrap">Date</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1051,7 +1051,7 @@ export const FeeManagement: React.FC = () => {
                         <td className="py-2 px-3 font-mono text-slate-600">
                           {p.date}
                         </td>
-                        <td className="py-2 px-3 text-right">
+                        <td className="py-2 px-3 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
                               onClick={() => setActiveReceipt(p)}
@@ -1090,19 +1090,19 @@ export const FeeManagement: React.FC = () => {
 
           <div
             onWheel={handleHorizontalWheel}
-            className="overflow-x-auto"
+            className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200"
           >
-            <table className="w-full text-left text-xs border-collapse">
+            <table className="w-full min-w-max text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                  <th className="py-2.5 px-3 w-20">Receipt #</th>
-                  <th className="py-2.5 px-3 w-24">Date</th>
-                  <th className="py-2.5 px-3 w-24 font-mono">Adm No</th>
-                  <th className="py-2.5 px-3">Student Name</th>
-                  <th className="py-2.5 px-3">Class</th>
-                  <th className="py-2.5 px-3">Fee Type / Details</th>
-                  <th className="py-2.5 px-3 text-right">Total (₹)</th>
-                  <th className="py-2.5 px-3 text-right">Actions</th>
+                  <th className="py-2.5 px-3 w-20 whitespace-nowrap">Receipt #</th>
+                  <th className="py-2.5 px-3 w-24 whitespace-nowrap">Date</th>
+                  <th className="py-2.5 px-3 w-24 font-mono whitespace-nowrap">Adm No</th>
+                  <th className="py-2.5 px-3 min-w-[160px] whitespace-nowrap">Student Name</th>
+                  <th className="py-2.5 px-3 whitespace-nowrap">Class</th>
+                  <th className="py-2.5 px-3 min-w-[150px] whitespace-nowrap">Fee Type / Details</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Total (₹)</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1159,7 +1159,7 @@ export const FeeManagement: React.FC = () => {
                       <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-950 text-sm">
                         ₹{p.totalAmount.toLocaleString('en-IN')}
                       </td>
-                      <td className="py-2.5 px-3 text-right">
+                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
                           <button
                             onClick={() => setActiveReceipt(p)}

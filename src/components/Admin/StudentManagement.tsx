@@ -1274,7 +1274,7 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
           onWheel={handleHorizontalWheel}
           className="students-table-scroll overflow-x-auto w-full scrollbar-thin relative print:overflow-visible"
         >
-          <table className="students-data-table w-full min-w-[960px] print:min-w-full text-xs text-left border-collapse">
+          <table className="students-data-table w-full min-w-max print:min-w-full text-xs text-left border-collapse">
             <thead className="sticky top-0 bg-slate-100 text-slate-700 font-bold border-b z-30 print:static print:bg-slate-100">
               <tr>
                 <th className="p-3 text-center w-12 font-mono whitespace-nowrap sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb] print:static print:shadow-none print:w-auto">
@@ -1825,8 +1825,8 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
                   </span>
                 </div>
 
-                <div className="border border-slate-200 rounded-lg max-h-48 overflow-y-auto overflow-x-auto w-full scrollbar-thin">
-                  <table className="w-full min-w-[500px] text-[11px] text-left">
+                <div className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 max-h-48 overflow-y-auto scrollbar-thin">
+                  <table className="w-full min-w-max text-[11px] text-left">
                     <thead className="bg-slate-100 font-bold sticky top-0">
                       <tr>
                         <th className="p-2 whitespace-nowrap">Row</th>
