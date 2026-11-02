@@ -25,6 +25,7 @@ import {
 } from '../../services/attendanceStatsService';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
 import { StudyMaterialsView } from './StudyMaterialsView';
+import { PWABottomNav } from '../Common/PWABottomNav';
 import { formatTuitionMonths } from '../Admin/FeeManagement';
 import { useHorizontalScroll, handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
 import {
@@ -774,7 +775,7 @@ export const ParentDashboard: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Welcome Banner */}
-      <div className="bg-gradient-to-r from-emerald-900 to-emerald-800 text-white rounded-2xl p-4 sm:p-6 shadow-sm print:hidden max-w-full overflow-hidden box-border">
+      <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-[#047857] text-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl border border-white/30 print:hidden max-w-full overflow-hidden box-border">
         <div className="text-center font-serif text-emerald-300 text-base mb-3" dir="rtl">
           بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
         </div>
@@ -791,7 +792,7 @@ export const ParentDashboard: React.FC = () => {
       </div>
 
       {children.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
+        <div className="bg-white/75 backdrop-blur-md rounded-2xl border border-white/60 shadow-xl p-8 text-center text-slate-500">
           <User className="w-10 h-10 mx-auto text-slate-400 mb-2" />
           <h3 className="font-bold text-slate-800 text-sm">No Children Linked</h3>
           <p className="text-xs text-slate-500 mt-1">
@@ -801,7 +802,7 @@ export const ParentDashboard: React.FC = () => {
       ) : (
         <div className="space-y-6">
           {/* Multi-Student Sibling Selector: Clean Dropdown & Single Prominent Child Card */}
-          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs print:hidden space-y-3">
+          <div className="bg-white/75 backdrop-blur-md p-4 sm:p-5 rounded-2xl border border-white/60 shadow-xl print:hidden space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
               <div className="flex items-center gap-2">
                 <GraduationCap className="w-4 h-4 text-emerald-800" />
@@ -909,15 +910,15 @@ export const ParentDashboard: React.FC = () => {
           {/* View Mode Toggle: All Portal Navigation Tabs with Mobile Horizontal Scroll */}
           <div
             {...navScrollProps}
-            className="flex items-center gap-1.5 sm:gap-2 border-b border-slate-200 pb-2 overflow-x-auto no-scrollbar print:hidden cursor-grab active:cursor-grabbing select-none"
+            className="bg-white/75 backdrop-blur-md px-3 sm:px-4 py-2 rounded-2xl border border-white/60 shadow-xl flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar print:hidden cursor-grab active:cursor-grabbing select-none"
           >
             <button
               type="button"
               onClick={() => setActiveTab('home')}
               className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
                 activeTab === 'home'
-                  ? 'bg-emerald-800 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+                  ? 'bg-[#047857] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
               }`}
             >
               <Home className="w-4 h-4" />
@@ -929,8 +930,8 @@ export const ParentDashboard: React.FC = () => {
               onClick={() => setActiveTab('attendance')}
               className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
                 activeTab === 'attendance'
-                  ? 'bg-emerald-800 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+                  ? 'bg-[#047857] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
               }`}
             >
               <CalendarCheck className="w-4 h-4" />
@@ -942,8 +943,8 @@ export const ParentDashboard: React.FC = () => {
               onClick={() => setActiveTab('report')}
               className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
                 activeTab === 'report'
-                  ? 'bg-emerald-800 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+                  ? 'bg-[#047857] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
               }`}
             >
               <Award className="w-4 h-4" />
@@ -955,8 +956,8 @@ export const ParentDashboard: React.FC = () => {
               onClick={() => setActiveTab('fees')}
               className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
                 activeTab === 'fees'
-                  ? 'bg-emerald-800 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+                  ? 'bg-[#047857] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
               }`}
             >
               <CreditCard className="w-4 h-4" />
@@ -968,8 +969,8 @@ export const ParentDashboard: React.FC = () => {
               onClick={() => setActiveTab('study_materials')}
               className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
                 activeTab === 'study_materials'
-                  ? 'bg-emerald-800 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+                  ? 'bg-[#047857] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
               }`}
             >
               <BookOpen className="w-4 h-4" />
@@ -981,8 +982,8 @@ export const ParentDashboard: React.FC = () => {
               onClick={() => setActiveTab('news')}
               className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
                 activeTab === 'news'
-                  ? 'bg-emerald-800 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+                  ? 'bg-[#047857] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
               }`}
             >
               <Newspaper className="w-4 h-4" />
@@ -994,8 +995,8 @@ export const ParentDashboard: React.FC = () => {
               onClick={() => setActiveTab('notification')}
               className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 relative ${
                 activeTab === 'notification'
-                  ? 'bg-emerald-800 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+                  ? 'bg-[#047857] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
               }`}
             >
               <Bell className="w-4 h-4" />
@@ -1010,8 +1011,8 @@ export const ParentDashboard: React.FC = () => {
               onClick={() => setActiveTab('contact')}
               className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
                 activeTab === 'contact'
-                  ? 'bg-emerald-800 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+                  ? 'bg-[#047857] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
               }`}
             >
               <PhoneCall className="w-4 h-4" />
@@ -1023,8 +1024,8 @@ export const ParentDashboard: React.FC = () => {
               onClick={() => setActiveTab('about')}
               className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
                 activeTab === 'about'
-                  ? 'bg-emerald-800 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+                  ? 'bg-[#047857] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
               }`}
             >
               <Sparkles className="w-4 h-4 text-amber-300" />
@@ -2844,6 +2845,13 @@ export const ParentDashboard: React.FC = () => {
           </div>
         );
       })()}
+
+      {/* Role-Based PWA Mobile Bottom Navigation Bar */}
+      <PWABottomNav
+        role="parent"
+        activeTab={activeTab}
+        onSelectTab={tabId => setActiveTab(tabId as ParentPortalTab)}
+      />
     </div>
   );
 };

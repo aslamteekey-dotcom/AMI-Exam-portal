@@ -196,7 +196,7 @@ export const AdminDashboard: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Principal Header Banner */}
-      <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-emerald-800 text-white rounded-2xl p-6 shadow-md print:hidden">
+      <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-[#047857] text-white rounded-2xl sm:rounded-3xl p-6 shadow-xl border border-white/30 print:hidden">
         <div className="text-center font-serif text-emerald-300 text-sm mb-3" dir="rtl">
           بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
         </div>
@@ -214,16 +214,16 @@ export const AdminDashboard: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs bg-emerald-800/80 border border-emerald-700 text-emerald-100 font-semibold px-3 py-1.5 rounded-xl">
+            <span className="text-xs bg-emerald-800/80 border border-white/20 text-emerald-100 font-semibold px-3 py-1.5 rounded-xl backdrop-blur-xs">
               Academic Year: 2026–2027
             </span>
             {overviewData?.isPublished ? (
-              <span className="text-xs bg-emerald-500 text-emerald-950 font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-xs">
+              <span className="text-xs bg-emerald-400 text-emerald-950 font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-xs">
                 <Globe className="w-3.5 h-3.5" />
                 Results Published
               </span>
             ) : (
-              <span className="text-xs bg-amber-500 text-amber-950 font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-xs">
+              <span className="text-xs bg-amber-400 text-amber-950 font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-xs">
                 <Clock className="w-3.5 h-3.5" />
                 Results In Review
               </span>
@@ -235,14 +235,14 @@ export const AdminDashboard: React.FC = () => {
       {/* Navigation Tabs Bar */}
       <div
         {...navScrollProps}
-        className="bg-white px-3 sm:px-4 py-2 rounded-2xl border border-slate-200 shadow-xs flex flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap scroll-smooth no-scrollbar scrollbar-none [-ms-overflow-style:none] [scrollbar-width:none] text-xs font-bold print:hidden cursor-grab active:cursor-grabbing select-none"
+        className="bg-white/75 backdrop-blur-md px-3 sm:px-4 py-2 rounded-2xl border border-white/60 shadow-xl flex flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap scroll-smooth no-scrollbar scrollbar-none [-ms-overflow-style:none] [scrollbar-width:none] text-xs font-bold print:hidden cursor-grab active:cursor-grabbing select-none"
       >
         <button
           onClick={() => setActiveTab('overview')}
           className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
             activeTab === 'overview'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
           }`}
         >
           <Layers className="w-3.5 h-3.5 shrink-0" />

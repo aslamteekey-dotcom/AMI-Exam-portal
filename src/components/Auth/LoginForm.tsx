@@ -30,13 +30,13 @@ export const LoginForm: React.FC = () => {
 
   return (
     <div className="w-full max-w-sm sm:max-w-md mx-auto my-auto">
-      <div className="bg-white rounded-2xl sm:rounded-3xl shadow-lg sm:shadow-xl border border-emerald-900/10 overflow-hidden">
+      <div className="bg-white/75 backdrop-blur-md rounded-2xl sm:rounded-3xl shadow-xl sm:shadow-2xl border border-white/60 overflow-hidden">
         {/* Madrasa Top Banner */}
-        <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-emerald-800 text-white px-4 py-3.5 sm:px-6 sm:py-5 text-center relative">
+        <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-[#047857] text-white px-4 py-3.5 sm:px-6 sm:py-5 text-center relative border-b border-white/20">
           <div className="font-serif text-emerald-300 text-xs sm:text-sm mb-1 sm:mb-1.5" dir="rtl">
             بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
           </div>
-          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/10 rounded-xl sm:rounded-2xl mx-auto flex items-center justify-center mb-1.5 sm:mb-2 shadow-inner">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/10 backdrop-blur-xs rounded-xl sm:rounded-2xl mx-auto flex items-center justify-center mb-1.5 sm:mb-2 shadow-inner border border-white/15">
             <GraduationCap className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-200" />
           </div>
           <h1 className={`text-base sm:text-xl font-bold uppercase tracking-tight ${isMl ? 'font-ml' : 'font-title'}`}>
@@ -48,9 +48,9 @@ export const LoginForm: React.FC = () => {
         </div>
 
         {/* Login Form */}
-        <div className="p-4 sm:p-6">
+        <div className="p-4 sm:p-6 bg-white/40">
           {error && (
-            <div className="mb-3 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
+            <div className="mb-3 p-2.5 rounded-xl bg-rose-50/90 border border-rose-200 text-rose-800 text-xs flex items-center gap-2 shadow-2xs">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{error}</span>
             </div>
@@ -70,7 +70,7 @@ export const LoginForm: React.FC = () => {
                   value={username}
                   onChange={e => setUsername(e.target.value)}
                   placeholder="e.g. admin, teacher, parent"
-                  className="w-full pl-9 pr-3 py-2 sm:py-2.5 text-sm border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent bg-slate-50/50"
+                  className="w-full pl-9 pr-3 py-2 sm:py-2.5 text-sm border border-emerald-900/15 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#047857] focus:border-transparent bg-white/80 backdrop-blur-xs text-slate-800 placeholder:text-slate-400 shadow-2xs focus:bg-white transition"
                   required
                 />
               </div>
@@ -89,7 +89,7 @@ export const LoginForm: React.FC = () => {
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full pl-9 pr-3 py-2 sm:py-2.5 text-sm border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent bg-slate-50/50"
+                  className="w-full pl-9 pr-3 py-2 sm:py-2.5 text-sm border border-emerald-900/15 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#047857] focus:border-transparent bg-white/80 backdrop-blur-xs text-slate-800 placeholder:text-slate-400 shadow-2xs focus:bg-white transition"
                   required
                 />
               </div>
@@ -98,7 +98,7 @@ export const LoginForm: React.FC = () => {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full mt-2 sm:mt-3 py-2.5 sm:py-3 px-4 bg-emerald-800 hover:bg-emerald-900 text-white font-semibold rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 text-sm cursor-pointer"
+              className="w-full mt-2 sm:mt-3 py-2.5 sm:py-3 px-4 bg-[#047857] hover:bg-[#065f46] text-white font-semibold rounded-xl shadow-md hover:shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50 text-sm cursor-pointer"
             >
               {isSubmitting ? 'Authenticating...' : 'Sign In to Portal'}
               <ArrowRight className="w-4 h-4" />

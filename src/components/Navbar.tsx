@@ -31,12 +31,12 @@ export const Navbar: React.FC = () => {
   };
 
   return (
-    <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs print:hidden">
+    <header className="bg-white/75 backdrop-blur-md border-b border-white/60 sticky top-0 z-40 shadow-xs print:hidden">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-14 sm:h-16 gap-2 sm:gap-4">
           {/* Brand Logo & Name */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-emerald-800 flex items-center justify-center text-white shadow-sm shrink-0">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-[#047857] flex items-center justify-center text-white shadow-sm shrink-0">
               <GraduationCap className="w-4 h-4 sm:w-6 sm:h-6" />
             </div>
             <div className="min-w-0 flex-1">
@@ -48,7 +48,7 @@ export const Navbar: React.FC = () => {
                   2026–2027
                 </span>
               </div>
-              <div className="text-[10px] sm:text-xs text-slate-500 font-medium leading-tight mt-0.5 truncate sm:overflow-visible">
+              <div className="text-[10px] sm:text-xs text-slate-600 font-medium leading-tight mt-0.5 truncate sm:overflow-visible">
                 Islamic Education &amp; Digital Learning
               </div>
             </div>
@@ -60,7 +60,7 @@ export const Navbar: React.FC = () => {
             {isQuotaExhausted ? (
               <div
                 title="Daily Firestore cloud quota reached. Local offline database is active: all marks, student profiles, and attendance records are safely stored on this device."
-                className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-900 rounded-lg text-[11px] font-semibold cursor-help"
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-50/90 border border-amber-200 text-amber-900 rounded-lg text-[11px] font-semibold cursor-help shadow-2xs"
               >
                 <CloudOff className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                 <span className="hidden md:inline">Offline Mode (Quota Protected)</span>
@@ -69,19 +69,19 @@ export const Navbar: React.FC = () => {
             ) : (
               <div
                 title="Connected to Firebase Cloud Firestore for real-time synchronization."
-                className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-[11px] font-medium"
+                className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 bg-white/70 border border-emerald-200 text-emerald-800 rounded-lg text-[11px] font-medium shadow-2xs"
               >
-                <Cloud className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <Cloud className="w-3.5 h-3.5 text-[#047857] shrink-0" />
                 <span>Cloud Synced</span>
               </div>
             )}
 
             {/* Language Switcher */}
-            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+            <div className="flex items-center bg-white/60 backdrop-blur-xs p-0.5 rounded-lg border border-white/60 shadow-2xs">
               <button
                 onClick={() => setLang('en')}
                 className={`px-2 py-1 text-xs font-semibold rounded-md transition ${
-                  lang === 'en' ? 'bg-white text-emerald-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  lang === 'en' ? 'bg-[#047857] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 EN
@@ -89,7 +89,7 @@ export const Navbar: React.FC = () => {
               <button
                 onClick={() => setLang('ml')}
                 className={`px-2 py-1 text-xs font-semibold rounded-md transition ${
-                  lang === 'ml' ? 'bg-white text-emerald-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  lang === 'ml' ? 'bg-[#047857] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 ML

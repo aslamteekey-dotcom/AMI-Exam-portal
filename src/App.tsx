@@ -8,6 +8,7 @@ import { ParentDashboard } from './components/Parent/ParentDashboard';
 import { GraduationCap } from 'lucide-react';
 import { ErrorBoundary } from './components/Common/ErrorBoundary';
 import { OfflineFallback } from './components/Common/OfflineFallback';
+import { SplashScreen } from './components/Common/SplashScreen';
 
 const AppContent: React.FC = () => {
   const { user, isLoading, lang, t } = useAuth();
@@ -18,7 +19,7 @@ const AppContent: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex flex-col justify-center items-center bg-slate-50 text-slate-600">
+      <div className="min-h-screen flex flex-col justify-center items-center bg-transparent text-slate-600">
         <div className="w-12 h-12 rounded-2xl bg-emerald-800 flex items-center justify-center text-white mb-4 animate-pulse">
           <GraduationCap className="w-7 h-7" />
         </div>
@@ -31,10 +32,10 @@ const AppContent: React.FC = () => {
   }
 
   return (
-    <div className={`min-h-screen flex flex-col bg-slate-50 text-slate-800 font-sans selection:bg-emerald-100 selection:text-emerald-900 ${!user ? 'h-[100dvh] overflow-hidden justify-between' : ''}`}>
+    <div className={`min-h-screen flex flex-col bg-transparent text-slate-800 font-sans selection:bg-emerald-100 selection:text-emerald-900 ${!user ? 'h-[100dvh] overflow-hidden justify-between' : ''}`}>
       <Navbar />
 
-      <main className={`flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 ${!user ? 'py-2 sm:py-4 flex items-center justify-center min-h-0 overflow-hidden' : 'py-6'}`}>
+      <main className={`flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 ${!user ? 'py-2 sm:py-4 flex items-center justify-center min-h-0 overflow-hidden' : 'py-6 pwa-standalone-bottom-pad'}`}>
         {!user ? (
           <LoginForm />
         ) : user.role === 'admin' ? (
@@ -51,8 +52,11 @@ const AppContent: React.FC = () => {
       {/* Progressive Web App Offline Connectivity Fallback */}
       <OfflineFallback />
 
-      {/* Global Footer */}
-      <footer className={`bg-white border-t border-slate-200 print:hidden text-xs text-slate-600 shrink-0 ${!user ? 'py-2 sm:py-2.5 mt-0' : 'py-6 mt-12'}`}>
+      {/* Embedded Mobile & PWA Splash Screen */}
+      <SplashScreen />
+
+      {/* Global Glassmorphic Footer */}
+      <footer className={`bg-white/70 backdrop-blur-md border-t border-white/60 print:hidden text-xs text-slate-600 shrink-0 ${!user ? 'py-2 sm:py-2.5 mt-0' : 'py-6 mt-12'}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-0.5 sm:space-y-1">
           <p className="font-semibold text-slate-800 text-[11px] sm:text-xs tracking-wide">
             KMEB Affiliated · Mi'yar Grading A+ Accredited Institution

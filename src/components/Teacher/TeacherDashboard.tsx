@@ -31,6 +31,7 @@ import {
 import { MarkEntryScreen } from './MarkEntryScreen';
 import { MonthlyAttendanceReport } from '../Attendance/MonthlyAttendanceReport';
 import { exportScoreSheetToPdf } from '../../utils/scoreSheetPdfExport';
+import { PWABottomNav } from '../Common/PWABottomNav';
 import { useHorizontalScroll, handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
 import { useAttendanceLocks } from '../../hooks/useAttendanceLocks';
 import {
@@ -3084,7 +3085,7 @@ export const TeacherDashboard: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Welcome Banner */}
-      <div className="bg-gradient-to-r from-emerald-900 to-emerald-800 text-white rounded-2xl p-6 shadow-sm print:hidden no-print">
+      <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-[#047857] text-white rounded-2xl sm:rounded-3xl p-6 shadow-xl border border-white/30 print:hidden no-print">
         <div className="text-center font-serif text-emerald-300 text-base mb-3" dir="rtl">
           أهلاً وسهلاً
         </div>
@@ -3132,16 +3133,16 @@ export const TeacherDashboard: React.FC = () => {
       {/* Primary Tabs in EXACT STRICT ORDER: 1. Home, 2. My Class, 3. Mark Entry, 4. Attendance, 5. Fees, 6. News, 7. Notification, 8. Contact, 9. About */}
       <div
         {...navScrollProps}
-        className="flex border-b border-slate-200 gap-1.5 sm:gap-2 text-xs font-bold overflow-x-auto no-scrollbar pb-1 cursor-grab active:cursor-grabbing select-none print:hidden no-print"
+        className="bg-white/75 backdrop-blur-md px-3 sm:px-4 py-2 rounded-2xl border border-white/60 shadow-xl flex items-center gap-1.5 sm:gap-2 text-xs font-bold overflow-x-auto no-scrollbar cursor-grab active:cursor-grabbing select-none print:hidden no-print"
       >
         {/* 1. Home */}
         <button
           type="button"
           onClick={() => setActiveTab('home')}
-          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
             activeTab === 'home'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
           }`}
         >
           <Home className="w-4 h-4" />
@@ -3152,10 +3153,10 @@ export const TeacherDashboard: React.FC = () => {
         <button
           type="button"
           onClick={() => setActiveTab('my_class')}
-          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
             activeTab === 'my_class'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
           }`}
         >
           <Shield className="w-4 h-4" />
@@ -3179,10 +3180,10 @@ export const TeacherDashboard: React.FC = () => {
         <button
           type="button"
           onClick={() => setActiveTab('mark_entry')}
-          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
             activeTab === 'mark_entry'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
           }`}
         >
           <BookOpen className="w-4 h-4" />
@@ -3200,25 +3201,24 @@ export const TeacherDashboard: React.FC = () => {
         <button
           type="button"
           onClick={() => setActiveTab('attendance')}
-          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
             activeTab === 'attendance'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
           }`}
         >
           <CalendarCheck className="w-4 h-4" />
           <span>Attendance</span>
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
         </button>
 
         {/* 5. Fees (Consolidated Single Tab) */}
         <button
           type="button"
           onClick={() => setActiveTab('fees')}
-          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
             activeTab === 'fees'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
           }`}
         >
           <CreditCard className="w-4 h-4" />
@@ -3240,10 +3240,10 @@ export const TeacherDashboard: React.FC = () => {
         <button
           type="button"
           onClick={() => setActiveTab('news')}
-          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
             activeTab === 'news'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
           }`}
         >
           <Newspaper className="w-4 h-4" />
@@ -3261,10 +3261,10 @@ export const TeacherDashboard: React.FC = () => {
         <button
           type="button"
           onClick={() => setActiveTab('notification')}
-          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
             activeTab === 'notification'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
           }`}
         >
           <Bell className="w-4 h-4" />
@@ -3278,10 +3278,10 @@ export const TeacherDashboard: React.FC = () => {
         <button
           type="button"
           onClick={() => setActiveTab('contact')}
-          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
             activeTab === 'contact'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
           }`}
         >
           <PhoneCall className="w-4 h-4" />
@@ -3292,10 +3292,10 @@ export const TeacherDashboard: React.FC = () => {
         <button
           type="button"
           onClick={() => setActiveTab('about')}
-          className={`px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
             activeTab === 'about'
-              ? 'bg-emerald-800 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
           }`}
         >
           <Sparkles className="w-4 h-4 text-amber-300" />
@@ -8046,6 +8046,16 @@ export const TeacherDashboard: React.FC = () => {
           </div>
         );
       })()}
+
+      {/* Role-Based PWA Mobile Bottom Navigation Bar */}
+      <PWABottomNav
+        role="teacher"
+        activeTab={activeTab}
+        onSelectTab={tabId => {
+          setActiveEntry(null);
+          setActiveTab(tabId as TeacherPortalTab);
+        }}
+      />
     </div>
   );
 };
