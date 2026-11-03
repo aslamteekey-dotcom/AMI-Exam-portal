@@ -380,20 +380,6 @@ html[lang="ml"] td {
   .pwa-bottom-nav {
     display: flex !important;
   }
-
-  .pwa-standalone-bottom-pad {
-    padding-bottom: 7rem !important; /* pb-28: 112px so content is never covered */
-  }
-
-  .pwa-standalone-footer-pad {
-    padding-bottom: calc(7rem + env(safe-area-inset-bottom, 0px)) !important; /* 100px+ space so footer text is never covered */
-  }
-}
-
-@media (display-mode: standalone) {
-  .pwa-standalone-footer-pad {
-    padding-bottom: calc(7rem + env(safe-area-inset-bottom, 0px)) !important;
-  }
 }
 
 /* =========================================================================

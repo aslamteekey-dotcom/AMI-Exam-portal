@@ -9,6 +9,7 @@ import { GraduationCap } from 'lucide-react';
 import { ErrorBoundary } from './components/Common/ErrorBoundary';
 import { OfflineFallback } from './components/Common/OfflineFallback';
 import { SplashScreen } from './components/Common/SplashScreen';
+import { Footer } from './components/Common/Footer';
 
 const AppContent: React.FC = () => {
   const { user, isLoading, lang, t, institutionSettings } = useAuth();
@@ -28,10 +29,10 @@ const AppContent: React.FC = () => {
   }
 
   return (
-    <div className={`min-h-screen flex flex-col bg-transparent text-slate-800 font-sans selection:bg-emerald-100 selection:text-emerald-900 ${!user ? 'h-[100dvh] overflow-hidden justify-between' : ''}`}>
+    <div className={`min-h-screen flex flex-col bg-transparent text-slate-800 font-sans selection:bg-emerald-100 selection:text-emerald-900 ${!user ? 'h-[100dvh] overflow-hidden justify-between' : 'h-[100dvh] max-h-[100dvh] overflow-hidden'}`}>
       <Navbar />
 
-      <main className={`flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 ${!user ? 'py-2 sm:py-4 flex items-center justify-center min-h-0 overflow-hidden' : 'py-6 pb-24 sm:pb-6 pwa-standalone-bottom-pad'}`}>
+      <main className={`flex-1 max-w-7xl w-full mx-auto px-2 sm:px-6 lg:px-8 flex flex-col min-h-0 overflow-hidden ${!user ? 'py-2 sm:py-4 items-center justify-center' : 'py-1 sm:py-2.5'}`}>
         {!user ? (
           <LoginForm />
         ) : user.role === 'admin' ? (
@@ -51,17 +52,19 @@ const AppContent: React.FC = () => {
       {/* Embedded Mobile & PWA Splash Screen */}
       <SplashScreen />
 
-      {/* Global Glassmorphic Footer */}
-      <footer className={`bg-white/70 backdrop-blur-md border-t border-white/60 print:hidden text-xs text-slate-600 shrink-0 ${!user ? 'py-2 sm:py-2.5 mt-0' : 'pt-6 pb-28 sm:pb-6 mt-12 pwa-standalone-footer-pad'}`}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-0.5 sm:space-y-1">
-          <p className="font-semibold text-slate-800 text-[11px] sm:text-xs tracking-wide">
-            KMEB Affiliated · Mi'yar Grading A+ Accredited Institution
-          </p>
-          <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
-            Academic Year 2026–2027 · Knowledge | Values | Innovation
-          </p>
-        </div>
-      </footer>
+      {/* Global Glassmorphic Footer (for non-parent roles; Parent Portal has its own flush footer) */}
+      {user?.role !== 'parent' && (
+        <footer className={`bg-white/70 backdrop-blur-md border-t border-white/60 print:hidden text-xs text-slate-600 shrink-0 ${!user ? 'py-2 sm:py-2.5 mt-0' : 'py-3 mt-4'}`}>
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-0.5 sm:space-y-1">
+            <p className="font-semibold text-slate-800 text-[11px] sm:text-xs tracking-wide">
+              KMEB Affiliated · Mi'yar Grading A+ Accredited Institution
+            </p>
+            <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
+              Academic Year 2026–2027 · Knowledge | Values | Innovation
+            </p>
+          </div>
+        </footer>
+      )}
     </div>
   );
 };

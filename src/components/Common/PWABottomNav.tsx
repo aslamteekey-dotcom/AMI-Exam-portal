@@ -111,7 +111,7 @@ export const PWABottomNav: React.FC<PWABottomNavProps> = ({
   return (
     <nav
       aria-label="Mobile PWA Navigation"
-      className={`pwa-bottom-nav fixed bottom-0 left-0 w-full z-50 bg-white/85 backdrop-blur-md border-t border-white/60 shadow-xl select-none print:hidden items-center justify-around px-2 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] ${
+      className={`pwa-bottom-nav shrink-0 w-full z-50 bg-white/90 backdrop-blur-md border-t border-slate-200/80 shadow-md select-none print:hidden items-center justify-around px-2 pt-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] ${
         isStandalone ? 'max-md:flex' : ''
       }`}
     >
