@@ -125,8 +125,13 @@ export const ParentDashboard: React.FC = () => {
     return () => media?.removeEventListener?.('change', checkStandalone);
   }, []);
 
-  // 12 PWA Dashboard Tiles: Home, Attendance, Result, Fees, Study material, News, Notification, Contact, About, Time table, Quiz, LMS
+  // 12 PWA Dashboard Tiles strictly in 4 rows x 3 columns:
+  // Row 1: Home, Attendance, Time table
+  // Row 2: Result, Fees, Study material
+  // Row 3: LMS, Quiz, Notification
+  // Row 4: News, Contact, About
   const pwaDashboardTiles = [
+    // Row 1
     {
       id: 'home',
       label: isMl ? 'ഹോം' : 'Home',
@@ -139,6 +144,13 @@ export const ParentDashboard: React.FC = () => {
       icon: CalendarCheck,
       onClick: () => setActiveTab('attendance'),
     },
+    {
+      id: 'time_table',
+      label: isMl ? 'ടൈംടേബിൾ' : 'Time table',
+      icon: Clock,
+      onClick: () => setActiveTab('time_table'),
+    },
+    // Row 2
     {
       id: 'result',
       label: isMl ? 'റിസൾട്ട്' : 'Result',
@@ -157,17 +169,31 @@ export const ParentDashboard: React.FC = () => {
       icon: BookOpen,
       onClick: () => setActiveTab('study_materials'),
     },
+    // Row 3
     {
-      id: 'news',
-      label: isMl ? 'വാർത്തകൾ' : 'News',
-      icon: Newspaper,
-      onClick: () => setActiveTab('news'),
+      id: 'lms',
+      label: 'LMS',
+      icon: GraduationCap,
+      onClick: () => setActiveTab('lms'),
+    },
+    {
+      id: 'quiz',
+      label: isMl ? 'ക്വിസ്' : 'Quiz',
+      icon: HelpCircle,
+      onClick: () => setActiveTab('quiz'),
     },
     {
       id: 'notification',
       label: isMl ? 'അറിയിപ്പുകൾ' : 'Notification',
       icon: Bell,
       onClick: () => setActiveTab('notification'),
+    },
+    // Row 4
+    {
+      id: 'news',
+      label: isMl ? 'വാർത്തകൾ' : 'News',
+      icon: Newspaper,
+      onClick: () => setActiveTab('news'),
     },
     {
       id: 'contact',
@@ -180,24 +206,6 @@ export const ParentDashboard: React.FC = () => {
       label: isMl ? 'ഞങ്ങളെക്കുറിച്ച്' : 'About',
       icon: Sparkles,
       onClick: () => setActiveTab('about'),
-    },
-    {
-      id: 'time_table',
-      label: isMl ? 'ടൈംടേബിൾ' : 'Time table',
-      icon: Clock,
-      onClick: () => setActiveTab('time_table'),
-    },
-    {
-      id: 'quiz',
-      label: isMl ? 'ക്വിസ്' : 'Quiz',
-      icon: HelpCircle,
-      onClick: () => setActiveTab('quiz'),
-    },
-    {
-      id: 'lms',
-      label: 'LMS',
-      icon: GraduationCap,
-      onClick: () => setActiveTab('lms'),
     },
   ];
 
@@ -889,12 +897,32 @@ export const ParentDashboard: React.FC = () => {
   // The A4 Progress Report is ONLY accessible if the examination for that specific class has been explicitly flagged as "Published"
   const shouldShowReport = Boolean(activeReport && isExamPublished && !isUnpublished);
 
+  const formatStudentDob = (dobStr?: string): string => {
+    if (!dobStr) return 'DD/MM/YYYY';
+    try {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dobStr)) {
+        const [y, m, d] = dobStr.split('-');
+        return `${d}/${m}/${y}`;
+      }
+      const d = new Date(dobStr);
+      if (!isNaN(d.getTime())) {
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const year = d.getFullYear();
+        return `${day}/${month}/${year}`;
+      }
+    } catch {
+      // ignore
+    }
+    return dobStr;
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-24 sm:pb-0">
       {/* Welcome Banner */}
       <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-[#047857] text-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl border border-white/30 print:hidden max-w-full overflow-hidden box-border">
         <div className="text-center font-serif text-emerald-300 text-base mb-3" dir="rtl">
-          بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
+          السلام عليكم و رحمة الله
         </div>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full max-w-full">
           <div className="min-w-0 max-w-full">
@@ -921,17 +949,22 @@ export const ParentDashboard: React.FC = () => {
           {/* Multi-Student Sibling Selector: Clean Dropdown & Single Prominent Child Card */}
           <div className="bg-white/75 backdrop-blur-md p-4 sm:p-5 rounded-2xl border border-white/60 shadow-xl print:hidden space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
-              <div className="flex items-center gap-2">
-                <GraduationCap className="w-4 h-4 text-emerald-800" />
-                <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                  {t.navMyChildren} ({children.length} {children.length === 1 ? 'Student' : 'Students'})
-                </h2>
+              <div>
+                <div className="flex items-center gap-2">
+                  <GraduationCap className="w-4 h-4 text-[#047857]" />
+                  <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    {t.navMyChildren} ({children.length} {children.length === 1 ? 'Student' : 'Students'})
+                  </h2>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5 ml-6">
+                  Active Student Record
+                </p>
               </div>
-              <span className="text-[11px] text-slate-500">
-                {parentStudents.length > 1
-                  ? 'Use dropdown to switch student profile'
-                  : 'Active Student Record'}
-              </span>
+              {parentStudents.length > 1 && (
+                <span className="text-[11px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md font-medium border border-emerald-200">
+                  Use dropdown to switch student profile
+                </span>
+              )}
             </div>
 
             {/* Dropdown Selector (Active when multiple children exist) */}
@@ -972,52 +1005,116 @@ export const ParentDashboard: React.FC = () => {
                 (student as any).regNo ||
                 student.examRegisterNumbers?.[selectedExamId];
 
+              const isFemale = (student.gender && /girl|f|female/i.test(student.gender)) ||
+                /fathima|ayisha|khadeeja|safwa|mariyam|amina|zainab|hafsa|ruqayya|asma|noura|hana|hiba/i.test(student.nameEn || '');
+
+              const genderDisplay = student.gender
+                ? (/f|girl/i.test(student.gender) ? 'Girl' : 'Boy')
+                : (isFemale ? 'Girl' : 'Boy');
+
+              const photoUrl = (student as any).photoUrl || (student as any).photo;
+
               return (
-                <div className="p-4 sm:p-5 rounded-2xl border-2 border-emerald-600 bg-emerald-50/70 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="flex items-center gap-3.5 sm:gap-4 min-w-0">
-                    {/* Large prominent badge on the left showing Admission Number */}
-                    <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-emerald-800 text-white shadow-md flex flex-col items-center justify-center shrink-0 border border-emerald-700">
-                      <span className="text-[9px] uppercase tracking-wider font-bold text-emerald-200">Adm No</span>
-                      <span className="font-mono font-black text-sm sm:text-base tracking-tight">{student.admissionNo}</span>
-                    </div>
-
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="font-bold text-slate-900 text-base sm:text-lg">
-                          {student.nameEn}
-                        </h3>
-                        {student.nameMl && (
-                          <span className="text-xs sm:text-sm font-semibold text-emerald-900 bg-emerald-100/90 border border-emerald-200/80 px-2 py-0.5 rounded-md">
-                            {student.nameMl}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="text-xs text-slate-600 font-medium flex flex-wrap items-center gap-2 mt-1.5">
-                        <span className="bg-white border border-slate-200 text-slate-800 font-bold px-2 py-0.5 rounded-md shadow-2xs">
-                          Class: {(classesMap[student.classId] || student.classId || '').replace(/^Class\s*/i, '')}
-                        </span>
-                        <span>•</span>
-                        <span className="font-mono font-bold text-emerald-950 bg-emerald-100/70 border border-emerald-200/60 px-2 py-0.5 rounded-md">
-                          Roll: {student.rollNo}
-                        </span>
-                        {childRegNo && (
-                          <>
-                            <span>•</span>
-                            <span className="font-mono text-emerald-900 font-bold bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-md text-[11px]">
-                              Exam Reg: {childRegNo}
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    </div>
+                <div className="p-3.5 sm:p-5 rounded-2xl border-2 border-emerald-600/90 bg-emerald-50/70 shadow-xs flex items-center gap-4 sm:gap-5">
+                  {/* Photo Frame (Left Side) */}
+                  <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-2 border-emerald-300 bg-white shadow-xs overflow-hidden shrink-0 flex items-center justify-center">
+                    {photoUrl ? (
+                      <img
+                        src={photoUrl}
+                        alt={student.nameEn || 'Student'}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : isFemale ? (
+                      <svg viewBox="0 0 100 100" className="w-full h-full" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect width="100" height="100" fill="#ECFDF5" />
+                        <circle cx="50" cy="50" r="44" fill="#D1FAE5" />
+                        {/* Hijab wrap */}
+                        <path d="M50 14 C32 14 26 28 26 46 C26 66 32 84 50 84 C68 84 74 66 74 46 C74 28 68 14 50 14 Z" fill="#047857" />
+                        {/* Face oval */}
+                        <ellipse cx="50" cy="46" rx="16" ry="20" fill="#FDE68A" />
+                        {/* Hijab drapery inner */}
+                        <path d="M34 44 C34 32 40 26 50 26 C60 26 66 32 66 44 C66 52 62 58 50 63 C38 58 34 52 34 44 Z" fill="#065F46" opacity="0.18" />
+                        {/* Eyes */}
+                        <ellipse cx="44" cy="45" rx="1.8" ry="2.2" fill="#1F2937" />
+                        <ellipse cx="56" cy="45" rx="1.8" ry="2.2" fill="#1F2937" />
+                        <circle cx="44.5" cy="44.2" r="0.6" fill="#FFFFFF" />
+                        <circle cx="56.5" cy="44.2" r="0.6" fill="#FFFFFF" />
+                        {/* Smile */}
+                        <path d="M46 54 C48 56 52 56 54 54" stroke="#B45309" strokeWidth="1.2" strokeLinecap="round" />
+                        {/* Cheeks */}
+                        <circle cx="41" cy="49" r="2.5" fill="#F87171" opacity="0.3" />
+                        <circle cx="59" cy="49" r="2.5" fill="#F87171" opacity="0.3" />
+                        {/* Dress / Collar */}
+                        <path d="M22 92 C22 80 34 76 50 76 C66 76 78 80 78 92 Z" fill="#059669" />
+                        <path d="M46 76 L50 82 L54 76 Z" fill="#FDE68A" />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 100 100" className="w-full h-full" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect width="100" height="100" fill="#ECFDF5" />
+                        <circle cx="50" cy="50" r="44" fill="#D1FAE5" />
+                        {/* Kufi / Prayer Cap */}
+                        <path d="M32 38 C32 25 40 18 50 18 C60 18 68 25 68 38 Z" fill="#047857" />
+                        <rect x="30" y="36" width="40" height="4" rx="2" fill="#065F46" />
+                        <path d="M32 40 C31 44 32 46 33 48 L35 44 Z" fill="#1F2937" />
+                        <path d="M68 40 C69 44 68 46 67 48 L65 44 Z" fill="#1F2937" />
+                        {/* Face */}
+                        <ellipse cx="50" cy="49" rx="17" ry="19" fill="#FDE68A" />
+                        {/* Eyes */}
+                        <ellipse cx="44" cy="47" rx="1.8" ry="2.2" fill="#1F2937" />
+                        <ellipse cx="56" cy="47" rx="1.8" ry="2.2" fill="#1F2937" />
+                        <circle cx="44.5" cy="46.2" r="0.6" fill="#FFFFFF" />
+                        <circle cx="56.5" cy="46.2" r="0.6" fill="#FFFFFF" />
+                        {/* Smile */}
+                        <path d="M46 56 C48 58 52 58 54 56" stroke="#B45309" strokeWidth="1.2" strokeLinecap="round" />
+                        {/* Cheeks */}
+                        <circle cx="41" cy="51" r="2.5" fill="#F87171" opacity="0.3" />
+                        <circle cx="59" cy="51" r="2.5" fill="#F87171" opacity="0.3" />
+                        {/* Shirt */}
+                        <path d="M22 92 C22 78 34 74 50 74 C66 74 78 78 78 92 Z" fill="#059669" />
+                        <path d="M46 74 L50 80 L54 74 Z" fill="#FDE68A" />
+                      </svg>
+                    )}
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0 sm:self-center">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-white border border-emerald-300 px-3 py-1.5 rounded-xl shadow-2xs">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                      <span>Active Student Profile</span>
-                    </span>
+                  {/* Student Details (Right Side) */}
+                  <div className="min-w-0 flex-1">
+                    {/* English Name: Primary dark green, bold, larger font */}
+                    <h3 className="font-bold text-lg sm:text-xl text-[#047857] leading-tight truncate">
+                      {student.nameEn || 'Aliza Fathima TK'}
+                    </h3>
+
+                    {/* Malayalam Name: Directly below English name in black */}
+                    <div className="text-black text-sm font-medium leading-tight mt-0.5 truncate">
+                      {student.nameMl || 'അലിസ ഫാത്തിമ ടി.കെ'}
+                    </div>
+
+                    {/* Meta Details Grid: 2 columns */}
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mt-2 text-slate-700">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="text-slate-500 font-medium">Adm No:</span>
+                        <span className="font-semibold text-slate-900 font-mono">{student.admissionNo || '983'}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="text-slate-500 font-medium">DOB:</span>
+                        <span className="font-semibold text-slate-900">{formatStudentDob(student.dob) || 'DD/MM/YYYY'}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="text-slate-500 font-medium">Class:</span>
+                        <span className="font-semibold text-slate-900">{(classesMap[student.classId] || student.classId || '').replace(/^Class\s*/i, '') || '5'}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="text-slate-500 font-medium">Roll:</span>
+                        <span className="font-semibold text-slate-900 font-mono">{student.rollNo ?? '10'}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="text-slate-500 font-medium">Exam Reg:</span>
+                        <span className="font-semibold text-emerald-800 font-mono">{childRegNo || '5207'}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="text-slate-500 font-medium">Gender:</span>
+                        <span className="font-semibold text-slate-900">{genderDisplay}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               );
@@ -1195,7 +1292,7 @@ export const ParentDashboard: React.FC = () => {
           {activeTab === 'home' && (
             isStandalone ? (
               /* PWA 'Home' View: Render ONLY the 12 Dashboard Tiles grid */
-              <div className="parent-pwa-tiles-grid grid grid-cols-3 gap-3 sm:gap-4 print:hidden">
+              <div className="parent-pwa-tiles-grid grid grid-cols-3 gap-4 print:hidden">
                 {pwaDashboardTiles.map(tile => {
                   const Icon = tile.icon;
                   return (

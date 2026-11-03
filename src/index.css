@@ -382,7 +382,17 @@ html[lang="ml"] td {
   }
 
   .pwa-standalone-bottom-pad {
-    padding-bottom: 5.5rem !important; /* pb-20+ so content is never covered */
+    padding-bottom: 7rem !important; /* pb-28: 112px so content is never covered */
+  }
+
+  .pwa-standalone-footer-pad {
+    padding-bottom: calc(7rem + env(safe-area-inset-bottom, 0px)) !important; /* 100px+ space so footer text is never covered */
+  }
+}
+
+@media (display-mode: standalone) {
+  .pwa-standalone-footer-pad {
+    padding-bottom: calc(7rem + env(safe-area-inset-bottom, 0px)) !important;
   }
 }
 
