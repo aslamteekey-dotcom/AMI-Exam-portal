@@ -188,7 +188,7 @@ export const numberToWords = (num: number): string => {
 };
 
 export const TeacherDashboard: React.FC = () => {
-  const { user, fetchWithAuth, lang, t } = useAuth();
+  const { user, fetchWithAuth, lang, t, institutionSettings: authSettings } = useAuth();
   const isMl = lang === 'ml';
   const language = (lang || 'en').toUpperCase();
   const teacher = user;
@@ -236,7 +236,12 @@ export const TeacherDashboard: React.FC = () => {
 
   // Special Fees State (Restricted to Teacher's Designated Class)
   const [allFeePayments, setAllFeePayments] = useState<FeePayment[]>([]);
-  const [institutionSettings, setInstitutionSettings] = useState<InstitutionSettings | null>(null);
+  const [institutionSettings, setInstitutionSettings] = useState<InstitutionSettings | null>(() => authSettings || null);
+  useEffect(() => {
+    if (authSettings) {
+      setInstitutionSettings(authSettings);
+    }
+  }, [authSettings]);
   const [specialFeeReceiptNo, setSpecialFeeReceiptNo] = useState<string>('01');
   const [specialFeeStudentId, setSpecialFeeStudentId] = useState<string>('');
   const [specialFeeDate, setSpecialFeeDate] = useState<string>(() => formatLocalDate(new Date()));
@@ -2371,20 +2376,7 @@ export const TeacherDashboard: React.FC = () => {
         return st;
       });
 
-      // Persist any other class students whose roll numbers changed to Firestore
-      for (const st of finalResequencedClass) {
-        if (st.id !== editingStudent.id && st.admissionNo !== editingStudent.admissionNo) {
-          try {
-            await setDoc(doc(db, 'students', st.id), cleanForFirestore(st), { merge: true });
-            if (st.admissionNo && st.admissionNo !== st.id) {
-              await setDoc(doc(db, 'students', st.admissionNo), cleanForFirestore(st), { merge: true }).catch(() => {});
-            }
-          } catch (e) {
-            console.warn('Firestore sync resequenced student error:', e);
-          }
-        }
-      }
-
+      // CRITICAL FIX: Only send edited student to Firebase. NEVER loop or write other class students to Firestore!
       const resequencedMap = new Map(finalResequencedClass.map(s => [s.id, s]));
       const finalAllStudents = updatedList.map(s => {
         if (s.id === editingStudent.id || (editingStudent.admissionNo && s.admissionNo === editingStudent.admissionNo)) {
@@ -3103,7 +3095,7 @@ export const TeacherDashboard: React.FC = () => {
               )}
             </div>
             <p className="text-xs text-emerald-200 mt-1">
-              {isMl ? 'ടീച്ചർ പോർട്ടൽ • അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്' : 'Teacher Portal • Al-Madrasathul Islamiya Pallikkuth'}
+              {isMl ? `ടീച്ചർ പോർട്ടൽ • ${institutionSettings?.institutionNameMl || institutionSettings?.madrasaNameMl || institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'മദ്റസ പോർട്ടൽ'}` : `Teacher Portal • ${institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'Madrasa Portal'}`}
             </p>
             <p className="text-[11px] text-emerald-300 font-medium">
               Islamic Education &amp; Digital Learning
@@ -3934,7 +3926,7 @@ export const TeacherDashboard: React.FC = () => {
                           {institutionSettings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
                         </div>
                         <h1 className="text-base font-black uppercase text-black font-serif tracking-wide mt-0.5">
-                          {institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
+                          {institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'Madrasa Portal'}
                         </h1>
                         {(institutionSettings?.institutionNameMl || institutionSettings?.madrasaNameMl) && (
                           <h2 className="text-xs font-bold text-black font-ml mt-0.5">
@@ -7146,7 +7138,7 @@ export const TeacherDashboard: React.FC = () => {
                   </h2>
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  Official circulars, academic notices, and fest announcements from Al-Madrasathul Islamiya Pallikkuth
+                  Official circulars, academic notices, and fest announcements from {institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'our institution'}
                 </p>
               </div>
 
@@ -7780,7 +7772,7 @@ export const TeacherDashboard: React.FC = () => {
                       </span>
                     </div>
                     <h2 className="text-xl sm:text-2xl font-bold font-serif text-white tracking-tight">
-                      Al-Madrasathul Islamiya Pallikkuth
+                      {institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'Madrasa Portal'}
                     </h2>
                     <div className="text-xs sm:text-sm font-semibold text-emerald-200 font-mono mt-0.5 tracking-wider">
                       Reg No: KMEB/MPM/026/M0161/19
@@ -7810,7 +7802,7 @@ export const TeacherDashboard: React.FC = () => {
                   <span>OFFICIAL STATEMENT</span>
                 </div>
                 <p className="text-sm sm:text-base text-emerald-50 leading-relaxed font-sans">
-                  Al-Madrasathul Islamiya Pallikkuth (KMEB-affiliated, A+ Accredited) blends traditional Islamic values with modern educational technology. We partner with parents and teachers to create an engaging, student-centered digital learning environment that nurtures academic excellence, moral character, and holistic development.
+                  {institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'The institution'} (KMEB-affiliated, A+ Accredited) blends traditional Islamic values with modern educational technology. We partner with parents and teachers to create an engaging, student-centered digital learning environment that nurtures academic excellence, moral character, and holistic development.
                 </p>
               </div>
 
@@ -7876,7 +7868,7 @@ export const TeacherDashboard: React.FC = () => {
                       <span>Follow us</span>
                     </h3>
                     <p className="text-xs text-emerald-100/80 mt-0.5">
-                      Connect with Al-Madrasathul Islamiya Pallikkuth on our official social media channels
+                      Connect with {institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'our madrasa'} on our official social media channels
                     </p>
                   </div>
                 </div>
@@ -7969,10 +7961,10 @@ export const TeacherDashboard: React.FC = () => {
                     {institutionSettings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
                   </div>
                   <h1 className="text-base font-black uppercase text-emerald-950 font-serif mt-1">
-                    {institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
+                    {institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'Madrasa Portal'}
                   </h1>
                   <h2 className="text-xs font-bold text-emerald-900">
-                    {institutionSettings?.institutionNameMl || institutionSettings?.madrasaNameMl || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്'}
+                    {institutionSettings?.institutionNameMl || institutionSettings?.madrasaNameMl || ''}
                   </h2>
                   <div className="text-[10px] font-semibold text-emerald-800 tracking-wide mt-0.5">
                     {institutionSettings?.institutionSubtitle || institutionSettings?.locationEn || 'Islamic Education & Digital Learning'}

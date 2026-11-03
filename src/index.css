@@ -386,3 +386,20 @@ html[lang="ml"] td {
   }
 }
 
+/* =========================================================================
+   Parent Portal: PWA Dashboard Tiles vs Browser Tabs
+   ========================================================================= */
+.parent-pwa-tiles-grid {
+  display: none;
+}
+
+@media (display-mode: standalone) {
+  .parent-browser-tabs {
+    display: none !important;
+  }
+
+  .parent-pwa-tiles-grid {
+    display: grid !important;
+  }
+}
+

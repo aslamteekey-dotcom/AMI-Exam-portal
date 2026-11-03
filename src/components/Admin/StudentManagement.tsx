@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 
 export const StudentManagement: React.FC = () => {
-  const { fetchWithAuth, user, lang, t } = useAuth();
+  const { fetchWithAuth, user, lang, t, institutionSettings } = useAuth();
   const [loading, setLoading] = useState(true);
   const [students, setStudents] = useState<Student[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
@@ -430,20 +430,7 @@ export const StudentManagement: React.FC = () => {
           return st;
         });
 
-        // Update any other class students whose roll numbers shifted in Firestore
-        for (const st of finalResequencedClass) {
-          if (st.id !== editingStudent.id && st.admissionNo !== editingStudent.admissionNo) {
-            try {
-              await setDoc(doc(db, 'students', st.id), cleanForFirestore(st), { merge: true });
-              if (st.admissionNo && st.admissionNo !== st.id) {
-                await setDoc(doc(db, 'students', st.admissionNo), cleanForFirestore(st), { merge: true }).catch(() => {});
-              }
-            } catch (e) {
-              console.warn('Firestore roll resequencing sync error:', e);
-            }
-          }
-        }
-
+        // CRITICAL FIX: Only send edited student to Firebase. NEVER loop or write other class students to Firestore!
         const resequencedMap = new Map(finalResequencedClass.map(s => [s.id, s]));
 
         // Immediately update React state so the card / directory updates instantly without requiring a page reload
@@ -621,10 +608,12 @@ export const StudentManagement: React.FC = () => {
     if (!confirm) return;
 
     try {
-      // 1. Immediately delete from local state
-      setStudents(prev =>
-        prev.filter(s => s.id !== student.id && (!student.admissionNo || s.admissionNo !== student.admissionNo))
-      );
+      // 1. Immediately delete from local state and broadcast update to all tabs/components
+      setStudents(prev => {
+        const next = prev.filter(s => s.id !== student.id && (!student.admissionNo || s.admissionNo !== student.admissionNo));
+        window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: next }));
+        return next;
+      });
 
       // 2. Delete from Firestore directly for document ID and also any duplicate documents with same admissionNo
       try {
@@ -672,6 +661,8 @@ export const StudentManagement: React.FC = () => {
 
     try {
       setLoading(true);
+      setStudents([]);
+      window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: [] }));
       await firestoreSync.purgeDemoStudentsFromFirestore();
       const res = await fetchWithAuth('/api/students', { method: 'DELETE' });
       if (!res.ok) {
@@ -708,6 +699,10 @@ export const StudentManagement: React.FC = () => {
     try {
       setLoading(true);
       const toDelete = students.filter(s => s.classId === deleteClassId);
+      const remaining = students.filter(s => s.classId !== deleteClassId);
+      setStudents(remaining);
+      window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: remaining }));
+
       for (const st of toDelete) {
         await deleteDoc(doc(db, 'students', st.id)).catch(() => {});
       }
@@ -740,6 +735,8 @@ export const StudentManagement: React.FC = () => {
 
     try {
       setLoading(true);
+      setStudents([]);
+      window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: [] }));
       await firestoreSync.purgeDemoStudentsFromFirestore();
       const res = await fetchWithAuth('/api/students/clear-demo', { method: 'POST' });
       if (!res.ok) {
@@ -1247,7 +1244,9 @@ ADM-2026-004, Ayisha Maryam, Class 3, Girl, Hamza Haji, 9745112233`;
               AMI
             </div>
             <div>
-              <h1 className="text-base font-bold text-slate-900 font-serif">Al-Madrasathul Islamiya Pallikkuth</h1>
+              <h1 className="text-base font-bold text-slate-900 font-serif">
+                {institutionSettings?.madrasaNameEn || institutionSettings?.institutionName || 'Madrasa Portal'}
+              </h1>
               <p className="text-[10px] text-slate-600">
                 KMEB Affiliated · Mi'yar Grading A+ Accredited · Pallikkuth, Pattikkad P.O, Malappuram
               </p>

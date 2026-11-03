@@ -82,7 +82,7 @@ export type ParentPortalTab =
 
 
 export const ParentDashboard: React.FC = () => {
-  const { user, fetchWithAuth, lang, t } = useAuth();
+  const { user, fetchWithAuth, lang, t, institutionSettings } = useAuth();
   const isMl = lang === 'ml';
   const [loading, setLoading] = useState(true);
   const [children, setChildren] = useState<Student[]>([]);
@@ -97,7 +97,96 @@ export const ParentDashboard: React.FC = () => {
   const { scrollProps: navScrollProps } = useHorizontalScroll();
   const [childPayments, setChildPayments] = useState<FeePayment[]>([]);
   const [activeReceipt, setActiveReceipt] = useState<FeePayment | null>(null);
-  const [settings, setSettings] = useState<InstitutionSettings | null>(null);
+
+  // PWA Standalone Detection for Dashboard Tiles Grid
+  const [isStandalone, setIsStandalone] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const matchDisplay = window.matchMedia?.('(display-mode: standalone)')?.matches;
+    const isIOSStandalone =
+      (window.navigator as unknown as { standalone?: boolean })?.standalone === true;
+    return Boolean(matchDisplay || isIOSStandalone);
+  });
+
+  useEffect(() => {
+    const checkStandalone = () => {
+      const matchDisplay = window.matchMedia?.('(display-mode: standalone)')?.matches;
+      const isIOSStandalone =
+        (window.navigator as unknown as { standalone?: boolean })?.standalone === true;
+      setIsStandalone(Boolean(matchDisplay || isIOSStandalone));
+    };
+
+    checkStandalone();
+    const media = window.matchMedia?.('(display-mode: standalone)');
+    media?.addEventListener?.('change', checkStandalone);
+    return () => media?.removeEventListener?.('change', checkStandalone);
+  }, []);
+
+  // 6 PWA Dashboard Tiles: Attendance, Result, Fees, Time table, Quiz, LMS
+  const pwaDashboardTiles = [
+    {
+      id: 'attendance',
+      activeTabKey: 'attendance',
+      label: isMl ? 'ഹാജർ' : 'Attendance',
+      icon: CalendarCheck,
+      onClick: () => setActiveTab('attendance'),
+    },
+    {
+      id: 'result',
+      activeTabKey: 'report',
+      label: isMl ? 'റിസൾട്ട്' : 'Result',
+      icon: Award,
+      onClick: () => setActiveTab('report'),
+    },
+    {
+      id: 'fees',
+      activeTabKey: 'fees',
+      label: isMl ? 'ഫീസ്' : 'Fees',
+      icon: CreditCard,
+      onClick: () => setActiveTab('fees'),
+    },
+    {
+      id: 'time_table',
+      activeTabKey: null,
+      label: isMl ? 'ടൈംടേബിൾ' : 'Time table',
+      icon: Clock,
+      onClick: () => {
+        console.log('Time table clicked');
+      },
+    },
+    {
+      id: 'quiz',
+      activeTabKey: null,
+      label: isMl ? 'ക്വിസ്' : 'Quiz',
+      icon: HelpCircle,
+      onClick: () => {
+        console.log('Quiz clicked');
+      },
+    },
+    {
+      id: 'lms',
+      activeTabKey: null,
+      label: 'LMS',
+      icon: BookOpen,
+      onClick: () => {
+        console.log('LMS clicked');
+      },
+    },
+  ];
+
+  const [settings, setSettings] = useState<InstitutionSettings | null>(() => institutionSettings || null);
+  useEffect(() => {
+    if (institutionSettings) {
+      setSettings(institutionSettings);
+    }
+  }, [institutionSettings]);
+
+  const currentSettings = settings || institutionSettings;
+  const currentMadrasaName = (isMl
+    ? (currentSettings?.institutionNameMl || currentSettings?.madrasaNameMl || currentSettings?.institutionName || currentSettings?.madrasaNameEn)
+    : (currentSettings?.institutionName || currentSettings?.madrasaNameEn)) || 'Madrasa Portal';
+  const currentMadrasaNameEn = currentSettings?.institutionName || currentSettings?.madrasaNameEn || 'Madrasa Portal';
+  const currentMadrasaNameMl = currentSettings?.institutionNameMl || currentSettings?.madrasaNameMl || currentSettings?.institutionName || currentSettings?.madrasaNameEn || 'മദ്റസ പോർട്ടൽ';
+
   const [attendanceConfigs, setAttendanceConfigs] = useState<Record<string, ClassAttendanceConfig>>({});
   const [institutionHolidays, setInstitutionHolidays] = useState<Record<string, InstitutionHoliday>>({});
   const [specialWorkingDays, setSpecialWorkingDays] = useState<Record<string, SpecialWorkingDay>>({});
@@ -553,11 +642,11 @@ export const ParentDashboard: React.FC = () => {
       // Normalize data: support data directly being the report or data containing { report, settings }
       const finalReport: StudentProgressReport = data.report || data;
       const finalSettings: InstitutionSettings = data.settings || settings || {
-        madrasaNameEn: 'Al-Madrasathul Islamiya Pallikkuth',
-        madrasaNameMl: 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്',
-        locationEn: 'Pallikkuth, Kerala',
-        locationMl: 'പള്ളിക്കുത്ത്, കേരളം',
-        registrationNo: 'KEC-8492',
+        madrasaNameEn: '',
+        madrasaNameMl: '',
+        locationEn: '',
+        locationMl: '',
+        registrationNo: '',
         principalNameEn: 'ASLAM TK',
         principalNameMl: 'അസ്‌ലം ടി.കെ.',
       };
@@ -785,7 +874,7 @@ export const ParentDashboard: React.FC = () => {
               {isMl && user?.nameMl ? user.nameMl : user?.name}
             </h1>
             <p className="text-xs text-emerald-200 mt-1">
-              {t.parentRole} • Al-Madrasathul Islamiya Pallikkuth
+              {t.parentRole} • {currentMadrasaName}
             </p>
           </div>
         </div>
@@ -907,10 +996,12 @@ export const ParentDashboard: React.FC = () => {
             })()}
           </div>
 
-          {/* View Mode Toggle: All Portal Navigation Tabs with Mobile Horizontal Scroll */}
+          {/* View Mode Toggle: Standard Browser Navigation Tabs (hidden in PWA Standalone Mode) */}
           <div
             {...navScrollProps}
-            className="bg-white/75 backdrop-blur-md px-3 sm:px-4 py-2 rounded-2xl border border-white/60 shadow-xl flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar print:hidden cursor-grab active:cursor-grabbing select-none"
+            className={`parent-browser-tabs ${
+              isStandalone ? 'hidden' : 'flex'
+            } bg-white/75 backdrop-blur-md px-3 sm:px-4 py-2 rounded-2xl border border-white/60 shadow-xl items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar print:hidden cursor-grab active:cursor-grabbing select-none`}
           >
             <button
               type="button"
@@ -1033,6 +1124,33 @@ export const ParentDashboard: React.FC = () => {
             </button>
           </div>
 
+          {/* PWA-ONLY DASHBOARD TILES: 3-column grid directly below "My Children" in Standalone PWA mode */}
+          <div
+            className={`parent-pwa-tiles-grid ${
+              isStandalone ? 'grid' : 'hidden'
+            } grid-cols-3 gap-3 sm:gap-4 print:hidden`}
+          >
+            {pwaDashboardTiles.map(tile => {
+              const Icon = tile.icon;
+              const isActive = tile.activeTabKey && activeTab === tile.activeTabKey;
+              return (
+                <button
+                  key={tile.id}
+                  type="button"
+                  onClick={tile.onClick}
+                  className={`aspect-square rounded-2xl bg-[#047857] hover:bg-emerald-800 text-white flex flex-col items-center justify-center p-3 shadow-md hover:shadow-lg transition-all duration-200 active:scale-95 cursor-pointer border border-emerald-600/30 select-none ${
+                    isActive ? 'ring-2 ring-white/90 bg-emerald-800 shadow-lg scale-[1.02]' : ''
+                  }`}
+                >
+                  <Icon className="w-8 h-8 text-white shrink-0" />
+                  <span className="text-xs mt-2 text-center break-words font-semibold text-white leading-tight">
+                    {tile.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
           {/* TAB 1: HOME OVERVIEW VIEW */}
           {activeTab === 'home' && (
             <div className="space-y-6">
@@ -1054,8 +1172,8 @@ export const ParentDashboard: React.FC = () => {
                     </h2>
                     <p className="text-xs text-slate-500 mt-1 leading-relaxed max-w-2xl">
                       {isMl
-                        ? `അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത് രക്ഷിതാവ് പോർട്ടലിലേക്ക് സ്വാഗതം. നിങ്ങളുടെ കുട്ടി ${selectedChild?.nameMl || selectedChild?.nameEn}-ന്റെ പഠന പുരോഗതി, ഹാജർ നിലവാരം, ഫീസ് വിവരങ്ങൾ, മദ്റസ അറിയിപ്പുകൾ എന്നിവ ഇവിടെ പരിശോധിക്കാം.`
-                        : `Welcome to the official Parent Portal of Al-Madrasathul Islamiya Pallikkuth. Track ${selectedChild?.nameEn}'s academic marks, attendance records, fee status, and school circulars.`}
+                        ? `${currentMadrasaNameMl} രക്ഷിതാവ് പോർട്ടലിലേക്ക് സ്വാഗതം. നിങ്ങളുടെ കുട്ടി ${selectedChild?.nameMl || selectedChild?.nameEn}-ന്റെ പഠന പുരോഗതി, ഹാജർ നിലവാരം, ഫീസ് വിവരങ്ങൾ, മദ്റസ അറിയിപ്പുകൾ എന്നിവ ഇവിടെ പരിശോധിക്കാം.`
+                        : `Welcome to the official Parent Portal of ${currentMadrasaNameEn}. Track ${selectedChild?.nameEn}'s academic marks, attendance records, fee status, and school circulars.`}
                     </p>
                   </div>
 
@@ -1394,7 +1512,7 @@ export const ParentDashboard: React.FC = () => {
                           </span>
                         </div>
                         <h2 className="text-xl sm:text-2xl font-bold font-serif text-white tracking-tight">
-                          Al-Madrasathul Islamiya Pallikkuth
+                          {currentMadrasaNameEn}
                         </h2>
                         {/* Affiliation Number Details in place of Malayalam translation */}
                         <div className="text-xs sm:text-sm font-semibold text-emerald-200 font-mono mt-0.5 tracking-wider">
@@ -1425,7 +1543,7 @@ export const ParentDashboard: React.FC = () => {
                       <span>OFFICIAL STATEMENT</span>
                     </div>
                     <p className="text-sm sm:text-base text-emerald-50 leading-relaxed font-sans">
-                      Al-Madrasathul Islamiya Pallikkuth (KMEB-affiliated, A+ Accredited) blends traditional Islamic values with modern educational technology. We partner with parents and teachers to create an engaging, student-centered digital learning environment that nurtures academic excellence, moral character, and holistic development.
+                      {currentMadrasaNameEn} (KMEB-affiliated, A+ Accredited) blends traditional Islamic values with modern educational technology. We partner with parents and teachers to create an engaging, student-centered digital learning environment that nurtures academic excellence, moral character, and holistic development.
                     </p>
                   </div>
 
@@ -1491,7 +1609,7 @@ export const ParentDashboard: React.FC = () => {
                           <span>Follow us</span>
                         </h3>
                         <p className="text-xs text-emerald-100/80 mt-0.5">
-                          Connect with Al-Madrasathul Islamiya Pallikkuth on our official social media channels
+                          Connect with {currentMadrasaNameEn} on our official social media channels
                         </p>
                       </div>
                     </div>
@@ -2237,7 +2355,7 @@ export const ParentDashboard: React.FC = () => {
                       </h2>
                     </div>
                     <p className="text-xs text-slate-500 mt-1">
-                      Official circulars, academic notices, and fest announcements from Al-Madrasathul Islamiya Pallikkuth
+                      Official circulars, academic notices, and fest announcements from {currentMadrasaNameEn}
                     </p>
                   </div>
 
@@ -2444,10 +2562,10 @@ export const ParentDashboard: React.FC = () => {
 
                     <div>
                       <h3 className="text-xl sm:text-2xl font-black font-serif text-white">
-                        Al-Madrasathul Islamiya Pallikkuth
+                        {currentMadrasaNameEn}
                       </h3>
                       <h4 className="text-sm font-bold text-emerald-200 mt-0.5">
-                        അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്
+                        {currentMadrasaNameMl}
                       </h4>
                       <div className="flex flex-wrap items-center gap-2 mt-2">
                         <span className="bg-emerald-900/90 border border-emerald-400/50 text-emerald-200 px-2.5 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1 shadow-2xs">
@@ -2733,10 +2851,10 @@ export const ParentDashboard: React.FC = () => {
                     {settings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
                   </div>
                   <h1 className="text-base font-black uppercase text-emerald-950 font-serif mt-1">
-                    {settings?.institutionName || settings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
+                    {settings?.institutionName || settings?.madrasaNameEn || 'Madrasa Portal'}
                   </h1>
                   <h2 className="text-xs font-bold text-emerald-900">
-                    {settings?.institutionNameMl || settings?.madrasaNameMl || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്'}
+                    {settings?.institutionNameMl || settings?.madrasaNameMl || ''}
                   </h2>
                   <div className="text-[10px] font-semibold text-emerald-800 tracking-wide mt-0.5">
                     {settings?.institutionSubtitle || settings?.locationEn || 'Islamic Education & Digital Learning'}

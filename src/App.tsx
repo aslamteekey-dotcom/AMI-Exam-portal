@@ -11,11 +11,7 @@ import { OfflineFallback } from './components/Common/OfflineFallback';
 import { SplashScreen } from './components/Common/SplashScreen';
 
 const AppContent: React.FC = () => {
-  const { user, isLoading, lang, t } = useAuth();
-
-  useEffect(() => {
-    document.title = 'AMI Pallikkuth';
-  }, []);
+  const { user, isLoading, lang, t, institutionSettings } = useAuth();
 
   if (isLoading) {
     return (

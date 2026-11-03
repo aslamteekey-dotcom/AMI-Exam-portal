@@ -39,7 +39,7 @@ interface Props {
 }
 
 export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinationId, onBack }) => {
-  const { fetchWithAuth, lang, t, user } = useAuth();
+  const { fetchWithAuth, lang, t, user, institutionSettings } = useAuth();
   const [loading, setLoading] = useState(true);
   const [cls, setCls] = useState<ClassItem | null>(null);
   const [subject, setSubject] = useState<any | null>(null);
@@ -957,7 +957,7 @@ export const MarkEntryScreen: React.FC<Props> = ({ classId, subjectId, examinati
                 <h3 className="text-base font-bold text-slate-900">
                   Mark Sheet Preview: {cls?.numericGrade === 9 && (subject?.id === 'sub_history_buhuth' || subject?.code === 'HST') ? 'ബുഹൂസ്' : subject?.displayNameMl || subject?.nameMl || subject?.nameEn} ({cls?.name})
                 </h3>
-                <p className="text-xs text-slate-500">{exam?.nameEn} • Al-Madrasathul Islamiya Pallikkuth</p>
+                <p className="text-xs text-slate-500">{exam?.nameEn} • {institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'Madrasa Portal'}</p>
               </div>
               <button
                 onClick={() => setShowPreviewModal(false)}

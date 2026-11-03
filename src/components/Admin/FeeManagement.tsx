@@ -1660,10 +1660,10 @@ export const FeeManagement: React.FC = () => {
                     {settings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
                   </div>
                   <h1 className="text-base font-black uppercase text-emerald-950 font-serif mt-1">
-                    {settings?.institutionName || settings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
+                    {settings?.institutionName || settings?.madrasaNameEn || 'Madrasa Portal'}
                   </h1>
                   <h2 className="text-xs font-bold text-emerald-900">
-                    {settings?.institutionNameMl || settings?.madrasaNameMl || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്'}
+                    {settings?.institutionNameMl || settings?.madrasaNameMl || ''}
                   </h2>
                   <div className="text-[10px] font-semibold text-emerald-800 tracking-wide mt-0.5">
                     {settings?.institutionSubtitle || settings?.locationEn || 'Islamic Education & Digital Learning'}

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../../context/AuthContext';
 
 export const SplashScreen: React.FC = () => {
+  const { institutionSettings } = useAuth();
   const [isVisible, setIsVisible] = useState(true);
   const [isFading, setIsFading] = useState(false);
 
@@ -21,6 +23,9 @@ export const SplashScreen: React.FC = () => {
   }, []);
 
   if (!isVisible) return null;
+
+  const arabicTitle = institutionSettings?.madrasaArabicHeader || 'المدرسة الاسلامية بالكوت';
+  const englishTitle = institutionSettings?.madrasaNameEn || institutionSettings?.institutionName || 'Islamic Madrasa';
 
   return (
     <div
@@ -98,12 +103,12 @@ export const SplashScreen: React.FC = () => {
             textShadow: '0 0 25px rgba(254, 240, 138, 0.45), 0 2px 4px rgba(0, 0, 0, 0.35)',
           }}
         >
-          المدرسة الاسلامية بالكوت
+          {arabicTitle}
         </h1>
 
         {/* English Institution Subtitle */}
         <p className="mt-3 text-xs sm:text-sm font-semibold tracking-[0.22em] text-white/95 uppercase drop-shadow-sm font-sans">
-          Al-Madrasathul Islamiya Pallikkuth
+          {englishTitle}
         </p>
 
         {/* Subtle decorative baseline */}

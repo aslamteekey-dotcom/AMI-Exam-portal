@@ -36,7 +36,7 @@ import {
 } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
-  const { user, fetchWithAuth, lang, t } = useAuth();
+  const { user, fetchWithAuth, lang, t, institutionSettings } = useAuth();
   const [activeTab, setActiveTab] = useState<
     | 'overview'
     | 'exams'
@@ -206,7 +206,7 @@ export const AdminDashboard: React.FC = () => {
               {isMl && user?.nameMl ? user.nameMl : user?.name}
             </h1>
             <p className="text-xs text-emerald-200 mt-1">
-              Principal Administrator Portal • Al-Madrasathul Islamiya Pallikkuth
+              Principal Administrator Portal • {institutionSettings?.madrasaNameEn || institutionSettings?.institutionName || 'Madrasa Portal'}
             </p>
             <p className="text-[11px] text-emerald-300 font-medium">
               Islamic Education &amp; Digital Learning

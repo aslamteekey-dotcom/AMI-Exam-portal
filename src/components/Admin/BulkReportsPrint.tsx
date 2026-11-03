@@ -1032,7 +1032,7 @@ export const BulkReportsPrint: React.FC = () => {
                   {settings?.madrasaArabicHeader || reportsData?.settings?.madrasaArabicHeader || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'}
                 </div>
                 <h1 className="text-base font-black uppercase text-black font-serif tracking-wide mt-0.5">
-                  {settings?.institutionName || reportsData?.settings?.institutionName || settings?.madrasaNameEn || reportsData?.settings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
+                  {settings?.institutionName || reportsData?.settings?.institutionName || settings?.madrasaNameEn || reportsData?.settings?.madrasaNameEn || 'Madrasa Portal'}
                 </h1>
                 {(settings?.institutionNameMl || reportsData?.settings?.institutionNameMl || settings?.madrasaNameMl || reportsData?.settings?.madrasaNameMl) && (
                   <h2 className="text-xs font-bold text-black font-ml mt-0.5">

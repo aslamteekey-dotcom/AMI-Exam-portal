@@ -383,10 +383,10 @@ export const ProgressReportCard: React.FC<Props> = ({
                 </div>
                 <div className="text-center flex flex-col items-center w-full">
                   <h1 className="text-base sm:text-lg md:text-xl print:text-lg font-black uppercase tracking-tight text-emerald-950 font-title leading-tight text-center">
-                    {currentSettings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'}
+                    {currentSettings?.madrasaNameEn || currentSettings?.institutionName || 'Madrasa Progress Report'}
                   </h1>
                   <h2 className="text-base sm:text-lg print:text-base font-bold text-emerald-900 leading-snug mt-1 font-ml text-center">
-                    {currentSettings?.madrasaNameMl || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്'}
+                    {currentSettings?.madrasaNameMl || currentSettings?.institutionNameMl || ''}
                   </h2>
                 </div>
               </div>
@@ -690,7 +690,7 @@ export const ProgressReportCard: React.FC<Props> = ({
             </div>
 
             <div className="text-center text-[9px] sm:text-[10px] print:text-[7pt] text-slate-400 mt-3 sm:mt-4 print:mt-1.5">
-              {currentSettings?.madrasaNameEn || 'Al-Madrasathul Islamiya Pallikkuth'} • Official Progress Verification Record
+              {currentSettings?.madrasaNameEn || currentSettings?.institutionName || 'Madrasa Portal'} • Official Progress Verification Record
             </div>
           </div>
         </div>

@@ -2,7 +2,7 @@ export type Language = 'en' | 'ml';
 
 export const translations = {
   en: {
-    appTitle: 'Al-Madrasathul Islamiya Pallikkuth',
+    appTitle: 'Madrasa Portal',
     appSubtitle: 'Islamic Education & Digital Learning',
     arabicBismillah: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ',
     arabicName: 'المدرسة الإسلامية بليكث',
@@ -102,7 +102,7 @@ export const translations = {
     saved: 'All changes saved',
   },
   ml: {
-    appTitle: 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്',
+    appTitle: 'മദ്റസ പോർട്ടൽ',
     appSubtitle: 'ഇസ്ലാമിക വിദ്യാഭ്യാസം & ഡിജിറ്റൽ ലേണിംഗ്',
     arabicBismillah: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ',
     arabicName: 'المدرسة الإسلامية بليكث',

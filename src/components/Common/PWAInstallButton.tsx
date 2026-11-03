@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { usePWAInstall } from '../../hooks/usePWAInstall';
 import { Download, Smartphone, X } from 'lucide-react';
 
@@ -8,6 +9,8 @@ interface Props {
 }
 
 export const PWAInstallButton: React.FC<Props> = ({ className = '', variant = 'pill' }) => {
+  const { institutionSettings } = useAuth();
+  const appName = institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'Madrasa App';
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
 
@@ -26,7 +29,7 @@ export const PWAInstallButton: React.FC<Props> = ({ className = '', variant = 'p
               <Smartphone className="w-5 h-5" />
             </div>
             <div>
-              <h4 className="text-sm font-bold text-slate-900">Install AMI Pallikkuth App</h4>
+              <h4 className="text-sm font-bold text-slate-900">Install {appName}</h4>
               <p className="text-xs text-slate-500">Fast access from your home screen with offline caching support.</p>
             </div>
           </div>
@@ -47,7 +50,7 @@ export const PWAInstallButton: React.FC<Props> = ({ className = '', variant = 'p
         type="button"
         onClick={install}
         className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-2xs cursor-pointer ${className}`}
-        title="Install AMI Pallikkuth app on your device"
+        title={`Install ${appName} on your device`}
       >
         <Download className="w-3.5 h-3.5" />
         <span className="hidden sm:inline">Install App</span>

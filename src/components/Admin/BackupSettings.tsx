@@ -4,12 +4,14 @@ import { InstitutionSettings, User, AdminPermissions, NotificationSettings } fro
 import { firestoreSync } from '../../services/firestoreSync';
 import { getNotificationSettings, saveNotificationSettings, sendTargetedNotification } from '../../services/notificationService';
 import {
+  db,
   isFirestoreQuotaExhausted,
   markFirestoreQuotaExhausted,
   resetFirestoreQuotaStatus,
   testFirestoreConnection,
   QUOTA_STATUS_EVENT,
 } from '../../services/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 import { SubAdminModal } from './SubAdminModal';
 import {
   Download,
@@ -171,7 +173,7 @@ export const BackupSettings: React.FC = () => {
     setLoading(true);
     try {
       const [settingsRes, nSettings] = await Promise.all([
-        fetchWithAuth('/api/settings').catch(() => null),
+        fetchWithAuth('/api/settings', { cache: 'no-store' }).catch(() => null),
         getNotificationSettings().catch(() => null),
       ]);
 
@@ -179,6 +181,18 @@ export const BackupSettings: React.FC = () => {
         const data = await settingsRes.json();
         setSettings(data);
       }
+
+      // Real-time Firestore fetch to guarantee zero stale cache
+      if (!isFirestoreQuotaExhausted()) {
+        try {
+          const sSnap = await getDoc(doc(db, 'settings', 'institution')).catch(() => null);
+          if (sSnap && sSnap.exists()) {
+            const sData = sSnap.data() as InstitutionSettings;
+            setSettings(prev => ({ ...(prev || {}), ...sData }));
+          }
+        } catch {}
+      }
+
       if (nSettings) {
         setNotifSettings(nSettings);
       }
@@ -213,8 +227,8 @@ export const BackupSettings: React.FC = () => {
     setIsSendingTestNotif(true);
     try {
       await sendTargetedNotification({
-        title: 'AMI Pallikkuth Alert Test',
-        titleMl: 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത് അറിയിപ്പ്',
+        title: 'AMI Alert Test',
+        titleMl: 'അറിയിപ്പ് ടെസ്റ്റ്',
         body: 'Automated notification test sent from the Admin Communications panel.',
         bodyMl: 'അഡ്മിൻ പാനലിൽ നിന്നുള്ള സിസ്റ്റം നോട്ടിഫിക്കേഷൻ ടെസ്റ്റ് വിജയകരമായി അയച്ചു.',
         type: 'system',
@@ -234,15 +248,37 @@ export const BackupSettings: React.FC = () => {
     setIsSaving(true);
     setSaveSuccess(false);
     try {
+      const nameEn = settings.madrasaNameEn.trim();
+      const nameMl = settings.madrasaNameMl.trim();
+      const payload: InstitutionSettings = {
+        ...settings,
+        madrasaNameEn: nameEn,
+        institutionName: nameEn,
+        madrasaNameMl: nameMl,
+        institutionNameMl: nameMl,
+      };
+
       const res = await fetchWithAuth('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings),
+        body: JSON.stringify(payload),
       });
+
       if (res.ok) {
-        firestoreSync.syncSettings(settings).catch(e => {
+        // Persist directly to Firestore
+        await firestoreSync.syncSettings(payload).catch(e => {
           console.warn('Firestore syncSettings error:', e);
         });
+
+        // Store in localStorage
+        try {
+          localStorage.setItem('madrasa_institution_settings', JSON.stringify(payload));
+        } catch {}
+
+        // Broadcast to all components in the app
+        window.dispatchEvent(new CustomEvent('madrasa_settings_updated', { detail: payload }));
+
+        setSettings(payload);
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 3000);
       }

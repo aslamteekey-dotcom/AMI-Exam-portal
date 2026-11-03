@@ -1,13 +1,16 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { User } from '../types';
+import { User, InstitutionSettings } from '../types';
 import { Language, translations } from '../i18n';
 import { clientStorageApi } from '../services/clientStorageApi';
 import { db, isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, isQuotaError } from '../services/firebase';
-import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { logAuditEvent } from '../services/auditLogger';
 import { requestNotificationPermissionAndToken } from '../services/notificationService';
 
-// Pure client-side authentication and mock API routes running 100% in-browser on Vercel
+// Disable caching for Vercel / server routes
+export const revalidate = 0;
+export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
 
 interface AuthContextType {
   user: User | null;
@@ -15,6 +18,8 @@ interface AuthContextType {
   isLoading: boolean;
   lang: Language;
   t: typeof translations['en'];
+  institutionSettings: InstitutionSettings | null;
+  updateInstitutionSettings: (newSettings: Partial<InstitutionSettings>) => Promise<void>;
   setLang: (l: Language) => void;
   login: (username: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
@@ -29,6 +34,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('madrasa_auth_token'));
   const [lang, setLangState] = useState<Language>(() => (localStorage.getItem('madrasa_lang') as Language) || 'en');
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [institutionSettings, setInstitutionSettings] = useState<InstitutionSettings | null>(() =>
+    clientStorageApi.getSettings()
+  );
 
   const setLang = (l: Language) => {
     setLangState(l);
@@ -44,10 +52,108 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [lang]);
 
+  // Dynamically update document title whenever institution settings or language changes
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      const activeName =
+        lang === 'ml'
+          ? institutionSettings?.madrasaNameMl || institutionSettings?.madrasaNameEn
+          : institutionSettings?.madrasaNameEn || institutionSettings?.madrasaNameMl;
+      if (activeName) {
+        document.title = activeName;
+      }
+    }
+  }, [institutionSettings, lang]);
+
+  // Real-time synchronization of Institution Settings (Madrasa Name, Contacts, Branding) from Firestore
+  useEffect(() => {
+    // 1. Initial fetch from API with no-store cache control
+    clientStorageApi
+      .handleRequest('/api/settings', { cache: 'no-store' })
+      .then(res => res.json())
+      .then(data => {
+        if (data && (data.madrasaNameEn || data.institutionName)) {
+          setInstitutionSettings(prev => ({ ...(prev || {}), ...data }));
+        }
+      })
+      .catch(() => {});
+
+    // 2. Real-time Firestore onSnapshot listener
+    if (!isFirestoreQuotaExhausted()) {
+      try {
+        const unsub = onSnapshot(doc(db, 'settings', 'institution'), snapshot => {
+          if (snapshot.exists()) {
+            const data = snapshot.data() as InstitutionSettings;
+            const nameEn = data.madrasaNameEn || data.institutionName || '';
+            const nameMl = data.madrasaNameMl || data.institutionNameMl || '';
+            const normalized = {
+              ...data,
+              madrasaNameEn: nameEn,
+              institutionName: nameEn,
+              madrasaNameMl: nameMl,
+              institutionNameMl: nameMl,
+            };
+            setInstitutionSettings(prev => {
+              const merged = { ...(prev || {}), ...normalized };
+              try {
+                localStorage.setItem('madrasa_institution_settings', JSON.stringify(merged));
+              } catch {}
+              return merged;
+            });
+            clientStorageApi.updateSettingsFromRemote(normalized);
+          }
+        });
+
+        return () => unsub();
+      } catch (err) {
+        console.warn('Real-time settings listener error:', err);
+      }
+    }
+  }, []);
+
+  // Listen for local settings update broadcasts
+  useEffect(() => {
+    const handleSettingsUpdated = (e: any) => {
+      if (e.detail) {
+        setInstitutionSettings(prev => ({ ...(prev || {}), ...e.detail }));
+      }
+    };
+    window.addEventListener('madrasa_settings_updated', handleSettingsUpdated);
+    return () => window.removeEventListener('madrasa_settings_updated', handleSettingsUpdated);
+  }, []);
+
+  const updateInstitutionSettings = async (newSettings: Partial<InstitutionSettings>) => {
+    const nameEn = (newSettings.madrasaNameEn !== undefined ? newSettings.madrasaNameEn : newSettings.institutionName) ?? institutionSettings?.madrasaNameEn ?? '';
+    const nameMl = (newSettings.madrasaNameMl !== undefined ? newSettings.madrasaNameMl : newSettings.institutionNameMl) ?? institutionSettings?.madrasaNameMl ?? '';
+    const updated = {
+      ...(institutionSettings || {}),
+      ...newSettings,
+      madrasaNameEn: nameEn,
+      institutionName: nameEn,
+      madrasaNameMl: nameMl,
+      institutionNameMl: nameMl,
+    } as InstitutionSettings;
+
+    setInstitutionSettings(updated);
+    try {
+      localStorage.setItem('madrasa_institution_settings', JSON.stringify(updated));
+    } catch {}
+
+    await fetchWithAuth('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updated),
+    });
+  };
+
   const t = translations[lang];
 
   const fetchWithAuth = async (url: string, options: RequestInit = {}): Promise<Response> => {
-    return clientStorageApi.handleRequest(url, options);
+    // Enforce no-store on all authenticated fetch requests
+    return clientStorageApi.handleRequest(url, {
+      cache: 'no-store',
+      ...options,
+    });
   };
 
   const refreshUser = async () => {
@@ -205,6 +311,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         lang,
         t,
+        institutionSettings,
+        updateInstitutionSettings,
         setLang,
         login,
         logout,

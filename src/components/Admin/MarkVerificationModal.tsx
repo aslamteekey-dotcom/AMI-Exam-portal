@@ -34,7 +34,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
   onClose,
   onRefresh,
 }) => {
-  const { fetchWithAuth, user, lang, t } = useAuth();
+  const { fetchWithAuth, user, lang, t, institutionSettings } = useAuth();
   const [loading, setLoading] = useState(true);
   const [sheetData, setSheetData] = useState<any>(null);
   const [returnReason, setReturnReason] = useState('');
@@ -698,7 +698,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
               </h2>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              {isMl ? (exam?.nameMl || exam?.nameEn) : (exam?.nameEn || exam?.nameMl)} • Teacher: <span className="font-semibold text-slate-700">{teacherHeader}</span> • ({validMarksList.length} Students: {sheetBoysCount} Boys, {sheetGirlsCount} Girls) • Al-Madrasathul Islamiya Pallikkuth
+              {isMl ? (exam?.nameMl || exam?.nameEn) : (exam?.nameEn || exam?.nameMl)} • Teacher: <span className="font-semibold text-slate-700">{teacherHeader}</span> • ({validMarksList.length} Students: {sheetBoysCount} Boys, {sheetGirlsCount} Girls) • {institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'Madrasa Portal'}
             </p>
           </div>
 

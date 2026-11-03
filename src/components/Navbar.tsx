@@ -5,8 +5,13 @@ import { isFirestoreQuotaExhausted, QUOTA_STATUS_EVENT } from '../services/fireb
 import { PWAInstallButton } from './Common/PWAInstallButton';
 import { NotificationBell } from './Common/NotificationBell';
 
+// Disable caching for Vercel / server routes
+export const revalidate = 0;
+export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
+
 export const Navbar: React.FC = () => {
-  const { user, lang, setLang, t, logout } = useAuth();
+  const { user, lang, setLang, t, logout, institutionSettings } = useAuth();
   const [isQuotaExhausted, setIsQuotaExhausted] = useState<boolean>(() => isFirestoreQuotaExhausted());
 
   useEffect(() => {
@@ -16,6 +21,24 @@ export const Navbar: React.FC = () => {
     window.addEventListener(QUOTA_STATUS_EVENT, handleQuotaChange);
     return () => window.removeEventListener(QUOTA_STATUS_EVENT, handleQuotaChange);
   }, []);
+
+  const displayName =
+    lang === 'ml'
+      ? institutionSettings?.madrasaNameMl ||
+        institutionSettings?.institutionNameMl ||
+        institutionSettings?.madrasaNameEn ||
+        institutionSettings?.institutionName ||
+        'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ'
+      : institutionSettings?.madrasaNameEn ||
+        institutionSettings?.institutionName ||
+        institutionSettings?.madrasaNameMl ||
+        institutionSettings?.institutionNameMl ||
+        'Islamic Madrasa Portal';
+
+  const subtitle =
+    institutionSettings?.institutionSubtitle ||
+    (lang === 'ml' ? institutionSettings?.locationMl : institutionSettings?.locationEn) ||
+    'Islamic Education & Digital Learning';
 
   const getRoleBadge = (role?: string) => {
     switch (role) {
@@ -42,14 +65,14 @@ export const Navbar: React.FC = () => {
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 sm:gap-2">
                 <span className={`font-bold text-slate-900 text-xs sm:text-base leading-tight tracking-tight truncate block ${lang === 'ml' ? 'font-ml' : 'font-title'}`}>
-                  {lang === 'ml' ? 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്' : 'Al-Madrasathul Islamiya Pallikkuth'}
+                  {displayName}
                 </span>
                 <span className="hidden sm:inline-block text-[10px] bg-emerald-100 text-emerald-900 font-semibold px-1.5 py-0.5 rounded shrink-0">
                   2026–2027
                 </span>
               </div>
               <div className="text-[10px] sm:text-xs text-slate-600 font-medium leading-tight mt-0.5 truncate sm:overflow-visible">
-                Islamic Education &amp; Digital Learning
+                {subtitle}
               </div>
             </div>
           </div>

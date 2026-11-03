@@ -32,6 +32,11 @@ import {
 import { firestoreSync } from './firestoreSync';
 import { isFirestoreQuotaExhausted, QUOTA_STATUS_EVENT } from './firebase';
 
+// Disable caching for Vercel / server routes
+export const revalidate = 0;
+export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
+
 export interface MadrasaDatabase {
   users: User[];
   classes: ClassItem[];
@@ -297,398 +302,31 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       phone: '+91 9847345678',
       createdAt: '2026-06-01T08:00:00Z',
     },
-    {
-      id: 'usr_p1',
-      username: 'parent.hamza',
-      name: 'Hamza K',
-      nameMl: 'ഹംസ കെ',
-      role: 'parent',
-      plainPassword: '9001',
-      active: true,
-      email: 'hamza.k@gmail.com',
-      phone: '+91 9846123456',
-      createdAt: '2026-06-01T08:00:00Z',
-    },
   ];
 
-  const students: Student[] = [
-    // Class 1
-    {
-      id: 'st_101',
-      admissionNo: '1001',
-      rollNo: 1,
-      nameEn: 'Muhammed Raihan',
-      nameMl: 'മുഹമ്മദ് റൈഹാൻ',
-      classId: 'cls_1',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Hamza K',
-      parentNameMl: 'ഹംസ കെ',
-      parentPhone: '+91 9846123456',
-      parentUserId: 'usr_p1',
-      status: 'active',
-      gender: 'M',
-    },
-    {
-      id: 'st_102',
-      admissionNo: '1002',
-      rollNo: 2,
-      nameEn: 'Fathima Rida',
-      nameMl: 'ഫാത്തിമ റിദ',
-      classId: 'cls_1',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Ibrahim M',
-      parentNameMl: 'ഇബ്രാഹിം എം',
-      parentPhone: '+91 9846123457',
-      status: 'active',
-      gender: 'F',
-    },
-    {
-      id: 'st_103',
-      admissionNo: '1003',
-      rollNo: 3,
-      nameEn: 'Bilal Ahmed',
-      nameMl: 'ബിലാൽ അഹമ്മദ്',
-      classId: 'cls_1',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Musthafa P',
-      parentNameMl: 'മുസ്തഫ പി',
-      parentPhone: '+91 9846123458',
-      status: 'active',
-      gender: 'M',
-    },
-    {
-      id: 'st_104',
-      admissionNo: '1004',
-      rollNo: 4,
-      nameEn: 'Ayesha Noor',
-      nameMl: 'ആയിഷ നൂർ',
-      classId: 'cls_1',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Kabeer T',
-      parentNameMl: 'കബീർ ടി',
-      parentPhone: '+91 9846123459',
-      status: 'active',
-      gender: 'F',
-    },
-    // Class 2
-    {
-      id: 'st_201',
-      admissionNo: '2001',
-      rollNo: 1,
-      nameEn: 'Zayan Malik',
-      nameMl: 'സയാൻ മാലിക്',
-      classId: 'cls_2',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Shafi V',
-      parentNameMl: 'ഷാഫി വി',
-      parentPhone: '+91 9846123460',
-      status: 'active',
-      gender: 'M',
-    },
-    {
-      id: 'st_202',
-      admissionNo: '2002',
-      rollNo: 2,
-      nameEn: 'Huda Fathima',
-      nameMl: 'ഹുദ ഫാത്തിമ',
-      classId: 'cls_2',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Rasheed A',
-      parentNameMl: 'റഷീദ് എ',
-      parentPhone: '+91 9846123461',
-      status: 'active',
-      gender: 'F',
-    },
-    // Class 5
-    {
-      id: 'st_502',
-      admissionNo: '5002',
-      rollNo: 2,
-      nameEn: 'Aisha Minha',
-      nameMl: 'ആയിഷ മിൻഹ',
-      classId: 'cls_5',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Usman Farook',
-      parentNameMl: 'ഉസ്മാൻ ഫാറൂഖ്',
-      parentPhone: '+91 9846123463',
-      status: 'active',
-      gender: 'F',
-    },
-    {
-      id: 'st_503',
-      admissionNo: '5003',
-      rollNo: 3,
-      nameEn: 'Zainul Abid',
-      nameMl: 'സൈനുൽ ആബിദ്',
-      classId: 'cls_5',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Hamza K',
-      parentNameMl: 'ഹംസ കെ',
-      parentPhone: '+91 9846123456',
-      parentUserId: 'usr_p1',
-      status: 'active',
-      gender: 'M',
-    },
-    {
-      id: 'st_504',
-      admissionNo: '5004',
-      rollNo: 4,
-      nameEn: 'Safwan Ali',
-      nameMl: 'സഫ്‍വാൻ അലി',
-      classId: 'cls_5',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Ali Master',
-      parentNameMl: 'അലി മാസ്റ്റർ',
-      parentPhone: '+91 9846123464',
-      status: 'active',
-      gender: 'M',
-    },
-    // Class 4
-    {
-      id: 'st_401',
-      admissionNo: '4001',
-      rollNo: 1,
-      nameEn: 'Haneen Fathima',
-      nameMl: 'ഹനീൻ ഫാത്തിമ',
-      classId: 'cls_4',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Faizal K',
-      parentNameMl: 'ഫൈസൽ കെ',
-      parentPhone: '+91 9846123471',
-      status: 'active',
-      gender: 'F',
-    },
-    // Class 6
-    {
-      id: 'st_601',
-      admissionNo: '6001',
-      rollNo: 1,
-      nameEn: 'Bilal Farhan',
-      nameMl: 'ബിലാൽ ഫർഹാൻ',
-      classId: 'cls_6',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Farhan K',
-      parentNameMl: 'ഫർഹാൻ കെ',
-      parentPhone: '+91 9846123472',
-      status: 'active',
-      gender: 'M',
-    },
-    // Class 7
-    {
-      id: '862',
-      admissionNo: '862',
-      rollNo: 1,
-      nameEn: 'Muhammed Hafiz C',
-      nameMl: 'മുഹമ്മദ് ഹാഫിസ് സി',
-      classId: 'cls_7',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Hamza K',
-      parentNameMl: 'ഹംസ കെ',
-      parentPhone: '+91 9846123456',
-      parentUserId: 'usr_p1',
-      status: 'active',
-      gender: 'M',
-      examRegisterNumbers: {
-        exam_half_yearly_2026_27: '701',
-      },
-    },
-    {
-      id: 'st_702',
-      admissionNo: '7002',
-      rollNo: 2,
-      nameEn: 'Fathima Sana',
-      nameMl: 'ഫാത്തിമ സന',
-      classId: 'cls_7',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Abdul Rasheed',
-      parentNameMl: 'അബ്ദുൽ റഷീദ്',
-      parentPhone: '+91 9846123473',
-      status: 'active',
-      gender: 'F',
-      examRegisterNumbers: {
-        exam_half_yearly_2026_27: '702',
-      },
-    },
-    // Class 8
-    {
-      id: 'st_801',
-      admissionNo: '8001',
-      rollNo: 1,
-      nameEn: 'Rayan Abdullah',
-      nameMl: 'റയാൻ അബ്ദുള്ള',
-      classId: 'cls_8',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Abdullah K',
-      parentNameMl: 'അബ്ദുള്ള കെ',
-      parentPhone: '+91 9846123474',
-      status: 'active',
-      gender: 'M',
-    },
-    // Class 9
-    {
-      id: 'st_901',
-      admissionNo: '9001',
-      rollNo: 1,
-      nameEn: 'Salman Faris',
-      nameMl: 'സൽമാൻ ഫാരിസ്',
-      classId: 'cls_9',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Hamza K',
-      parentNameMl: 'ഹംസ കെ',
-      parentPhone: '+91 9846123456',
-      parentUserId: 'usr_p1',
-      status: 'active',
-      gender: 'M',
-    },
-    {
-      id: 'st_902',
-      admissionNo: '9002',
-      rollNo: 2,
-      nameEn: 'Maryam Safa',
-      nameMl: 'മറിയം സഫ',
-      classId: 'cls_9',
-      academicYearId: 'ay_2026_2027',
-      parentNameEn: 'Abdulla Master',
-      parentNameMl: 'അബ്ദുള്ള മാസ്റ്റർ',
-      parentPhone: '+91 9846123465',
-      status: 'active',
-      gender: 'F',
-    },
-  ];
-
-  const teacherAssignments: TeacherAssignment[] = [
-    // Class 1
-    { id: 'asgn_1', teacherId: 'usr_t1', classId: 'cls_1', subjectId: 'sub_hifz' },
-    { id: 'asgn_2', teacherId: 'usr_t2', classId: 'cls_1', subjectId: 'sub_tarbiyah' },
-    { id: 'asgn_3', teacherId: 'usr_t1', classId: 'cls_1', subjectId: 'sub_arabic' },
-    { id: 'asgn_4', teacherId: 'usr_t3', classId: 'cls_1', subjectId: 'sub_islamic_studies' },
-    // Class 5
-    { id: 'asgn_5', teacherId: 'usr_t2', classId: 'cls_5', subjectId: 'sub_fiqh' },
-    { id: 'asgn_6', teacherId: 'usr_t2', classId: 'cls_5', subjectId: 'sub_hadith' },
-    { id: 'asgn_7', teacherId: 'usr_t3', classId: 'cls_5', subjectId: 'sub_tafsir' },
-    { id: 'asgn_8', teacherId: 'usr_t1', classId: 'cls_5', subjectId: 'sub_arabic' },
-    { id: 'asgn_9', teacherId: 'usr_t3', classId: 'cls_5', subjectId: 'sub_history_buhuth' },
-    // Class 9
-    { id: 'asgn_10', teacherId: 'usr_t3', classId: 'cls_9', subjectId: 'sub_history_buhuth' },
-    { id: 'asgn_11', teacherId: 'usr_t1', classId: 'cls_9', subjectId: 'sub_tilawah' },
-    { id: 'asgn_12', teacherId: 'usr_t2', classId: 'cls_9', subjectId: 'sub_fiqh' },
-  ];
-
-  const markSheets: MarkSheet[] = [
-    {
-      id: 'ms_c1_hifz',
-      examinationId: 'exam_half_yearly_2026_27',
-      academicYearId: 'ay_2026_2027',
-      classId: 'cls_1',
-      subjectId: 'sub_hifz',
-      assignedTeacherId: 'usr_t1',
-      status: 'approved',
-      studentMarks: {
-        st_101: { studentId: 'st_101', isAbsent: false, componentMarks: { new_portion: 28, revision: 9, ce: 10 }, subjectTotal: 47 },
-        st_102: { studentId: 'st_102', isAbsent: false, componentMarks: { new_portion: 27, revision: 8, ce: 9 }, subjectTotal: 44 },
-        st_103: { studentId: 'st_103', isAbsent: false, componentMarks: { new_portion: 25, revision: 8, ce: 8 }, subjectTotal: 41 },
-        st_104: { studentId: 'st_104', isAbsent: false, componentMarks: { new_portion: 29, revision: 10, ce: 10 }, subjectTotal: 49 },
-      },
-      verifiedAt: '2026-10-18T10:00:00Z',
-      verifiedBy: 'usr_admin',
-      lastUpdated: '2026-10-18T10:00:00Z',
-    },
-    {
-      id: 'ms_c1_tarbiyah',
-      examinationId: 'exam_half_yearly_2026_27',
-      academicYearId: 'ay_2026_2027',
-      classId: 'cls_1',
-      subjectId: 'sub_tarbiyah',
-      assignedTeacherId: 'usr_t2',
-      status: 'submitted',
-      studentMarks: {
-        st_101: { studentId: 'st_101', isAbsent: false, componentMarks: { salawat: 28, duas: 9, diary: 10 }, subjectTotal: 47 },
-        st_102: { studentId: 'st_102', isAbsent: false, componentMarks: { salawat: 26, duas: 8, diary: 9 }, subjectTotal: 43 },
-        st_103: { studentId: 'st_103', isAbsent: false, componentMarks: { salawat: 24, duas: 7, diary: 8 }, subjectTotal: 39 },
-        st_104: { studentId: 'st_104', isAbsent: false, componentMarks: { salawat: 29, duas: 9, diary: 10 }, subjectTotal: 48 },
-      },
-      submittedAt: '2026-10-18T11:00:00Z',
-      lastUpdated: '2026-10-18T11:00:00Z',
-    },
-    {
-      id: 'ms_c5_fiqh',
-      examinationId: 'exam_half_yearly_2026_27',
-      academicYearId: 'ay_2026_2027',
-      classId: 'cls_5',
-      subjectId: 'sub_fiqh',
-      assignedTeacherId: 'usr_t2',
-      status: 'draft',
-      studentMarks: {
-        st_502: { studentId: 'st_502', isAbsent: false, componentMarks: { omr: 19, descriptive: 18, ce: 10 }, subjectTotal: 47 },
-      },
-      lastUpdated: '2026-10-18T12:00:00Z',
-    },
-    {
-      id: 'ms_c7_fiqh',
-      examinationId: 'exam_half_yearly_2026_27',
-      academicYearId: 'ay_2026_2027',
-      classId: 'cls_7',
-      subjectId: 'sub_fiqh',
-      assignedTeacherId: 'usr_t2',
-      status: 'approved',
-      studentMarks: {
-        '862': { studentId: '862', isAbsent: false, componentMarks: { omr: 19, descriptive: 18, ce: 10 }, subjectTotal: 47 },
-        st_702: { studentId: 'st_702', isAbsent: false, componentMarks: { omr: 18, descriptive: 17, ce: 9 }, subjectTotal: 44 },
-      },
-      verifiedAt: '2026-10-18T12:00:00Z',
-      verifiedBy: 'usr_admin',
-      lastUpdated: '2026-10-18T12:00:00Z',
-    },
-    {
-      id: 'ms_c7_tafsir',
-      examinationId: 'exam_half_yearly_2026_27',
-      academicYearId: 'ay_2026_2027',
-      classId: 'cls_7',
-      subjectId: 'sub_tafsir',
-      assignedTeacherId: 'usr_t1',
-      status: 'approved',
-      studentMarks: {
-        '862': { studentId: '862', isAbsent: false, componentMarks: { omr: 19, descriptive: 19, ce: 10 }, subjectTotal: 48 },
-        st_702: { studentId: 'st_702', isAbsent: false, componentMarks: { omr: 17, descriptive: 18, ce: 9 }, subjectTotal: 44 },
-      },
-      verifiedAt: '2026-10-18T12:00:00Z',
-      verifiedBy: 'usr_admin',
-      lastUpdated: '2026-10-18T12:00:00Z',
-    },
-    {
-      id: 'ms_c9_buhuth',
-      examinationId: 'exam_half_yearly_2026_27',
-      academicYearId: 'ay_2026_2027',
-      classId: 'cls_9',
-      subjectId: 'sub_history_buhuth',
-      assignedTeacherId: 'usr_t3',
-      status: 'approved',
-      studentMarks: {
-        st_901: { studentId: 'st_901', isAbsent: false, componentMarks: { omr: 19, descriptive: 19, ce: 10 }, subjectTotal: 48 },
-        st_902: { studentId: 'st_902', isAbsent: false, componentMarks: { omr: 18, descriptive: 18, ce: 9 }, subjectTotal: 45 },
-      },
-      verifiedAt: '2026-10-18T13:00:00Z',
-      verifiedBy: 'usr_admin',
-      lastUpdated: '2026-10-18T13:00:00Z',
-    },
-  ];
+  // Real production start: No dummy students or mock marksheets
+  const students: Student[] = [];
+  const teacherAssignments: TeacherAssignment[] = [];
+  const markSheets: MarkSheet[] = [];
 
   const settings: InstitutionSettings = {
-    madrasaNameEn: 'AL-MADRASATHUL ISLAMIYA PALLIKKUTH',
-    madrasaNameMl: 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്',
-    madrasaArabicHeader: 'المدرسة الإسلامية بليكث',
-    locationEn: 'Pallikkuth, Malappuram Dt., Kerala - 679334',
-    locationMl: 'പള്ളിക്കുത്ത്, മലപ്പുറം ജില്ല, കേരളം - 679334',
-    phone: '+91 9447 123 456 / 04933 245678',
-    email: 'info@madrasapallikkuth.edu',
-    registrationNo: 'REG/SWK/2004/892',
+    madrasaNameEn: '',
+    madrasaNameMl: '',
+    institutionName: '',
+    institutionNameMl: '',
+    madrasaArabicHeader: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ',
+    locationEn: '',
+    locationMl: '',
+    phone: '',
+    email: '',
+    registrationNo: '',
     principalNameEn: 'ASLAM TK',
     principalNameMl: 'അസ്‌ലം ടി.കെ.',
     showTeacherSignature: true,
     showPrincipalSignature: true,
     showParentSignature: true,
-    reportHeaderNotesEn: 'Samastha Kerala Islam Matha Vidyabhyasa Board Affiliation / State Madrasa Curriculum',
-    reportHeaderNotesMl: 'സമസ്ത കേരള ഇസ്ലാം മത വിദ്യാഭ്യാസ ബോർഡ് അംഗീകൃതം',
+    reportHeaderNotesEn: '',
+    reportHeaderNotesMl: '',
     activeAcademicYearId: 'ay_2026_2027',
     activeExamId: 'exam_half_yearly_2026_27',
   };
@@ -1057,7 +695,27 @@ export class ClientStorageApi {
           }
         },
         getInitialStudents: () => {
-          return this.db.students;
+          return [];
+        },
+        onSettings: (remoteSettings) => {
+          if (remoteSettings) {
+            const nameEn = remoteSettings.madrasaNameEn || remoteSettings.institutionName || '';
+            const nameMl = remoteSettings.madrasaNameMl || remoteSettings.institutionNameMl || '';
+            if (nameEn || nameMl) {
+              this.db.settings = {
+                ...this.db.settings,
+                ...remoteSettings,
+                madrasaNameEn: nameEn,
+                institutionName: nameEn,
+                madrasaNameMl: nameMl,
+                institutionNameMl: nameMl,
+              };
+              this.saveDB();
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('madrasa_settings_updated', { detail: this.db.settings }));
+              }
+            }
+          }
         },
         onTeachers: (remoteTeachers) => {
           if (Array.isArray(remoteTeachers)) {
@@ -1346,6 +1004,26 @@ export class ClientStorageApi {
           parsed.attendanceConfigs = Array.isArray(parsed.attendanceConfigs) ? parsed.attendanceConfigs : [];
           parsed.attendanceEditRequests = Array.isArray(parsed.attendanceEditRequests) ? parsed.attendanceEditRequests : [];
 
+          // Purge legacy dummy students from local storage
+          const DUMMY_IDS = new Set([
+            'st_101', 'st_102', 'st_103', 'st_104', 'st_201', 'st_202', 'st_401', 'st_501', 'st_502',
+            'st_503', 'st_504', 'st_601', 'st_701', 'st_702', 'st_801', 'st_901', 'st_902', 'st_903', '862'
+          ]);
+          const DUMMY_ADMS = new Set(['1001', '1002', '1003', '1004', '2001', '2002', '4001', '5001', '5002', '5003', '5004', '6001', '7001', '7002', '8001', '9001', '9002', '9003', '862']);
+          if (Array.isArray(parsed.students)) {
+            parsed.students = parsed.students.filter(
+              (s: any) => s && !DUMMY_IDS.has(s.id) && !DUMMY_ADMS.has(String(s.admissionNo || '').trim())
+            );
+          }
+          if (Array.isArray(parsed.markSheets)) {
+            parsed.markSheets = parsed.markSheets.filter(
+              (m: any) => m && !m.id?.startsWith('ms_c')
+            );
+          }
+          if (Array.isArray(parsed.users)) {
+            parsed.users = parsed.users.filter((u: any) => u.id !== 'usr_p1' && u.username !== 'parent.hamza');
+          }
+
           // Ensure admin user exists
           if (!parsed.users.some((u: any) => u.role === 'admin' || u.username === 'principal')) {
             parsed.users.unshift({
@@ -1392,6 +1070,40 @@ export class ClientStorageApi {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.db));
     } catch (e) {
       console.error('Failed to save DB to localStorage:', e);
+    }
+  }
+
+  public getSettings(): InstitutionSettings {
+    try {
+      const stored = localStorage.getItem('madrasa_institution_settings');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && (parsed.madrasaNameEn || parsed.institutionName)) {
+          return { ...this.db.settings, ...parsed };
+        }
+      }
+    } catch {}
+    return this.db.settings;
+  }
+
+  public updateSettingsFromRemote(remote: Partial<InstitutionSettings>): void {
+    if (!remote) return;
+    const nameEn = remote.madrasaNameEn || remote.institutionName || this.db.settings.madrasaNameEn || '';
+    const nameMl = remote.madrasaNameMl || remote.institutionNameMl || this.db.settings.madrasaNameMl || '';
+    this.db.settings = {
+      ...this.db.settings,
+      ...remote,
+      madrasaNameEn: nameEn,
+      institutionName: nameEn,
+      madrasaNameMl: nameMl,
+      institutionNameMl: nameMl,
+    };
+    this.saveDB();
+    try {
+      localStorage.setItem('madrasa_institution_settings', JSON.stringify(this.db.settings));
+    } catch {}
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('madrasa_settings_updated', { detail: this.db.settings }));
     }
   }
 
@@ -2822,11 +2534,14 @@ export class ClientStorageApi {
           console.warn('Firestore persistStudentExamRegisterNumber error on PUT:', e);
         });
 
-        const affected = this.db.students.filter(s => s.classId === student.classId || s.classId === prevClassId);
-        for (const st of affected) {
-          firestoreSync.syncStudent(st).catch(e => {
-            console.warn('Firestore syncStudent PUT error:', e);
-          });
+        // CRITICAL FIX: Only sync this specific edited student's update to Firebase.
+        // NEVER loop over or send other cached class students back to Firestore!
+        firestoreSync.syncStudent(student).catch(e => {
+          console.warn('Firestore syncStudent error on PUT:', e);
+        });
+
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: this.db.students }));
         }
 
         return this.jsonResponse(student);
@@ -2849,12 +2564,14 @@ export class ClientStorageApi {
         }
         if (targetClassId) {
           this.resequenceClassRollNumbers(targetClassId);
-          const affected = this.db.students.filter(s => s.classId === targetClassId);
-          for (const st of affected) {
-            firestoreSync.syncStudent(st).catch(() => {});
-          }
+          // CRITICAL: DO NOT send other class students to Firestore on deletion
         }
         this.saveDB();
+
+        // Clear local state across all React components immediately
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: this.db.students }));
+        }
 
         firestoreSync.deleteStudent(sId, targetAdmNo).catch(e => {
           console.warn('Firestore deleteStudent error:', e);
@@ -2870,6 +2587,9 @@ export class ClientStorageApi {
           const toDelete = this.db.students.filter(s => s.classId === targetClassId);
           this.db.students = this.db.students.filter(s => s.classId !== targetClassId);
           this.saveDB();
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: this.db.students }));
+          }
           for (const s of toDelete) {
             firestoreSync.deleteStudent(s.id).catch(() => {});
           }
@@ -2879,6 +2599,9 @@ export class ClientStorageApi {
           const ids = this.db.students.map(s => s.id);
           this.db.students = [];
           this.saveDB();
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: [] }));
+          }
           for (const id of ids) {
             firestoreSync.deleteStudent(id).catch(() => {});
           }
@@ -2892,6 +2615,9 @@ export class ClientStorageApi {
         this.db.students = [];
         this.db.markSheets = [];
         this.saveDB();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: [] }));
+        }
         await firestoreSync.purgeDemoStudentsFromFirestore();
         return this.jsonResponse({ success: true, clearedCount: count });
       }
@@ -4207,7 +3933,15 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/settings' && method === 'PUT') {
-        Object.assign(this.db.settings, bodyData);
+        const nameEn = (bodyData.madrasaNameEn !== undefined ? bodyData.madrasaNameEn : bodyData.institutionName) ?? this.db.settings.madrasaNameEn ?? '';
+        const nameMl = (bodyData.madrasaNameMl !== undefined ? bodyData.madrasaNameMl : bodyData.institutionNameMl) ?? this.db.settings.madrasaNameMl ?? '';
+        Object.assign(this.db.settings, {
+          ...bodyData,
+          madrasaNameEn: nameEn,
+          institutionName: nameEn,
+          madrasaNameMl: nameMl,
+          institutionNameMl: nameMl,
+        });
         if (bodyData.principalNameEn) {
           const adminUser = this.db.users.find(u => u.role === 'admin' || u.username === 'principal');
           if (adminUser) {
@@ -4216,6 +3950,9 @@ export class ClientStorageApi {
           }
         }
         this.saveDB();
+        try {
+          localStorage.setItem('madrasa_institution_settings', JSON.stringify(this.db.settings));
+        } catch {}
         firestoreSync.syncSettings(this.db.settings).catch(e => {
           console.warn('Firestore syncSettings error:', e);
         });
@@ -4867,11 +4604,16 @@ export class ClientStorageApi {
     }
   }
 
-  private jsonResponse(data: any, status = 200): Response {
+  private jsonResponse(data: any, status = 200, extraHeaders: Record<string, string> = {}): Response {
     return new Response(JSON.stringify(data), {
       status,
       headers: {
         'Content-Type': 'application/json',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        'Surrogate-Control': 'no-store',
+        ...extraHeaders,
       },
     });
   }

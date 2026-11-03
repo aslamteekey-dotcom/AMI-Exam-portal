@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { GraduationCap, Lock, User, AlertCircle, ArrowRight } from 'lucide-react';
 
 export const LoginForm: React.FC = () => {
-  const { login, lang } = useAuth();
+  const { login, lang, institutionSettings } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -40,10 +40,12 @@ export const LoginForm: React.FC = () => {
             <GraduationCap className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-200" />
           </div>
           <h1 className={`text-base sm:text-xl font-bold uppercase tracking-tight ${isMl ? 'font-ml' : 'font-title'}`}>
-            {isMl ? 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ പള്ളിക്കുത്ത്' : 'Al-Madrasathul Islamiya Pallikkuth'}
+            {isMl
+              ? institutionSettings?.madrasaNameMl || institutionSettings?.institutionNameMl || institutionSettings?.madrasaNameEn || 'അൽ മദ്റസത്തുൽ ഇസ്ലാമിയ്യ'
+              : institutionSettings?.madrasaNameEn || institutionSettings?.institutionName || institutionSettings?.madrasaNameMl || 'Islamic Madrasa Portal'}
           </h1>
           <p className="text-[10px] sm:text-xs font-semibold text-emerald-300 mt-0.5 tracking-wide">
-            Islamic Education &amp; Digital Learning
+            {institutionSettings?.institutionSubtitle || (isMl ? institutionSettings?.locationMl : institutionSettings?.locationEn) || 'Islamic Education & Digital Learning'}
           </p>
         </div>
 

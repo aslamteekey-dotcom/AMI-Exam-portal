@@ -88,6 +88,7 @@ export class FirestoreSyncService {
     onHolidays?: (holidays: InstitutionHoliday[]) => void;
     onSpecialWorkingDays?: (days: SpecialWorkingDay[]) => void;
     onAuditLogs?: (logs: AuditLog[]) => void;
+    onSettings?: (settings: InstitutionSettings) => void;
     getInitialStudents?: () => Student[];
     getInitialTeachers?: () => User[];
     getInitialParents?: () => User[];
@@ -243,31 +244,8 @@ export class FirestoreSyncService {
               const resequenced = assignClassSequentialRollNumbers(uniqueStudents);
               callbacks.onStudents?.(resequenced);
             } else {
-              // Collection is empty in Firestore
-              if (!isGloballySeeded() && !localSeeded && callbacks.getInitialStudents) {
-                localSeeded = true;
-                markGloballySeeded();
-                try {
-                  const initialList = callbacks.getInitialStudents();
-                  if (Array.isArray(initialList) && initialList.length > 0) {
-                    const uniqueInit = Array.from(
-                      new Map(initialList.map(s => [s.admissionNo?.toString() || s.id, s])).values()
-                    );
-                    callbacks.onStudents?.(uniqueInit);
-                    for (const st of uniqueInit) {
-                      await setDoc(doc(db, 'students', st.id), cleanForFirestore(st));
-                    }
-                  } else {
-                    callbacks.onStudents?.([]);
-                  }
-                } catch (seedErr) {
-                  console.warn('Initial student seed error:', seedErr);
-                  callbacks.onStudents?.([]);
-                }
-              } else {
-                // Already seeded once or intentionally cleared: strictly keep empty
-                callbacks.onStudents?.([]);
-              }
+              // Collection is empty in Firestore: strictly maintain empty list and NEVER re-seed dummy records
+              callbacks.onStudents?.([]);
             }
           },
           err => {
@@ -694,6 +672,27 @@ export class FirestoreSyncService {
         this.unsubscribers.push(unsub);
       } catch (e) {
         this.handleSnapshotError(e, 'auditLogs');
+      }
+    }
+
+    // 14. Real-time Institution Settings (Madrasa Name, Contacts, Academic Config)
+    if (callbacks.onSettings) {
+      try {
+        const unsub = onSnapshot(
+          doc(db, 'settings', 'institution'),
+          snapshot => {
+            if (snapshot.exists()) {
+              const data = snapshot.data() as InstitutionSettings;
+              callbacks.onSettings?.(data);
+            }
+          },
+          err => {
+            this.handleSnapshotError(err, 'settings/institution');
+          }
+        );
+        this.unsubscribers.push(unsub);
+      } catch (e) {
+        this.handleSnapshotError(e, 'settings/institution');
       }
     }
 
@@ -1306,7 +1305,15 @@ export class FirestoreSyncService {
   public async syncSettings(settings: InstitutionSettings): Promise<void> {
     if (isFirestoreQuotaExhausted()) return;
     try {
-      const cleanData = cleanForFirestore(settings);
+      const nameEn = settings.madrasaNameEn || settings.institutionName || '';
+      const nameMl = settings.madrasaNameMl || settings.institutionNameMl || '';
+      const cleanData = cleanForFirestore({
+        ...settings,
+        madrasaNameEn: nameEn,
+        institutionName: nameEn,
+        madrasaNameMl: nameMl,
+        institutionNameMl: nameMl,
+      });
       await Promise.allSettled([
         setDoc(doc(db, 'settings', 'institution'), cleanData, { merge: true }),
         setDoc(doc(db, 'settings', 'profile'), cleanData, { merge: true }),

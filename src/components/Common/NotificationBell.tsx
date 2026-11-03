@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 
 export const NotificationBell: React.FC = () => {
-  const { user, lang } = useAuth();
+  const { user, lang, institutionSettings } = useAuth();
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -247,7 +247,7 @@ export const NotificationBell: React.FC = () => {
           {/* Footer */}
           <div className="p-2.5 bg-slate-50 border-t border-slate-100 text-center">
             <span className="text-[10px] text-slate-500 font-medium">
-              Al-Madrasathul Islamiya Pallikkuth • Push Notification Hub
+              {institutionSettings?.institutionName || institutionSettings?.madrasaNameEn || 'Madrasa Portal'} • Push Notification Hub
             </span>
           </div>
         </div>
