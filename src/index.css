@@ -398,6 +398,10 @@ html[lang="ml"] td {
     display: none !important;
   }
 
+  .parent-browser-overview {
+    display: none !important;
+  }
+
   .parent-pwa-tiles-grid {
     display: grid !important;
   }

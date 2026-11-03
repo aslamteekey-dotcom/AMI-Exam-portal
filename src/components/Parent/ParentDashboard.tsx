@@ -54,6 +54,7 @@ import {
   Clock,
   Megaphone,
   ArrowRight,
+  ArrowLeft,
   ExternalLink,
   Search,
   CheckCircle,
@@ -78,7 +79,10 @@ export type ParentPortalTab =
   | 'study_materials'
   | 'news'
   | 'notification'
-  | 'contact';
+  | 'contact'
+  | 'time_table'
+  | 'quiz'
+  | 'lms';
 
 
 export const ParentDashboard: React.FC = () => {
@@ -121,55 +125,79 @@ export const ParentDashboard: React.FC = () => {
     return () => media?.removeEventListener?.('change', checkStandalone);
   }, []);
 
-  // 6 PWA Dashboard Tiles: Attendance, Result, Fees, Time table, Quiz, LMS
+  // 12 PWA Dashboard Tiles: Home, Attendance, Result, Fees, Study material, News, Notification, Contact, About, Time table, Quiz, LMS
   const pwaDashboardTiles = [
     {
+      id: 'home',
+      label: isMl ? 'ഹോം' : 'Home',
+      icon: Home,
+      onClick: () => setActiveTab('home'),
+    },
+    {
       id: 'attendance',
-      activeTabKey: 'attendance',
       label: isMl ? 'ഹാജർ' : 'Attendance',
       icon: CalendarCheck,
       onClick: () => setActiveTab('attendance'),
     },
     {
       id: 'result',
-      activeTabKey: 'report',
       label: isMl ? 'റിസൾട്ട്' : 'Result',
       icon: Award,
       onClick: () => setActiveTab('report'),
     },
     {
       id: 'fees',
-      activeTabKey: 'fees',
       label: isMl ? 'ഫീസ്' : 'Fees',
       icon: CreditCard,
       onClick: () => setActiveTab('fees'),
     },
     {
+      id: 'study_materials',
+      label: isMl ? 'പഠന സാമഗ്രികൾ' : 'Study material',
+      icon: BookOpen,
+      onClick: () => setActiveTab('study_materials'),
+    },
+    {
+      id: 'news',
+      label: isMl ? 'വാർത്തകൾ' : 'News',
+      icon: Newspaper,
+      onClick: () => setActiveTab('news'),
+    },
+    {
+      id: 'notification',
+      label: isMl ? 'അറിയിപ്പുകൾ' : 'Notification',
+      icon: Bell,
+      onClick: () => setActiveTab('notification'),
+    },
+    {
+      id: 'contact',
+      label: isMl ? 'ബന്ധപ്പെടുക' : 'Contact',
+      icon: PhoneCall,
+      onClick: () => setActiveTab('contact'),
+    },
+    {
+      id: 'about',
+      label: isMl ? 'ഞങ്ങളെക്കുറിച്ച്' : 'About',
+      icon: Sparkles,
+      onClick: () => setActiveTab('about'),
+    },
+    {
       id: 'time_table',
-      activeTabKey: null,
       label: isMl ? 'ടൈംടേബിൾ' : 'Time table',
       icon: Clock,
-      onClick: () => {
-        console.log('Time table clicked');
-      },
+      onClick: () => setActiveTab('time_table'),
     },
     {
       id: 'quiz',
-      activeTabKey: null,
       label: isMl ? 'ക്വിസ്' : 'Quiz',
       icon: HelpCircle,
-      onClick: () => {
-        console.log('Quiz clicked');
-      },
+      onClick: () => setActiveTab('quiz'),
     },
     {
       id: 'lms',
-      activeTabKey: null,
       label: 'LMS',
-      icon: BookOpen,
-      onClick: () => {
-        console.log('LMS clicked');
-      },
+      icon: GraduationCap,
+      onClick: () => setActiveTab('lms'),
     },
   ];
 
@@ -1065,7 +1093,7 @@ export const ParentDashboard: React.FC = () => {
               }`}
             >
               <BookOpen className="w-4 h-4" />
-              <span>{isMl ? 'പഠന സാമഗ്രികൾ' : 'Study Materials'}</span>
+              <span>{isMl ? 'പഠന സാമഗ്രികൾ' : 'Study material'}</span>
             </button>
 
             <button
@@ -1120,40 +1148,74 @@ export const ParentDashboard: React.FC = () => {
               }`}
             >
               <Sparkles className="w-4 h-4 text-amber-300" />
-              <span>About</span>
+              <span>{isMl ? 'ഞങ്ങളെക്കുറിച്ച്' : 'About'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('time_table')}
+              className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
+                activeTab === 'time_table'
+                  ? 'bg-[#047857] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
+              }`}
+            >
+              <Clock className="w-4 h-4" />
+              <span>{isMl ? 'ടൈംടേബിൾ' : 'Time table'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('quiz')}
+              className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
+                activeTab === 'quiz'
+                  ? 'bg-[#047857] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
+              }`}
+            >
+              <HelpCircle className="w-4 h-4" />
+              <span>{isMl ? 'ക്വിസ്' : 'Quiz'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('lms')}
+              className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
+                activeTab === 'lms'
+                  ? 'bg-[#047857] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
+              }`}
+            >
+              <GraduationCap className="w-4 h-4" />
+              <span>LMS</span>
             </button>
           </div>
 
-          {/* PWA-ONLY DASHBOARD TILES: 3-column grid directly below "My Children" in Standalone PWA mode */}
-          <div
-            className={`parent-pwa-tiles-grid ${
-              isStandalone ? 'grid' : 'hidden'
-            } grid-cols-3 gap-3 sm:gap-4 print:hidden`}
-          >
-            {pwaDashboardTiles.map(tile => {
-              const Icon = tile.icon;
-              const isActive = tile.activeTabKey && activeTab === tile.activeTabKey;
-              return (
-                <button
-                  key={tile.id}
-                  type="button"
-                  onClick={tile.onClick}
-                  className={`aspect-square rounded-2xl bg-[#047857] hover:bg-emerald-800 text-white flex flex-col items-center justify-center p-3 shadow-md hover:shadow-lg transition-all duration-200 active:scale-95 cursor-pointer border border-emerald-600/30 select-none ${
-                    isActive ? 'ring-2 ring-white/90 bg-emerald-800 shadow-lg scale-[1.02]' : ''
-                  }`}
-                >
-                  <Icon className="w-8 h-8 text-white shrink-0" />
-                  <span className="text-xs mt-2 text-center break-words font-semibold text-white leading-tight">
-                    {tile.label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* TAB 1: HOME OVERVIEW VIEW */}
+          {/* VIEW SWITCHER LOGIC: BELOW THE TOP SECTION */}
           {activeTab === 'home' && (
-            <div className="space-y-6">
+            isStandalone ? (
+              /* PWA 'Home' View: Render ONLY the 12 Dashboard Tiles grid */
+              <div className="parent-pwa-tiles-grid grid grid-cols-3 gap-3 sm:gap-4 print:hidden">
+                {pwaDashboardTiles.map(tile => {
+                  const Icon = tile.icon;
+                  return (
+                    <button
+                      key={tile.id}
+                      type="button"
+                      onClick={tile.onClick}
+                      className="aspect-square rounded-2xl bg-[#047857] hover:bg-emerald-800 text-white flex flex-col items-center justify-center p-3 sm:p-4 shadow-md hover:shadow-lg transition-all duration-200 active:scale-95 cursor-pointer border border-emerald-600/30 select-none group"
+                    >
+                      <Icon className="w-8 h-8 text-white shrink-0 group-hover:scale-105 transition-transform" />
+                      <span className="text-xs sm:text-sm mt-2 text-center break-words font-semibold text-white leading-tight">
+                        {tile.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              /* Standard Web Browser Fallback: Overview Welcome Landing Card & Content */
+              <div className="parent-browser-overview space-y-6">
               {/* Overview Welcome Landing Card */}
               <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
@@ -1481,7 +1543,8 @@ export const ParentDashboard: React.FC = () => {
                 </div>
               </div>
             </div>
-          )}
+          )
+        )}
 
           {/* TAB: DEDICATED INTERNAL ABOUT TAB */}
           {activeTab === 'about' && (
@@ -2762,6 +2825,93 @@ export const ParentDashboard: React.FC = () => {
           {/* TAB: STUDY MATERIALS VIEW */}
           {activeTab === 'study_materials' && (
             <StudyMaterialsView onBackToHome={() => setActiveTab('home')} />
+          )}
+
+          {/* TAB: TIME TABLE (Placeholder) */}
+          {activeTab === 'time_table' && (
+            <div className="bg-white/80 backdrop-blur-md rounded-2xl border border-white/60 p-6 sm:p-8 shadow-xl text-center space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto shadow-xs">
+                <Clock className="w-8 h-8" />
+              </div>
+              <div className="space-y-1">
+                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 font-serif">
+                  {isMl ? 'ക്ലാസ്സ് ടൈംടേബിൾ' : 'Time table'}
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
+                  {isMl
+                    ? 'ക്ലാസ്സ്, പരീക്ഷ ടൈംടേബിൾ വിവരങ്ങൾ ഉടൻ ലഭ്യമാകും.'
+                    : 'Class schedules and examination timetable will be published here.'}
+                </p>
+              </div>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('home')}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl transition shadow-xs cursor-pointer"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>{isMl ? 'ഹോമിലേക്ക് മടങ്ങുക' : 'Back to Dashboard'}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: QUIZ (Placeholder) */}
+          {activeTab === 'quiz' && (
+            <div className="bg-white/80 backdrop-blur-md rounded-2xl border border-white/60 p-6 sm:p-8 shadow-xl text-center space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto shadow-xs">
+                <HelpCircle className="w-8 h-8" />
+              </div>
+              <div className="space-y-1">
+                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 font-serif">
+                  {isMl ? 'ക്വിസ് & മൂല്യനിർണ്ണയം' : 'Quiz & Assessments'}
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
+                  {isMl
+                    ? 'ഓൺലൈൻ ക്വിസുകളും മത്സരങ്ങളും ഉടൻ ലഭ്യമാകും.'
+                    : 'Interactive quizzes, Islamic tests, and online assessments will appear here.'}
+                </p>
+              </div>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('home')}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl transition shadow-xs cursor-pointer"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>{isMl ? 'ഹോമിലേക്ക് മടങ്ങുക' : 'Back to Dashboard'}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: LMS (Placeholder) */}
+          {activeTab === 'lms' && (
+            <div className="bg-white/80 backdrop-blur-md rounded-2xl border border-white/60 p-6 sm:p-8 shadow-xl text-center space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto shadow-xs">
+                <GraduationCap className="w-8 h-8" />
+              </div>
+              <div className="space-y-1">
+                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 font-serif">
+                  Learning Management System (LMS)
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
+                  {isMl
+                    ? 'ഡിജിറ്റൽ ലേണിംഗ് കോഴ്സുകളും വീഡിയോ ക്ലാസുകളും ഇവിടെ ലഭ്യമാകും.'
+                    : 'Digital classrooms, audio-visual courses, and interactive curriculum will be accessible here.'}
+                </p>
+              </div>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('home')}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl transition shadow-xs cursor-pointer"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>{isMl ? 'ഹോമിലേക്ക് മടങ്ങുക' : 'Back to Dashboard'}</span>
+                </button>
+              </div>
+            </div>
           )}
 
           {/* MODAL: VIEW DETAILED NEWS / CIRCULAR */}
