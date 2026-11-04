@@ -29,10 +29,10 @@ const AppContent: React.FC = () => {
   }
 
   return (
-    <div className={`min-h-screen flex flex-col bg-transparent text-slate-800 font-sans selection:bg-emerald-100 selection:text-emerald-900 ${!user ? 'h-[100dvh] overflow-hidden justify-between' : 'h-[100dvh] max-h-[100dvh] overflow-hidden'}`}>
+    <div className={`min-h-screen flex flex-col bg-transparent text-slate-800 font-sans selection:bg-emerald-100 selection:text-emerald-900 ${!user ? 'h-[100dvh] overflow-hidden justify-between' : ''}`}>
       <Navbar />
 
-      <main className={`flex-1 max-w-7xl w-full mx-auto px-2 sm:px-6 lg:px-8 flex flex-col min-h-0 overflow-hidden ${!user ? 'py-2 sm:py-4 items-center justify-center' : 'py-1 sm:py-2.5'}`}>
+      <main className={`flex-1 max-w-7xl w-full mx-auto px-2 sm:px-6 lg:px-8 flex flex-col ${!user ? 'py-2 sm:py-4 items-center justify-center' : 'py-2 sm:py-3'}`}>
         {!user ? (
           <LoginForm />
         ) : user.role === 'admin' ? (

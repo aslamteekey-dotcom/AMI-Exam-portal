@@ -921,19 +921,19 @@ export const ParentDashboard: React.FC = () => {
   };
 
   return (
-    <div className="h-full flex-1 flex flex-col min-h-0 overflow-hidden">
-      {/* Welcome Banner: Compact */}
-      <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-[#047857] text-white rounded-xl sm:rounded-2xl px-3 py-1.5 sm:px-4 sm:py-2.5 shadow-md border border-white/30 print:hidden shrink-0 mb-1.5">
-        <div className="flex items-center justify-between gap-2">
+    <div className="w-full flex-1 flex flex-col min-h-0">
+      {/* Welcome Banner: Spacious */}
+      <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-[#047857] text-white rounded-2xl sm:rounded-3xl p-4 sm:p-5 shadow-xl border border-white/30 print:hidden shrink-0 mb-3 sm:mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <h1 className="text-sm sm:text-base font-bold font-serif truncate leading-tight">
+            <h1 className="text-lg sm:text-2xl font-bold font-serif leading-tight truncate">
               {isMl && user?.nameMl ? user.nameMl : user?.name}
             </h1>
-            <p className="text-[10px] sm:text-xs text-emerald-200 truncate mt-0.5">
+            <p className="text-xs sm:text-sm text-emerald-200 mt-1 truncate">
               {t.parentRole} • {currentMadrasaName}
             </p>
           </div>
-          <div className="text-right font-serif text-emerald-300 text-xs sm:text-sm shrink-0" dir="rtl">
+          <div className="text-right font-serif text-emerald-300 text-sm sm:text-base shrink-0" dir="rtl">
             السلام عليكم و رحمة الله
           </div>
         </div>
@@ -948,23 +948,23 @@ export const ParentDashboard: React.FC = () => {
           </p>
         </div>
       ) : (
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-          {/* Multi-Student Sibling Selector: Compact Card */}
-          <div className="bg-white/75 backdrop-blur-md p-2 sm:p-2.5 rounded-xl sm:rounded-2xl border border-white/60 shadow-md print:hidden shrink-0 space-y-1 mb-1.5">
-            <div className="flex items-center justify-between gap-2 border-b border-slate-100/80 pb-1">
-              <div className="flex items-center gap-1.5">
-                <GraduationCap className="w-3.5 h-3.5 text-[#047857]" />
-                <h2 className="text-[10px] sm:text-xs font-bold text-slate-800 uppercase tracking-wider">
+        <div className="w-full flex-1 flex flex-col min-h-0 space-y-3 sm:space-y-4">
+          {/* Multi-Student Sibling Selector: Spacious Card */}
+          <div className="bg-white/75 backdrop-blur-md p-3 sm:p-4 rounded-2xl border border-white/60 shadow-md print:hidden shrink-0 space-y-2 mb-2">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100/80 pb-1.5">
+              <div className="flex items-center gap-2">
+                <GraduationCap className="w-4 h-4 text-[#047857]" />
+                <h2 className="text-xs sm:text-sm font-bold text-slate-800 uppercase tracking-wider">
                   {t.navMyChildren} ({children.length})
                 </h2>
                 <span className="text-slate-300">•</span>
-                <span className="text-[10px] text-slate-500 font-medium">
+                <span className="text-xs text-slate-500 font-medium">
                   Active Student Record
                 </span>
               </div>
               {parentStudents.length > 1 && (
-                <span className="text-[9px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-medium border border-emerald-200">
-                  Switch
+                <span className="text-[10px] sm:text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-medium border border-emerald-200">
+                  Switch Child
                 </span>
               )}
             </div>
@@ -981,7 +981,7 @@ export const ParentDashboard: React.FC = () => {
                       setActiveChild(found);
                     }
                   }}
-                  className="w-full py-1 px-2 pr-7 border border-emerald-300 rounded-lg bg-white font-bold text-slate-800 text-[11px] focus:ring-1 focus:ring-emerald-700 focus:outline-none cursor-pointer appearance-none shadow-2xs"
+                  className="w-full py-1.5 px-3 pr-8 border border-emerald-300 rounded-xl bg-white font-bold text-slate-800 text-xs sm:text-sm focus:ring-1 focus:ring-emerald-700 focus:outline-none cursor-pointer appearance-none shadow-xs"
                 >
                   {parentStudents.map(student => (
                     <option key={String(student.id)} value={String(student.id)}>
@@ -989,11 +989,11 @@ export const ParentDashboard: React.FC = () => {
                     </option>
                   ))}
                 </select>
-                <ChevronDown className="w-3.5 h-3.5 text-emerald-800 absolute right-2 top-2 pointer-events-none" />
+                <ChevronDown className="w-4 h-4 text-emerald-800 absolute right-2.5 top-2.5 pointer-events-none" />
               </div>
             )}
 
-            {/* Single Prominent Selected Child Card: Compact Side-by-Side */}
+            {/* Single Prominent Selected Child Card: Spacious Side-by-Side */}
             {activeChild && (() => {
               const student = activeChild;
               const childRegNo =
@@ -1012,9 +1012,9 @@ export const ParentDashboard: React.FC = () => {
               const photoUrl = (student as any).photoUrl || (student as any).photo;
 
               return (
-                <div className="p-1.5 sm:p-2 rounded-xl border border-emerald-500/80 bg-emerald-50/70 shadow-2xs flex items-center gap-2.5 sm:gap-3">
+                <div className="p-2.5 sm:p-3.5 rounded-2xl border border-emerald-500/80 bg-emerald-50/70 shadow-xs flex items-center gap-3 sm:gap-4">
                   {/* Photo Frame (Left Side) */}
-                  <div className="w-13 h-13 sm:w-15 sm:h-15 rounded-xl border border-emerald-300 bg-white shadow-2xs overflow-hidden shrink-0 flex items-center justify-center">
+                  <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl border-2 border-emerald-300 bg-white shadow-xs overflow-hidden shrink-0 flex items-center justify-center">
                     {photoUrl ? (
                       <img
                         src={photoUrl}
@@ -1080,14 +1080,14 @@ export const ParentDashboard: React.FC = () => {
                         {student.nameEn || 'Aliza Fathima TK'}
                       </h3>
                       {student.nameMl && (
-                        <span className="text-black text-xs font-medium leading-tight truncate font-ml">
+                        <span className="text-black text-xs sm:text-sm font-medium leading-tight truncate font-ml">
                           {student.nameMl}
                         </span>
                       )}
                     </div>
 
-                    {/* Meta Details Grid: 2 columns */}
-                    <div className="grid grid-cols-2 gap-x-2 sm:gap-x-4 gap-y-0.5 text-[10px] sm:text-[11px] mt-0.5 text-slate-700">
+                    {/* Meta Details Grid: 2 or 3 columns */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-2.5 sm:gap-x-4 gap-y-1 text-[11px] sm:text-xs mt-1 text-slate-700">
                       <div className="flex items-center gap-1 truncate">
                         <span className="text-slate-500 font-medium">Adm:</span>
                         <span className="font-bold text-slate-900 font-mono">{student.admissionNo || '983'}</span>
@@ -1287,11 +1287,11 @@ export const ParentDashboard: React.FC = () => {
           </div>
 
           {/* VIEW SWITCHER LOGIC: BELOW THE TOP SECTION */}
-          <div className="flex-1 min-h-0 overflow-y-auto pr-0.5 pb-20 space-y-4">
+          <div className="w-full pb-20 space-y-4">
             {activeTab === 'home' && (
               isStandalone ? (
                 /* PWA 'Home' View: Render ONLY the 12 Dashboard Tiles grid */
-                <div className="parent-pwa-tiles-grid grid grid-cols-3 gap-2 py-1 print:hidden">
+                <div className="parent-pwa-tiles-grid grid grid-cols-3 gap-3 sm:gap-4 print:hidden">
                   {pwaDashboardTiles.map(tile => {
                     const Icon = tile.icon;
                     return (
@@ -1299,10 +1299,10 @@ export const ParentDashboard: React.FC = () => {
                         key={tile.id}
                         type="button"
                         onClick={tile.onClick}
-                        className="h-14 sm:h-16 rounded-xl bg-[#047857] hover:bg-emerald-800 text-white flex flex-col items-center justify-center p-1 shadow-xs hover:shadow-md transition-all duration-150 active:scale-95 cursor-pointer border border-emerald-600/30 select-none group"
+                        className="aspect-square rounded-2xl bg-[#047857] hover:bg-emerald-800 text-white flex flex-col items-center justify-center p-3 shadow-xs hover:shadow-md transition-all duration-150 active:scale-95 cursor-pointer border border-emerald-600/30 select-none group"
                       >
-                        <Icon className="w-5 h-5 sm:w-6 sm:h-6 text-white shrink-0 group-hover:scale-105 transition-transform" />
-                        <span className="text-[10px] sm:text-xs mt-0.5 text-center truncate w-full px-1 font-semibold text-white leading-tight">
+                        <Icon className="w-7 h-7 sm:w-8 sm:h-8 text-white shrink-0 group-hover:scale-110 transition-transform mb-1.5" />
+                        <span className="text-xs sm:text-sm text-center font-bold text-white leading-tight truncate w-full px-1">
                           {tile.label}
                         </span>
                       </button>
@@ -3095,7 +3095,7 @@ export const ParentDashboard: React.FC = () => {
           )}
 
             {/* Compact Integrated Glassmorphic Footer - Flows Naturally Below Tiles */}
-            <Footer className="!mt-8 !mb-0 rounded-xl" />
+            <Footer className="mt-6 sm:mt-8 mb-0 rounded-xl" />
           </div>
         </div>
       )}
