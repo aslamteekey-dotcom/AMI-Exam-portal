@@ -33,7 +33,9 @@ import {
   Eye,
   Calendar,
   Trash2,
+  HelpCircle,
 } from 'lucide-react';
+import { PlaceholderView } from '../Common/PlaceholderView';
 
 export const AdminDashboard: React.FC = () => {
   const { user, fetchWithAuth, lang, t, institutionSettings } = useAuth();
@@ -51,6 +53,9 @@ export const AdminDashboard: React.FC = () => {
     | 'reports'
     | 'audit_logs'
     | 'settings'
+    | 'time_table'
+    | 'quiz'
+    | 'lms'
   >('overview');
 
   const defaultOverview = {
@@ -410,6 +415,42 @@ export const AdminDashboard: React.FC = () => {
             <span>{t.navSettings}</span>
           </button>
         )}
+
+        <button
+          onClick={() => setActiveTab('time_table')}
+          className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            activeTab === 'time_table'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Clock className="w-3.5 h-3.5 shrink-0" />
+          <span>Time table</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('quiz')}
+          className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            activeTab === 'quiz'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <HelpCircle className="w-3.5 h-3.5 shrink-0" />
+          <span>Quiz</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('lms')}
+          className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            activeTab === 'lms'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <GraduationCap className="w-3.5 h-3.5 shrink-0" />
+          <span>LMS</span>
+        </button>
       </div>
 
       {/* Tab Contents */}
@@ -587,6 +628,15 @@ export const AdminDashboard: React.FC = () => {
       {activeTab === 'study_materials' && <StudyMaterialsManagement />}
       {activeTab === 'audit_logs' && <AuditLogsView />}
       {activeTab === 'settings' && <BackupSettings />}
+      {activeTab === 'time_table' && (
+        <PlaceholderView type="time_table" onBack={() => setActiveTab('overview')} />
+      )}
+      {activeTab === 'quiz' && (
+        <PlaceholderView type="quiz" onBack={() => setActiveTab('overview')} />
+      )}
+      {activeTab === 'lms' && (
+        <PlaceholderView type="lms" onBack={() => setActiveTab('overview')} />
+      )}
     </div>
   );
 };

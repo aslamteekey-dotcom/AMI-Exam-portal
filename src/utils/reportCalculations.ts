@@ -462,3 +462,25 @@ export function calculateAttendanceForExamCutoff(
 
   return { daysAttended, totalWorkingDays };
 }
+
+/**
+ * Dynamic Attendance Badge Medal Emojis:
+ * - If 50% to 60%: 🥉 (Bronze Medal)
+ * - If 61% to 70%: 🥈 (Silver Medal)
+ * - If 71% to 80%: 🥇 (Gold Medal)
+ * - If 81% to 90%: 🏆 (Gold Trophy)
+ * - If 91% to 100%: 👑 (Crown)
+ * - If below 50%: return null or no emoji
+ */
+export function getAttendanceMedalEmoji(percentageVal: number | string): string | null {
+  const numeric = typeof percentageVal === 'string' ? parseFloat(percentageVal) : Number(percentageVal);
+  if (isNaN(numeric)) return null;
+  const pct = Math.round(numeric);
+  if (pct < 50) return null;
+  if (pct <= 60) return '🥉';
+  if (pct <= 70) return '🥈';
+  if (pct <= 80) return '🥇';
+  if (pct <= 90) return '🏆';
+  if (pct <= 100) return '👑';
+  return '👑';
+}

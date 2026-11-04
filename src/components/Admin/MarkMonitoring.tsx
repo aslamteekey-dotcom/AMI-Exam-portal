@@ -701,7 +701,7 @@ export const MarkMonitoring: React.FC = () => {
 
           {/* Monitoring Matrix Table */}
           <div className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200">
-            <table className="w-full min-w-max text-xs text-left">
+            <table className="w-full text-xs text-left">
                 <thead className="bg-slate-100 text-slate-700 font-bold border-b">
                   <tr>
                     <th className="p-3 w-28 whitespace-nowrap">Class</th>

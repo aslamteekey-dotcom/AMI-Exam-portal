@@ -93,7 +93,7 @@ export const FeeManagement: React.FC = () => {
   // Tab 1: Tuition & Admission Fee State (Dropdown selection: Tuition Fee vs Admission Fee)
   const [payTuitionReceiptNo, setPayTuitionReceiptNo] = useState<string>('4458');
   const [tuitionPaymentType, setTuitionPaymentType] = useState<'Tuition Fee' | 'Admission Fee'>('Tuition Fee');
-  const [payAdmissionFeeAmount, setPayAdmissionFeeAmount] = useState<number | ''>(500);
+  const [payAdmissionFeeAmount, setPayAdmissionFeeAmount] = useState<number | ''>(400);
   const [paySelectedMonths, setPaySelectedMonths] = useState<FeeMonth[]>([]);
 
   // Tab 2: Special Fees State
@@ -180,8 +180,16 @@ export const FeeManagement: React.FC = () => {
         ).values()
       );
       setStudents(sortStudentsBoysFirst(uniqueStudents));
-      setPayments(pData);
-      refreshReceiptSequences(pData);
+      const sortedPayments = (pData || []).slice().sort((a, b) => {
+        const numA = parseInt(String(a.receiptNo || '').replace(/\D/g, ''), 10);
+        const numB = parseInt(String(b.receiptNo || '').replace(/\D/g, ''), 10);
+        if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+          return numA - numB;
+        }
+        return String(a.receiptNo || '').localeCompare(String(b.receiptNo || ''), undefined, { numeric: true });
+      });
+      setPayments(sortedPayments);
+      refreshReceiptSequences(sortedPayments);
     } catch (err) {
       console.error('Error loading fees data:', err);
     } finally {
@@ -260,7 +268,7 @@ export const FeeManagement: React.FC = () => {
     // Auto select the first unpaid month
     const nextUnpaid = TUITION_FEE_MONTHS.find(m => !paidMonths.has(m));
     setPaySelectedMonths(nextUnpaid ? [nextUnpaid] : []);
-    setPayAdmissionFeeAmount(500);
+    setPayAdmissionFeeAmount(400);
     setSpecialFeeType('Terminal Exam Fee');
     setSpecialFeeAmount(150);
     setPayNotes('');
@@ -276,7 +284,7 @@ export const FeeManagement: React.FC = () => {
     setTuitionPaymentType('Tuition Fee');
     setPayStudentId('');
     setPaySelectedMonths([]);
-    setPayAdmissionFeeAmount(500);
+    setPayAdmissionFeeAmount(400);
     setSpecialFeeType('Terminal Exam Fee');
     setSpecialFeeAmount(150);
     setPayNotes('');
@@ -501,21 +509,30 @@ export const FeeManagement: React.FC = () => {
     })
   );
 
-  const filteredPayments = payments.filter(p => {
-    const matchClass =
-      !selectedClassId || selectedClassId === 'All Classes'
-        ? true
-        : p.className === selectedClassId ||
-          p.classId === selectedClassId ||
-          classes.find(c => c.id === p.classId)?.name === selectedClassId;
-    const q = (searchQuery || '').toLowerCase().trim();
-    if (!q) return matchClass;
-    const matchQuery =
-      (p.receiptNo?.toString() || '').toLowerCase().includes(q) ||
-      (p.studentName || '').toLowerCase().includes(q) ||
-      (p.admissionNo?.toString() || '').toLowerCase().includes(q);
-    return matchClass && matchQuery;
-  });
+  const filteredPayments = payments
+    .filter(p => {
+      const matchClass =
+        !selectedClassId || selectedClassId === 'All Classes'
+          ? true
+          : p.className === selectedClassId ||
+            p.classId === selectedClassId ||
+            classes.find(c => c.id === p.classId)?.name === selectedClassId;
+      const q = (searchQuery || '').toLowerCase().trim();
+      if (!q) return matchClass;
+      const matchQuery =
+        (p.receiptNo?.toString() || '').toLowerCase().includes(q) ||
+        (p.studentName || '').toLowerCase().includes(q) ||
+        (p.admissionNo?.toString() || '').toLowerCase().includes(q);
+      return matchClass && matchQuery;
+    })
+    .sort((a, b) => {
+      const numA = parseInt(String(a.receiptNo || '').replace(/\D/g, ''), 10);
+      const numB = parseInt(String(b.receiptNo || '').replace(/\D/g, ''), 10);
+      if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+        return numA - numB;
+      }
+      return String(a.receiptNo || '').localeCompare(String(b.receiptNo || ''), undefined, { numeric: true });
+    });
 
   // Overview metrics (accurate distribution into 3 specific categories: Tuition, Admission, Special)
   const totalCollections = payments.reduce((sum, p) => sum + (Number(p.totalAmount) || 0), 0);
@@ -571,29 +588,38 @@ export const FeeManagement: React.FC = () => {
     );
   });
 
-  const specialPayments = payments.filter(p => {
-    const isSpecial =
-      p.feeCategory === 'special' ||
-      Boolean(p.specialFeeType) ||
-      (p.specialFeeAmount && Number(p.specialFeeAmount) > 0);
-    if (!isSpecial) return false;
+  const specialPayments = payments
+    .filter(p => {
+      const isSpecial =
+        p.feeCategory === 'special' ||
+        Boolean(p.specialFeeType) ||
+        (p.specialFeeAmount && Number(p.specialFeeAmount) > 0);
+      if (!isSpecial) return false;
 
-    const st = students.find(s => s.id === p.studentId || s.admissionNo === p.admissionNo);
-    const studentClass = st?.class || p.className;
-    const matchClass =
-      !selectedClassId || selectedClassId === 'All Classes' || studentClass === selectedClassId || p.className === selectedClassId;
-    if (!matchClass) return false;
+      const st = students.find(s => s.id === p.studentId || s.admissionNo === p.admissionNo);
+      const studentClass = st?.class || p.className;
+      const matchClass =
+        !selectedClassId || selectedClassId === 'All Classes' || studentClass === selectedClassId || p.className === selectedClassId;
+      if (!matchClass) return false;
 
-    const q = (searchQuery || '').toLowerCase().trim();
-    if (!q) return true;
-    return (
-      (p.studentName || '').toLowerCase().includes(q) ||
-      (p.admissionNo || '').toLowerCase().includes(q) ||
-      (p.receiptNo || '').toLowerCase().includes(q) ||
-      (p.specialFeeType || '').toLowerCase().includes(q) ||
-      (st?.parentNameEn || '').toLowerCase().includes(q)
-    );
-  });
+      const q = (searchQuery || '').toLowerCase().trim();
+      if (!q) return true;
+      return (
+        (p.studentName || '').toLowerCase().includes(q) ||
+        (p.admissionNo || '').toLowerCase().includes(q) ||
+        (p.receiptNo || '').toLowerCase().includes(q) ||
+        (p.specialFeeType || '').toLowerCase().includes(q) ||
+        (st?.parentNameEn || '').toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => {
+      const numA = parseInt(String(a.receiptNo || '').replace(/\D/g, ''), 10);
+      const numB = parseInt(String(b.receiptNo || '').replace(/\D/g, ''), 10);
+      if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+        return numA - numB;
+      }
+      return String(a.receiptNo || '').localeCompare(String(b.receiptNo || ''), undefined, { numeric: true });
+    });
 
   return (
     <div className="space-y-6">
@@ -1292,7 +1318,10 @@ export const FeeManagement: React.FC = () => {
                         </select>
                       </div>
                     </div>
+                  </div>
 
+                  {/* Single Row: Receipt Date, Tuition & Admission Receipt No, Payment Type */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200">
                     {/* Receipt Date */}
                     <div>
                       <label className="block font-bold text-slate-700 mb-1">Receipt Date *</label>
@@ -1300,52 +1329,46 @@ export const FeeManagement: React.FC = () => {
                         type="date"
                         value={payDate}
                         onChange={e => setPayDate(e.target.value)}
-                        className="w-full p-2.5 border border-slate-300 rounded-xl font-mono focus:outline-emerald-800 bg-white"
+                        className="w-full p-2.5 border border-slate-300 rounded-xl font-mono focus:outline-emerald-800 bg-white text-xs"
                         required
                       />
                     </div>
-                  </div>
 
-                  {/* Editable Auto-Incrementing Receipt No (Starts at 4458) */}
-                  <div className="bg-emerald-50/60 p-3 rounded-xl border border-emerald-200 flex items-center justify-between gap-3">
+                    {/* Tuition & Admission Receipt No */}
                     <div>
-                      <label className="block font-bold text-emerald-950 text-xs">
+                      <label className="block font-bold text-slate-700 mb-1 truncate" title="Tuition & Admission Receipt No">
                         Tuition &amp; Admission Receipt No *
                       </label>
-                      <span className="text-[10px] text-emerald-800">
-                        Auto-incrementing series (starts at 4458). Shared by Tuition and Admission.
-                      </span>
-                    </div>
-                    <div className="w-36">
                       <input
                         type="text"
                         value={payTuitionReceiptNo}
                         onChange={e => setPayTuitionReceiptNo(e.target.value)}
                         placeholder="4458"
                         required
-                        className="w-full p-2 border border-emerald-300 rounded-lg bg-white font-mono font-black text-emerald-950 text-sm text-center focus:outline-emerald-800"
+                        className="w-full p-2.5 border border-emerald-300 rounded-xl bg-white font-mono font-black text-emerald-950 text-xs focus:outline-emerald-800"
                       />
                     </div>
-                  </div>
 
-                  {/* Payment Type Dropdown: "Tuition Fee" vs "Admission Fee" */}
-                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                    <label className="block font-bold text-slate-800 mb-1">
-                      Payment Type *
-                    </label>
-                    <select
-                      value={tuitionPaymentType}
-                      onChange={e =>
-                        setTuitionPaymentType(e.target.value as 'Tuition Fee' | 'Admission Fee')
-                      }
-                      className="w-full p-2.5 border border-slate-300 rounded-xl bg-white font-bold text-slate-900 focus:outline-emerald-800 cursor-pointer text-xs"
-                    >
-                      <option value="Tuition Fee">Tuition Fee</option>
-                      <option value="Admission Fee">Admission Fee</option>
-                    </select>
-                    <span className="text-[10px] text-slate-500 mt-1 block">
-                      Select Tuition Fee to mark monthly installments or Admission Fee for direct amount entry.
-                    </span>
+                    {/* Payment Type */}
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">
+                        Payment Type *
+                      </label>
+                      <select
+                        value={tuitionPaymentType}
+                        onChange={e => {
+                          const newType = e.target.value as 'Tuition Fee' | 'Admission Fee';
+                          setTuitionPaymentType(newType);
+                          if (newType === 'Admission Fee') {
+                            setPayAdmissionFeeAmount(400);
+                          }
+                        }}
+                        className="w-full p-2.5 border border-slate-300 rounded-xl bg-white font-bold text-slate-900 focus:outline-emerald-800 cursor-pointer text-xs"
+                      >
+                        <option value="Tuition Fee">Tuition Fee</option>
+                        <option value="Admission Fee">Admission Fee</option>
+                      </select>
+                    </div>
                   </div>
 
                   {/* Option 1: Tuition Fee - Month Grid Selection */}

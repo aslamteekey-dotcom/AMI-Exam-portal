@@ -374,6 +374,10 @@ html[lang="ml"] td {
    ========================================================================= */
 .pwa-bottom-nav {
   display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
 }
 
 @media (display-mode: standalone) and (max-width: 768px) {

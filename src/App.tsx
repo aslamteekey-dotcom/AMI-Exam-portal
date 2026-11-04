@@ -52,18 +52,9 @@ const AppContent: React.FC = () => {
       {/* Embedded Mobile & PWA Splash Screen */}
       <SplashScreen />
 
-      {/* Global Glassmorphic Footer (for non-parent roles; Parent Portal has its own flush footer) */}
+      {/* Global Glassmorphic Footer (for non-parent roles; Parent Portal has its own integrated footer) */}
       {user?.role !== 'parent' && (
-        <footer className={`bg-white/70 backdrop-blur-md border-t border-white/60 print:hidden text-xs text-slate-600 shrink-0 ${!user ? 'py-2 sm:py-2.5 mt-0' : 'py-3 mt-4'}`}>
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-0.5 sm:space-y-1">
-            <p className="font-semibold text-slate-800 text-[11px] sm:text-xs tracking-wide">
-              KMEB Affiliated · Mi'yar Grading A+ Accredited Institution
-            </p>
-            <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
-              Academic Year 2026–2027 · Knowledge | Values | Innovation
-            </p>
-          </div>
-        </footer>
+        <Footer className={!user ? 'py-2 mt-0' : 'py-2 mt-auto'} />
       )}
     </div>
   );

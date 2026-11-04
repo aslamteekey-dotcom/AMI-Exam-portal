@@ -685,7 +685,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-4xl w-full p-6 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto space-y-5">
+      <div className="bg-white rounded-2xl max-w-6xl w-full p-6 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto space-y-5">
         {/* Header */}
         <div className="flex items-start justify-between border-b pb-4">
           <div>
@@ -836,20 +836,21 @@ export const MarkVerificationModal: React.FC<Props> = ({
 
         {/* Marks Table with Inline Row Editing */}
         <div className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 relative scrollbar-thin">
-          <table className="w-full min-w-max text-xs text-left border-collapse">
+          <table className="w-full text-xs text-left border-collapse">
             <thead className="sticky top-0 bg-slate-100 font-bold text-slate-700 border-b z-30">
               <tr>
-                <th className="p-2.5 text-center w-12 whitespace-nowrap sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
-                <th className="p-2.5 whitespace-nowrap sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[170px] md:min-w-[200px]">Student Name</th>
-                <th className="p-2.5 text-center w-16 whitespace-nowrap">Gender</th>
-                <th className="p-2.5 text-center w-16 whitespace-nowrap text-rose-800 font-bold">Absent</th>
+                <th className="py-2 px-1 text-center w-10 whitespace-nowrap sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">Roll</th>
+                <th className="py-2 px-2 whitespace-nowrap sticky left-10 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[130px] sm:min-w-[160px]">Student Name</th>
+                <th className="py-2 px-1 text-center w-14 whitespace-nowrap">Gender</th>
+                <th className="py-2 px-1 text-center w-12 whitespace-nowrap text-rose-800 font-bold">Absent</th>
                 {components.map((c: SubjectAssessmentRule) => (
-                  <th key={c.componentKey} className="p-2.5 text-center whitespace-nowrap">
-                    {c.labelEn} ({c.maxMarks})
+                  <th key={c.componentKey} className="py-2 px-1 text-center w-16 sm:w-20 whitespace-nowrap">
+                    <div className="truncate">{c.labelEn}</div>
+                    <div className="text-[10px] text-emerald-800 font-medium">({c.maxMarks})</div>
                   </th>
                 ))}
-                <th className="p-2.5 text-center font-bold bg-slate-200/50 whitespace-nowrap">Total (50)</th>
-                <th className="p-2.5 text-center w-16 whitespace-nowrap">Edit</th>
+                <th className="py-2 px-1 text-center w-14 sm:w-16 font-bold bg-slate-200/50 whitespace-nowrap">Total</th>
+                <th className="py-2 px-1 text-center w-12 whitespace-nowrap">Edit</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -907,18 +908,18 @@ export const MarkVerificationModal: React.FC<Props> = ({
                         : 'hover:bg-slate-50'
                     }`}
                   >
-                    <td className={`p-2.5 text-center font-mono font-bold text-slate-600 w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${isRowEditable ? 'bg-purple-50' : isAbsentCurrent ? 'bg-amber-50/50 group-hover:bg-amber-100/50' : 'bg-white group-hover:bg-slate-50'}`}>
+                    <td className={`py-2 px-1 text-center font-mono font-bold text-slate-600 w-10 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${isRowEditable ? 'bg-purple-50' : isAbsentCurrent ? 'bg-amber-50/50 group-hover:bg-amber-100/50' : 'bg-white group-hover:bg-slate-50'}`}>
                       {rollNo}
                     </td>
-                    <td className={`p-2.5 font-medium sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[170px] md:min-w-[200px] ${isRowEditable ? 'bg-purple-50' : isAbsentCurrent ? 'bg-amber-50/50 group-hover:bg-amber-100/50' : 'bg-white group-hover:bg-slate-50'}`}>
-                      <div className="font-bold text-slate-900">{studentName}</div>
+                    <td className={`py-2 px-2 font-medium sticky left-10 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[130px] sm:min-w-[160px] ${isRowEditable ? 'bg-purple-50' : isAbsentCurrent ? 'bg-amber-50/50 group-hover:bg-amber-100/50' : 'bg-white group-hover:bg-slate-50'}`}>
+                      <div className="font-bold text-slate-900 leading-tight">{studentName}</div>
                       {bilingualName && bilingualName !== studentName && (
-                        <div className="text-[11px] text-slate-500 font-ml">{bilingualName}</div>
+                        <div className="text-[10px] text-slate-500 font-ml leading-tight">{bilingualName}</div>
                       )}
-                      <div className="text-[11px] text-slate-400 font-mono">Adm: {admissionNo}</div>
+                      <div className="text-[10px] text-slate-400 font-mono leading-tight">Adm: {admissionNo}</div>
                     </td>
-                    <td className="p-2.5 text-center whitespace-nowrap">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    <td className="py-2 px-1 text-center w-14 whitespace-nowrap">
+                      <span className={`inline-flex items-center px-1.5 py-0.2 rounded-full text-[9px] font-bold ${
                         studentGender === 'Girl'
                           ? 'bg-rose-50 text-rose-700 border border-rose-200'
                           : 'bg-blue-50 text-blue-700 border border-blue-200'
@@ -928,19 +929,19 @@ export const MarkVerificationModal: React.FC<Props> = ({
                     </td>
 
                     {/* Absent Toggle / Checkbox Column */}
-                    <td className="p-2.5 text-center whitespace-nowrap">
+                    <td className="py-2 px-1 text-center w-12 whitespace-nowrap">
                       {isRowEditable ? (
                         <label className="inline-flex items-center justify-center cursor-pointer">
                           <input
                             type="checkbox"
                             checked={isAbsentCurrent}
                             onChange={e => handleToggleStudentAbsent(studentId, e.target.checked)}
-                            className="w-4 h-4 text-red-600 rounded border-slate-300 focus:ring-red-500 cursor-pointer"
+                            className="w-3.5 h-3.5 text-red-600 rounded border-slate-300 focus:ring-red-500 cursor-pointer"
                             title={isAbsentCurrent ? 'Uncheck to mark Present' : 'Check to mark Absent'}
                           />
                         </label>
                       ) : isAbsentCurrent ? (
-                        <span className="text-red-600 font-bold font-mono">AB</span>
+                        <span className="text-red-600 font-bold font-mono text-xs">AB</span>
                       ) : (
                         <span className="text-slate-300 text-xs">—</span>
                       )}
@@ -953,9 +954,9 @@ export const MarkVerificationModal: React.FC<Props> = ({
                       const displayVal = draftVal !== undefined ? draftVal : (savedVal !== undefined && savedVal !== null ? savedVal : '');
 
                       return (
-                        <td key={c.componentKey} className="p-2.5 text-center font-mono">
+                        <td key={c.componentKey} className="py-2 px-1 text-center font-mono w-16 sm:w-20">
                           {isAbsentCurrent ? (
-                            <span className="text-red-600 font-bold">AB</span>
+                            <span className="text-red-600 font-bold text-xs">AB</span>
                           ) : isRowEditable ? (
                             <input
                               type="number"
@@ -964,22 +965,22 @@ export const MarkVerificationModal: React.FC<Props> = ({
                               disabled={isAbsentCurrent}
                               value={displayVal}
                               onChange={e => handleDraftMarkChange(studentId, c.componentKey, e.target.value, c.maxMarks)}
-                              className="w-16 p-1 text-center font-mono font-bold text-xs border border-purple-300 rounded-lg bg-white text-purple-950 focus:ring-2 focus:ring-purple-500 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400"
+                              className="w-12 sm:w-14 p-1 text-center font-mono font-bold text-xs border border-purple-300 rounded-lg bg-white text-purple-950 focus:ring-2 focus:ring-purple-500 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400"
                               placeholder="0"
                             />
                           ) : displayVal !== '' && displayVal !== undefined ? (
-                            <span className="font-bold">{displayVal}</span>
+                            <span className="font-bold text-xs">{displayVal}</span>
                           ) : (
-                            <span className="text-slate-400">0</span>
+                            <span className="text-slate-400 text-xs">0</span>
                           )}
                         </td>
                       );
                     })}
 
                     {/* Total Column */}
-                    <td className="p-2.5 text-center font-mono font-black text-sm bg-slate-50/50">
+                    <td className="py-2 px-1 text-center font-mono font-black text-xs sm:text-sm bg-slate-50/50 w-14 sm:w-16">
                       {isAbsentCurrent ? (
-                        <span className="text-red-600 font-bold">AB</span>
+                        <span className="text-red-600 font-bold text-xs">AB</span>
                       ) : (
                         <span className={isFail ? 'text-red-600 font-bold' : 'text-emerald-950 font-bold'}>
                           {grandTotal ?? '—'}
@@ -987,7 +988,7 @@ export const MarkVerificationModal: React.FC<Props> = ({
                       )}
                     </td>
 
-                    <td className="p-2.5 text-center whitespace-nowrap">
+                    <td className="py-2 px-1 text-center w-12 whitespace-nowrap">
                       <button
                         type="button"
                         onClick={() => handleToggleRowEdit(studentId, entry)}

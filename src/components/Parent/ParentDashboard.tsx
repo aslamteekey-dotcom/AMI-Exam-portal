@@ -26,14 +26,16 @@ import {
 import { ProgressReportCard } from '../Report/ProgressReportCard';
 import { StudyMaterialsView } from './StudyMaterialsView';
 import { PWABottomNav } from '../Common/PWABottomNav';
+import { Footer } from '../Common/Footer';
+import { PlaceholderView } from '../Common/PlaceholderView';
 import { formatTuitionMonths } from '../Admin/FeeManagement';
 import { useHorizontalScroll, handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
+import { getAttendanceMedalEmoji } from '../../utils/reportCalculations';
 import {
   User,
   GraduationCap,
   FileText,
   AlertCircle,
-  Calendar,
   Award,
   ChevronDown,
   CheckCircle2,
@@ -101,6 +103,7 @@ export const ParentDashboard: React.FC = () => {
   const { scrollProps: navScrollProps } = useHorizontalScroll();
   const [childPayments, setChildPayments] = useState<FeePayment[]>([]);
   const [activeReceipt, setActiveReceipt] = useState<FeePayment | null>(null);
+  const [activeFeeTab, setActiveFeeTab] = useState<'tuition' | 'special'>('tuition');
 
   // PWA Standalone Detection for Dashboard Tiles Grid
   const [isStandalone, setIsStandalone] = useState<boolean>(() => {
@@ -1284,11 +1287,11 @@ export const ParentDashboard: React.FC = () => {
           </div>
 
           {/* VIEW SWITCHER LOGIC: BELOW THE TOP SECTION */}
-          <div className={`flex-1 min-h-0 ${activeTab === 'home' && isStandalone ? 'flex flex-col justify-center overflow-hidden' : 'overflow-y-auto pr-0.5 space-y-4'}`}>
+          <div className="flex-1 min-h-0 overflow-y-auto pr-0.5 pb-20 space-y-4">
             {activeTab === 'home' && (
               isStandalone ? (
                 /* PWA 'Home' View: Render ONLY the 12 Dashboard Tiles grid */
-                <div className="parent-pwa-tiles-grid grid grid-cols-3 gap-2 flex-1 min-h-0 content-center py-1 print:hidden">
+                <div className="parent-pwa-tiles-grid grid grid-cols-3 gap-2 py-1 print:hidden">
                   {pwaDashboardTiles.map(tile => {
                     const Icon = tile.icon;
                     return (
@@ -1833,15 +1836,12 @@ export const ParentDashboard: React.FC = () => {
                 const leavesTaken = attData.leavesTaken;
                 const percentage = attData.percentageStr;
                 const totalHolidaysCount = attData.totalHolidaysCount;
-                const totalSundaysUnlocked = attData.totalSundaysUnlocked;
+                const medalEmoji = getAttendanceMedalEmoji(percentage);
                 const monthlyRecords = attData.monthlyRecords;
-                const allHolidaysMap = attData.allHolidaysMap;
-                const recentLoggedDates = attData.recentLoggedDates;
-                const records = attData.consolidatedDailyRecords;
 
                 return (
                   <div className="space-y-6">
-                    {/* Header Card */}
+                    {/* Header Card with 4 Stat Cards & Attendance Badge */}
                     <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
                         <div>
@@ -1863,7 +1863,7 @@ export const ParentDashboard: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* 5 Dedicated Attendance & Holiday KPI Badges */}
+                      {/* 4 Dedicated Attendance & Holiday KPI Badges + Attendance Badge */}
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-5 text-xs">
                         <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                           <span className="text-[10px] font-bold text-slate-500 uppercase block">
@@ -1910,10 +1910,17 @@ export const ParentDashboard: React.FC = () => {
                           <span className="text-[10px] font-bold text-emerald-200 uppercase block">
                             Attendance Badge
                           </span>
-                          <span className="text-2xl font-black text-emerald-300 font-mono mt-1 block">
-                            {percentage}%
-                          </span>
-                          <span className="text-[10px] text-emerald-100">
+                          <div className="flex items-center mt-1">
+                            <span className="text-2xl font-black text-emerald-300 font-mono">
+                              {percentage}%
+                            </span>
+                            {medalEmoji && (
+                              <span className="ml-2 text-2xl" aria-label="Attendance Medal">
+                                {medalEmoji}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-emerald-100 block mt-1">
                             {Number(percentage) >= 80 ? '✓ Qualified for Exams' : 'Needs Regularity'}
                           </span>
                         </div>
@@ -1934,11 +1941,11 @@ export const ParentDashboard: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Monthly Attendance Breakdown Table */}
+                    {/* Month-wise Attendance Breakdown Table */}
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
                       <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
                         <h3 className="text-sm font-bold text-slate-900">
-                          Month-wise Attendance Breakdown (2026–2027)
+                          {isMl ? 'മാസ തിരിച്ചുള്ള ഹാജർ നിലവാരം (2026–2027)' : 'Month-wise Attendance Breakdown (2026–2027)'}
                         </h3>
                         <span className="text-xs text-slate-500">Official Institution Records</span>
                       </div>
@@ -1950,13 +1957,13 @@ export const ParentDashboard: React.FC = () => {
                         <table className="w-full text-left text-xs min-w-[650px] border-collapse">
                           <thead>
                             <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                              <th className="py-2.5 px-4 whitespace-nowrap">Month</th>
-                              <th className="py-2.5 px-4 text-center whitespace-nowrap">Working Days</th>
-                              <th className="py-2.5 px-4 text-center whitespace-nowrap">Days Present</th>
-                              <th className="py-2.5 px-4 text-center whitespace-nowrap">Leaves</th>
-                              <th className="py-2.5 px-4 text-center whitespace-nowrap">Holidays</th>
-                              <th className="py-2.5 px-4 text-right whitespace-nowrap">Attendance %</th>
-                              <th className="py-2.5 px-4 text-center whitespace-nowrap">Status</th>
+                              <th className="py-2.5 px-4 whitespace-nowrap">{isMl ? 'മാസം' : 'Month'}</th>
+                              <th className="py-2.5 px-4 text-center whitespace-nowrap">{isMl ? 'പ്രവൃത്തി ദിനങ്ങൾ' : 'Working Days'}</th>
+                              <th className="py-2.5 px-4 text-center whitespace-nowrap">{isMl ? 'ഹാജരായവ' : 'Days Present'}</th>
+                              <th className="py-2.5 px-4 text-center whitespace-nowrap">{isMl ? 'അവധി' : 'Leaves'}</th>
+                              <th className="py-2.5 px-4 text-center whitespace-nowrap">{isMl ? 'പൊതു ഒഴിവുകൾ' : 'Holidays'}</th>
+                              <th className="py-2.5 px-4 text-right whitespace-nowrap">{isMl ? 'ഹാജർ %' : 'Attendance %'}</th>
+                              <th className="py-2.5 px-4 text-center whitespace-nowrap">{isMl ? 'നിലവാരം' : 'Status'}</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
@@ -2008,138 +2015,6 @@ export const ParentDashboard: React.FC = () => {
                           </tfoot>
                         </table>
                       </div>
-                    </div>
-
-                    {/* RECENT ATTENDANCE & HOLIDAY CALENDAR LOG */}
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-                      <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="p-1 rounded-lg bg-emerald-100 text-emerald-800">
-                            <Calendar className="w-4 h-4" />
-                          </span>
-                          <h3 className="text-sm font-bold text-slate-900">
-                            Recent Daily Attendance &amp; Holiday Log
-                          </h3>
-                        </div>
-                        <span className="text-xs text-slate-500">Morning Assembly (07:15 AM)</span>
-                      </div>
-
-                      {recentLoggedDates.length === 0 ? (
-                        <div className="p-8 text-center text-xs text-slate-400">
-                          No daily attendance sessions or holidays logged for this period yet.
-                        </div>
-                      ) : (
-                        <div className="divide-y divide-slate-100">
-                          {recentLoggedDates.map(dKey => {
-                            const isHoliday = !!allHolidaysMap[dKey];
-                            const holInfo = allHolidaysMap[dKey];
-                            const rec = records[dKey];
-                            const chId = selectedChild?.id || '';
-                            const admNo = selectedChild?.admissionNo || '';
-                            const isPresent = Boolean(
-                              rec?.statusMap?.[chId] === true ||
-                              (rec?.statusMap?.[chId] as any) === 'Present' ||
-                              (rec?.statusMap?.[chId] as any) === 'P' ||
-                              (rec?.presentStudentIds && rec.presentStudentIds.includes(chId)) ||
-                              (admNo && (
-                                rec?.statusMap?.[admNo] === true ||
-                                (rec?.statusMap?.[admNo] as any) === 'Present' ||
-                                (rec?.statusMap?.[admNo] as any) === 'P' ||
-                                (rec?.presentStudentIds && rec.presentStudentIds.includes(admNo))
-                              )) ||
-                              (!rec?.absentStudentIds?.includes(chId) && (!admNo || !rec?.absentStudentIds?.includes(admNo)) && (
-                                (rec?.statusMap && rec.statusMap[chId] !== false) ||
-                                rec?.presentStudentIds?.includes(chId) ||
-                                rec?.markedAt
-                              ))
-                            );
-                            const dObj = new Date(dKey);
-                            const formattedDate = !isNaN(dObj.getTime())
-                              ? dObj.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
-                              : dKey;
-
-                            if (isHoliday) {
-                              return (
-                                <div key={dKey} className="p-3.5 sm:px-5 flex items-center justify-between gap-3 bg-amber-50/40 hover:bg-amber-50/70 transition">
-                                  <div className="flex items-center gap-3">
-                                    <div className="w-8 h-8 rounded-xl bg-amber-100 border border-amber-300 flex items-center justify-center text-sm shadow-2xs">
-                                      🏖️
-                                    </div>
-                                    <div>
-                                      <div className="text-xs font-bold text-amber-950 flex items-center gap-2">
-                                        <span>{formattedDate}</span>
-                                        <span className="font-mono text-[10px] text-amber-800">({dKey})</span>
-                                      </div>
-                                      <div className="text-[11px] text-amber-800 mt-0.5">
-                                        Official Holiday: <strong className="text-amber-950">{holInfo?.reason || 'Non-Working Day'}</strong>
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  <div className="text-right">
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-200/80 text-amber-950 border border-amber-300">
-                                      🏖️ Holiday (Exempt)
-                                    </span>
-                                  </div>
-                                </div>
-                              );
-                            }
-
-                            return (
-                              <div key={dKey} className="p-3.5 sm:px-5 flex items-center justify-between gap-3 hover:bg-slate-50 transition">
-                                <div className="flex items-center gap-3">
-                                  <div
-                                    className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold border shadow-2xs ${
-                                      isPresent
-                                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                                        : 'bg-rose-100 text-rose-800 border-rose-300'
-                                    }`}
-                                  >
-                                    {isPresent ? '✓' : '✕'}
-                                  </div>
-                                  <div>
-                                    <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                                      <span>{formattedDate}</span>
-                                      <span className="font-mono text-[10px] text-slate-400">({dKey})</span>
-                                    </div>
-                                    <div className="text-[11px] text-slate-500 mt-0.5">
-                                      {rec?.markedAt
-                                        ? `Logged at ${new Date(rec.markedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                                        : 'Morning Assembly Session'}
-                                    </div>
-                                  </div>
-                                </div>
-
-                                <div className="text-right">
-                                  <span
-                                    className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-bold border ${
-                                      isPresent
-                                        ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                                        : 'bg-rose-100 text-rose-900 border-rose-300'
-                                    }`}
-                                  >
-                                    {isPresent ? '✓ Present' : '✕ Absent'}
-                                  </span>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Guidelines & Teacher Note */}
-                    <div className="bg-emerald-50/60 rounded-2xl border border-emerald-200 p-5 text-xs text-emerald-950 space-y-2">
-                      <div className="flex items-center gap-2 font-bold text-emerald-900">
-                        <BookOpen className="w-4 h-4 text-emerald-800" />
-                        <span>Madrasa Attendance &amp; Punctuality Policy</span>
-                      </div>
-                      <p className="leading-relaxed text-emerald-900/80">
-                        Class teachers take attendance promptly during the morning assembly at 07:15 AM.
-                        Designated official holidays are completely exempt from attendance and do not count against students' percentage records.
-                        If a student is unable to attend on a regular working day due to illness or family obligations, please inform the class teacher
-                        in advance or provide a written leave note from the parent/guardian.
-                      </p>
                     </div>
                   </div>
                 );
@@ -2348,7 +2223,7 @@ export const ParentDashboard: React.FC = () => {
           {/* TAB 4: FEES SECTION (Simplified from "Madrasa Fees & Receipts" to "Fees") */}
           {activeTab === 'fees' && (
             <div className="space-y-6">
-              {/* Month-by-Month Progress Tracker Card */}
+              {/* Month-by-Month Progress Tracker & Special Fees Ledger */}
               {(() => {
                 const paidMonthsSet = new Set<string>();
                 childPayments.forEach(p => {
@@ -2356,6 +2231,65 @@ export const ParentDashboard: React.FC = () => {
                 });
                 const totalPaidAmount = childPayments.reduce((sum, p) => sum + (Number(p.totalAmount) || 0), 0);
                 const settledMonthsCount = paidMonthsSet.size;
+
+                // Extract student's class number (e.g., 'Class 7' -> 7, 'cls_7' -> 7, 'Class 9' -> 9)
+                const rawClassStr = selectedChild?.class || classesMap[selectedChild?.classId || ''] || selectedChild?.classId || '';
+                const classNumMatch = rawClassStr.match(/\d+/);
+                const classNum = classNumMatch ? parseInt(classNumMatch[0], 10) : 0;
+
+                // 1. Terminal Exam Fee amount: Class 1,2,3,4 (₹90) | Class 5,6,8 (₹130) | Class 7,9 (₹65)
+                let terminalExamAmount = 130;
+                if ([1, 2, 3, 4].includes(classNum)) {
+                  terminalExamAmount = 90;
+                } else if ([7, 9].includes(classNum)) {
+                  terminalExamAmount = 65;
+                } else if ([5, 6, 8].includes(classNum)) {
+                  terminalExamAmount = 130;
+                }
+
+                // 2. Public Exam Fee: Render ONLY if student is in Class 7 or Class 9 (₹500)
+                const isPublicExamEligible = [7, 9].includes(classNum);
+                const publicExamAmount = 500;
+
+                // 3. Hikma Fee: Render for all (₹130)
+                const hikmaAmount = 130;
+
+                // 4. Council Fund: Render for all (₹200)
+                const councilFundAmount = 200;
+
+                // Check payment settlement for each special fee category
+                const isTerminalPaid = childPayments.some(p => {
+                  const type = (p.specialFeeType || '').toLowerCase();
+                  return type.includes('terminal') || (type.includes('exam') && !type.includes('public') && !type.includes('hikma')) ||
+                    Boolean(p.specialFeeComponents?.desheeyaPariksha || p.specialFeeComponents?.halfYearlyExam || p.specialFeeComponents?.annualExam);
+                });
+
+                const isPublicExamPaid = childPayments.some(p => {
+                  const type = (p.specialFeeType || '').toLowerCase();
+                  return type.includes('public') || type.includes('podhu') || Boolean(p.specialFeeComponents?.podhuPareeksha);
+                });
+
+                const isHikmaPaid = childPayments.some(p => {
+                  const type = (p.specialFeeType || '').toLowerCase();
+                  return type.includes('hikma') || type.includes('vikasanam') || Boolean(p.specialFeeComponents?.vikasanam);
+                });
+
+                const isCouncilPaid = childPayments.some(p => {
+                  const type = (p.specialFeeType || '').toLowerCase();
+                  return type.includes('council') || Boolean(p.specialFeeComponents?.councilFund || p.specialFeeComponents?.unifiedCouncilFund);
+                });
+
+                // 5. Donation / Other (Cumulative accumulator)
+                const totalDonationOther = childPayments.reduce((sum, p) => {
+                  const type = (p.specialFeeType || '').toLowerCase();
+                  if (type.includes('donation') || type.includes('other')) {
+                    return sum + (Number(p.totalAmount) || Number(p.donationAmount) || Number(p.specialFeeAmount) || 0);
+                  }
+                  if (p.donationAmount && Number(p.donationAmount) > 0) {
+                    return sum + Number(p.donationAmount);
+                  }
+                  return sum;
+                }, 0);
 
                 return (
                   <div className="space-y-6">
@@ -2374,7 +2308,7 @@ export const ParentDashboard: React.FC = () => {
                         <span className="text-2xl font-black text-slate-900 font-mono mt-1 block">
                           ₹{totalPaidAmount.toLocaleString('en-IN')}
                         </span>
-                        <span className="text-[10px] text-slate-400">Tuition + Special & Exam Funds</span>
+                        <span className="text-[10px] text-slate-400">Tuition + Special &amp; Exam Funds</span>
                       </div>
 
                       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
@@ -2386,49 +2320,227 @@ export const ParentDashboard: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* 12-Month Interactive Tracker Card */}
-                    <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-                      <div>
-                        <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                          <CreditCard className="w-4 h-4 text-emerald-800" />
-                          12-Month Tuition Installment Progress Tracker for {selectedChild?.nameEn}
-                        </h3>
-                        <p className="text-xs text-slate-500">
-                          Tuition fee is ₹300 per month (June 2026 – May 2027). Green badges denote settled installments.
-                        </p>
+                    {/* Toggleable Fee Ledgers Card */}
+                    <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
+                      {/* Clean Two-Tab Toggle Navigation Menu */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-4">
+                        <div className="inline-flex p-1 bg-slate-100 rounded-xl">
+                          <button
+                            type="button"
+                            onClick={() => setActiveFeeTab('tuition')}
+                            className={`px-4 py-2 text-xs font-bold rounded-lg transition flex items-center gap-2 cursor-pointer ${
+                              activeFeeTab === 'tuition'
+                                ? 'bg-white text-emerald-900 shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            <CreditCard className="w-3.5 h-3.5 text-emerald-800" />
+                            <span>{isMl ? 'ട്യൂഷൻ ഫീസ് ലെഡ്ജർ' : 'Tuition Fee Ledger'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setActiveFeeTab('special')}
+                            className={`px-4 py-2 text-xs font-bold rounded-lg transition flex items-center gap-2 cursor-pointer ${
+                              activeFeeTab === 'special'
+                                ? 'bg-white text-purple-900 shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            <FileText className="w-3.5 h-3.5 text-purple-800" />
+                            <span>{isMl ? 'സ്പെഷ്യൽ ഫീസ് ലെഡ്ജർ' : 'Special Fee Ledger'}</span>
+                          </button>
+                        </div>
+
+                        <div className="text-xs text-slate-500">
+                          {activeFeeTab === 'tuition'
+                            ? (isMl ? 'ട്യൂഷൻ ഫീസ്: ₹300 / മാസം (ജൂൺ 2026 – മെയ് 2027)' : 'Tuition fee: ₹300 / month (June 2026 – May 2027)')
+                            : (isMl
+                                ? `${(classesMap[selectedChild?.classId || ''] || selectedChild?.class || '').replace(/^Class\s*/i, 'Class ')} സ്പെഷ്യൽ ഫീസുകൾ`
+                                : `${(classesMap[selectedChild?.classId || ''] || selectedChild?.class || '').replace(/^Class\s*/i, 'Class ')} Special & Exam Funds`)}
+                        </div>
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 pt-2">
-                        {TUITION_FEE_MONTHS.map(month => {
-                          const isPaid = paidMonthsSet.has(month);
-                          return (
-                            <div
-                              key={month}
-                              className={`p-3 rounded-xl border text-center transition ${
-                                isPaid
-                                  ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950 shadow-2xs'
-                                  : 'bg-slate-50 border-slate-200 text-slate-400'
-                              }`}
-                            >
-                              <div className="text-[10px] font-bold uppercase tracking-wider mb-1">
-                                {month.split(' ')[0]}
+                      {/* TAB 1: Tuition Fee Ledger (12-Month Grid Layout) */}
+                      {activeFeeTab === 'tuition' && (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 pt-1">
+                          {TUITION_FEE_MONTHS.map(month => {
+                            const isPaid = paidMonthsSet.has(month);
+                            return (
+                              <div
+                                key={month}
+                                className={`p-3 rounded-xl border text-center transition ${
+                                  isPaid
+                                    ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950 shadow-2xs'
+                                    : 'bg-slate-50 border-slate-200 text-slate-400'
+                                }`}
+                              >
+                                <div className="text-[10px] font-bold uppercase tracking-wider mb-1">
+                                  {month.split(' ')[0]}
+                                </div>
+                                <div className="text-xs font-mono font-black mb-1">
+                                  {month.split(' ')[1]}
+                                </div>
+                                {isPaid ? (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-white px-2 py-0.5 rounded-full border border-emerald-200 shadow-2xs">
+                                    ✓ Paid
+                                  </span>
+                                ) : (
+                                  <span className="inline-block text-[10px] font-medium text-slate-400 bg-slate-200/60 px-2 py-0.5 rounded-full">
+                                    Pending
+                                  </span>
+                                )}
                               </div>
-                              <div className="text-xs font-mono font-black mb-1">
-                                {month.split(' ')[1]}
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* TAB 2: Special Fee Ledger (Dynamic Class-Based UI) */}
+                      {activeFeeTab === 'special' && (
+                        <div
+                          className={`grid grid-cols-2 sm:grid-cols-3 ${
+                            isPublicExamEligible ? 'md:grid-cols-3 lg:grid-cols-5' : 'md:grid-cols-4'
+                          } gap-3 pt-1`}
+                        >
+                          {/* 1. Terminal Exam Fee */}
+                          <div
+                            className={`p-3.5 rounded-xl border text-center transition flex flex-col justify-between ${
+                              isTerminalPaid
+                                ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950 shadow-2xs'
+                                : 'bg-slate-50 border-slate-200 text-slate-600'
+                            }`}
+                          >
+                            <div>
+                              <div className={`text-[11px] font-bold tracking-tight mb-1 ${isTerminalPaid ? 'text-emerald-950' : 'text-slate-800'}`}>
+                                {isMl ? 'ടെർമിനൽ പരീക്ഷാ ഫീസ്' : 'Terminal Exam Fee'}
                               </div>
-                              {isPaid ? (
-                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-white px-2 py-0.5 rounded-full border border-emerald-200 shadow-2xs">
+                              <div className="text-sm font-mono font-black mb-2 text-slate-900">
+                                ₹{terminalExamAmount}
+                              </div>
+                            </div>
+                            <div>
+                              {isTerminalPaid ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-white px-2.5 py-0.5 rounded-full border border-emerald-200 shadow-2xs">
                                   ✓ Paid
                                 </span>
                               ) : (
-                                <span className="inline-block text-[10px] font-medium text-slate-400 bg-slate-200/60 px-2 py-0.5 rounded-full">
+                                <span className="inline-block text-[10px] font-medium text-slate-400 bg-slate-200/60 px-2.5 py-0.5 rounded-full">
                                   Pending
                                 </span>
                               )}
                             </div>
-                          );
-                        })}
-                      </div>
+                          </div>
+
+                          {/* 2. Public Exam Fee (Render ONLY if Class 7 or Class 9) */}
+                          {isPublicExamEligible && (
+                            <div
+                              className={`p-3.5 rounded-xl border text-center transition flex flex-col justify-between ${
+                                isPublicExamPaid
+                                  ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950 shadow-2xs'
+                                  : 'bg-slate-50 border-slate-200 text-slate-600'
+                              }`}
+                            >
+                              <div>
+                                <div className={`text-[11px] font-bold tracking-tight mb-1 ${isPublicExamPaid ? 'text-emerald-950' : 'text-slate-800'}`}>
+                                  {isMl ? 'പൊതുപരീക്ഷാ ഫീസ്' : 'Public Exam Fee'}
+                                </div>
+                                <div className="text-sm font-mono font-black mb-2 text-slate-900">
+                                  ₹{publicExamAmount}
+                                </div>
+                              </div>
+                              <div>
+                                {isPublicExamPaid ? (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-white px-2.5 py-0.5 rounded-full border border-emerald-200 shadow-2xs">
+                                    ✓ Paid
+                                  </span>
+                                ) : (
+                                  <span className="inline-block text-[10px] font-medium text-slate-400 bg-slate-200/60 px-2.5 py-0.5 rounded-full">
+                                    Pending
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 3. Hikma Fee */}
+                          <div
+                            className={`p-3.5 rounded-xl border text-center transition flex flex-col justify-between ${
+                              isHikmaPaid
+                                ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950 shadow-2xs'
+                                : 'bg-slate-50 border-slate-200 text-slate-600'
+                            }`}
+                          >
+                            <div>
+                              <div className={`text-[11px] font-bold tracking-tight mb-1 ${isHikmaPaid ? 'text-emerald-950' : 'text-slate-800'}`}>
+                                {isMl ? 'ഹിക്മ ഫീസ്' : 'Hikma Fee'}
+                              </div>
+                              <div className="text-sm font-mono font-black mb-2 text-slate-900">
+                                ₹{hikmaAmount}
+                              </div>
+                            </div>
+                            <div>
+                              {isHikmaPaid ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-white px-2.5 py-0.5 rounded-full border border-emerald-200 shadow-2xs">
+                                  ✓ Paid
+                                </span>
+                              ) : (
+                                <span className="inline-block text-[10px] font-medium text-slate-400 bg-slate-200/60 px-2.5 py-0.5 rounded-full">
+                                  Pending
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* 4. Council Fund */}
+                          <div
+                            className={`p-3.5 rounded-xl border text-center transition flex flex-col justify-between ${
+                              isCouncilPaid
+                                ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950 shadow-2xs'
+                                : 'bg-slate-50 border-slate-200 text-slate-600'
+                            }`}
+                          >
+                            <div>
+                              <div className={`text-[11px] font-bold tracking-tight mb-1 ${isCouncilPaid ? 'text-emerald-950' : 'text-slate-800'}`}>
+                                {isMl ? 'കൗൺസിൽ ഫണ്ട്' : 'Council Fund'}
+                              </div>
+                              <div className="text-sm font-mono font-black mb-2 text-slate-900">
+                                ₹{councilFundAmount}
+                              </div>
+                            </div>
+                            <div>
+                              {isCouncilPaid ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-white px-2.5 py-0.5 rounded-full border border-emerald-200 shadow-2xs">
+                                  ✓ Paid
+                                </span>
+                              ) : (
+                                <span className="inline-block text-[10px] font-medium text-slate-400 bg-slate-200/60 px-2.5 py-0.5 rounded-full">
+                                  Pending
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* 5. Donation / Other (Special Accumulator Behavior: Does NOT turn green) */}
+                          <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 text-center transition flex flex-col justify-between">
+                            <div>
+                              <div className="text-[11px] font-bold text-slate-800 tracking-tight mb-1">
+                                {isMl ? 'സംഭാവന / മറ്റുള്ളവ' : 'Donation / Other'}
+                              </div>
+                              <div className="text-sm font-mono font-black mb-2 text-purple-900">
+                                ₹{totalDonationOther.toLocaleString('en-IN')}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="inline-block text-[10px] font-bold text-purple-800 bg-purple-50 px-2.5 py-0.5 rounded-full border border-purple-200">
+                                {isMl
+                                  ? `ആകെ നൽകിയത്: ₹${totalDonationOther.toLocaleString('en-IN')}`
+                                  : `Total Paid: ₹${totalDonationOther.toLocaleString('en-IN')}`}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Receipts History Table */}
@@ -2921,90 +3033,19 @@ export const ParentDashboard: React.FC = () => {
           )}
 
           {/* TAB: TIME TABLE (Placeholder) */}
+          {/* TAB: TIME TABLE (Placeholder) */}
           {activeTab === 'time_table' && (
-            <div className="bg-white/80 backdrop-blur-md rounded-2xl border border-white/60 p-6 sm:p-8 shadow-xl text-center space-y-4">
-              <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto shadow-xs">
-                <Clock className="w-8 h-8" />
-              </div>
-              <div className="space-y-1">
-                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 font-serif">
-                  {isMl ? 'ക്ലാസ്സ് ടൈംടേബിൾ' : 'Time table'}
-                </h2>
-                <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
-                  {isMl
-                    ? 'ക്ലാസ്സ്, പരീക്ഷ ടൈംടേബിൾ വിവരങ്ങൾ ഉടൻ ലഭ്യമാകും.'
-                    : 'Class schedules and examination timetable will be published here.'}
-                </p>
-              </div>
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('home')}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl transition shadow-xs cursor-pointer"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  <span>{isMl ? 'ഹോമിലേക്ക് മടങ്ങുക' : 'Back to Dashboard'}</span>
-                </button>
-              </div>
-            </div>
+            <PlaceholderView type="time_table" onBack={() => setActiveTab('home')} />
           )}
 
           {/* TAB: QUIZ (Placeholder) */}
           {activeTab === 'quiz' && (
-            <div className="bg-white/80 backdrop-blur-md rounded-2xl border border-white/60 p-6 sm:p-8 shadow-xl text-center space-y-4">
-              <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto shadow-xs">
-                <HelpCircle className="w-8 h-8" />
-              </div>
-              <div className="space-y-1">
-                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 font-serif">
-                  {isMl ? 'ക്വിസ് & മൂല്യനിർണ്ണയം' : 'Quiz & Assessments'}
-                </h2>
-                <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
-                  {isMl
-                    ? 'ഓൺലൈൻ ക്വിസുകളും മത്സരങ്ങളും ഉടൻ ലഭ്യമാകും.'
-                    : 'Interactive quizzes, Islamic tests, and online assessments will appear here.'}
-                </p>
-              </div>
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('home')}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl transition shadow-xs cursor-pointer"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  <span>{isMl ? 'ഹോമിലേക്ക് മടങ്ങുക' : 'Back to Dashboard'}</span>
-                </button>
-              </div>
-            </div>
+            <PlaceholderView type="quiz" onBack={() => setActiveTab('home')} />
           )}
 
           {/* TAB: LMS (Placeholder) */}
           {activeTab === 'lms' && (
-            <div className="bg-white/80 backdrop-blur-md rounded-2xl border border-white/60 p-6 sm:p-8 shadow-xl text-center space-y-4">
-              <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto shadow-xs">
-                <GraduationCap className="w-8 h-8" />
-              </div>
-              <div className="space-y-1">
-                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 font-serif">
-                  Learning Management System (LMS)
-                </h2>
-                <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
-                  {isMl
-                    ? 'ഡിജിറ്റൽ ലേണിംഗ് കോഴ്സുകളും വീഡിയോ ക്ലാസുകളും ഇവിടെ ലഭ്യമാകും.'
-                    : 'Digital classrooms, audio-visual courses, and interactive curriculum will be accessible here.'}
-                </p>
-              </div>
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('home')}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl transition shadow-xs cursor-pointer"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  <span>{isMl ? 'ഹോമിലേക്ക് മടങ്ങുക' : 'Back to Dashboard'}</span>
-                </button>
-              </div>
-            </div>
+            <PlaceholderView type="lms" onBack={() => setActiveTab('home')} />
           )}
 
           {/* MODAL: VIEW DETAILED NEWS / CIRCULAR */}
@@ -3052,6 +3093,9 @@ export const ParentDashboard: React.FC = () => {
               </div>
             </div>
           )}
+
+            {/* Compact Integrated Glassmorphic Footer - Flows Naturally Below Tiles */}
+            <Footer className="!mt-8 !mb-0 rounded-xl" />
           </div>
         </div>
       )}
@@ -3207,18 +3251,6 @@ export const ParentDashboard: React.FC = () => {
           </div>
         );
       })()}
-
-      {/* Compact Integrated Glassmorphic Footer */}
-      <footer className="shrink-0 py-1 print:hidden text-center select-none border-t border-slate-200/50 bg-white/40 backdrop-blur-xs">
-        <div className="max-w-7xl mx-auto px-4 text-center leading-tight">
-          <p className="font-semibold text-slate-800 text-[10px] tracking-wide">
-            KMEB Affiliated · Mi'yar Grading A+ Accredited Institution
-          </p>
-          <p className="text-[9px] text-slate-500 font-medium leading-tight mt-0.5">
-            Academic Year 2026–2027 · Knowledge | Values | Innovation
-          </p>
-        </div>
-      </footer>
 
       {/* Role-Based PWA Mobile Bottom Navigation Bar */}
       <PWABottomNav

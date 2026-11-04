@@ -118,7 +118,9 @@ import {
   Search,
   Tag,
   Printer,
+  HelpCircle,
 } from 'lucide-react';
+import { PlaceholderView } from '../Common/PlaceholderView';
 
 export type TeacherPortalTab =
   | 'home'
@@ -130,7 +132,10 @@ export type TeacherPortalTab =
   | 'news'
   | 'notification'
   | 'contact'
-  | 'about';
+  | 'about'
+  | 'time_table'
+  | 'quiz'
+  | 'lms';
 
 export const ACADEMIC_YEAR_START_DATE = '2026-06-01';
 
@@ -3292,6 +3297,48 @@ export const TeacherDashboard: React.FC = () => {
         >
           <Sparkles className="w-4 h-4 text-amber-300" />
           <span>About</span>
+        </button>
+
+        {/* 10. Time table */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('time_table')}
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'time_table'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
+          }`}
+        >
+          <Clock className="w-4 h-4" />
+          <span>Time table</span>
+        </button>
+
+        {/* 11. Quiz */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('quiz')}
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'quiz'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
+          }`}
+        >
+          <HelpCircle className="w-4 h-4" />
+          <span>Quiz</span>
+        </button>
+
+        {/* 12. LMS */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('lms')}
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'lms'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
+          }`}
+        >
+          <GraduationCap className="w-4 h-4" />
+          <span>LMS</span>
         </button>
       </div>
 
@@ -7911,6 +7958,17 @@ export const TeacherDashboard: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Placeholders for Time table, Quiz, and LMS */}
+      {activeTab === 'time_table' && (
+        <PlaceholderView type="time_table" onBack={() => setActiveTab('home')} />
+      )}
+      {activeTab === 'quiz' && (
+        <PlaceholderView type="quiz" onBack={() => setActiveTab('home')} />
+      )}
+      {activeTab === 'lms' && (
+        <PlaceholderView type="lms" onBack={() => setActiveTab('home')} />
       )}
 
       {/* =========================================================================
