@@ -24,26 +24,42 @@ import html2canvas from 'html2canvas';
 import { ExamRegisterModal } from './ExamRegisterModal';
 import { exportScoreSheetToPdf } from '../../utils/scoreSheetPdfExport';
 
+// In-memory module cache to eliminate "Loading progress report center..." delay when switching tabs
+let memoClasses: ClassItem[] | null = null;
+let memoExaminations: Examination[] | null = null;
+let memoSettings: InstitutionSettings | null = null;
+let memoLastClassId = '';
+let memoLastExamId = '';
+const memoReportsMap = new Map<string, { reports: StudentProgressReport[]; settings: InstitutionSettings }>();
+const memoSubjectStatusesMap = new Map<string, Record<string, string>>();
+
 export const BulkReportsPrint: React.FC = () => {
   const { fetchWithAuth, lang, t } = useAuth();
-  const [loading, setLoading] = useState(true);
-  const [classes, setClasses] = useState<ClassItem[]>([]);
-  const [examinations, setExaminations] = useState<Examination[]>([]);
-  const [selectedClassId, setSelectedClassId] = useState('');
-  const [selectedExamId, setSelectedExamId] = useState('');
-  const [settings, setSettings] = useState<InstitutionSettings | null>(null);
+
+  const initialCId = memoLastClassId || (memoClasses && memoClasses[0]?.id) || '';
+  const initialEId = memoLastExamId || (memoExaminations && memoExaminations[0]?.id) || '';
+  const cachedReport = (initialCId && initialEId) ? memoReportsMap.get(`${initialCId}_${initialEId}`) : null;
+
+  const [loading, setLoading] = useState<boolean>(!memoClasses || memoClasses.length === 0);
+  const [classes, setClasses] = useState<ClassItem[]>(memoClasses || []);
+  const [examinations, setExaminations] = useState<Examination[]>(memoExaminations || []);
+  const [selectedClassId, setSelectedClassId] = useState<string>(initialCId);
+  const [selectedExamId, setSelectedExamId] = useState<string>(initialEId);
+  const [settings, setSettings] = useState<InstitutionSettings | null>(memoSettings);
   const [classAttendanceConfig, setClassAttendanceConfig] = useState<ClassAttendanceConfig | null>(null);
   const [reportsData, setReportsData] = useState<{
     reports: StudentProgressReport[];
     settings: InstitutionSettings;
-  } | null>(null);
+  } | null>(cachedReport || null);
   const [fetching, setFetching] = useState(false);
   const [viewMode, setViewMode] = useState<'bulk_cards' | 'ledger_table' | 'score_sheet'>('ledger_table');
   const [activeSingleReport, setActiveSingleReport] = useState<StudentProgressReport | null>(null);
   const [isBatchPrinting, setIsBatchPrinting] = useState(false);
   const [pdfProgress, setPdfProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
   const [showRegModal, setShowRegModal] = useState(false);
-  const [subjectStatusesMap, setSubjectStatusesMap] = useState<Record<string, string>>({});
+  const [subjectStatusesMap, setSubjectStatusesMap] = useState<Record<string, string>>(
+    (initialCId && initialEId && memoSubjectStatusesMap.get(`${initialCId}_${initialEId}`)) || {}
+  );
   const bulkCardsContainerRef = useRef<HTMLDivElement>(null);
   const adminScoreSheetRef = useRef<HTMLDivElement>(null);
   const [isExportingScoreSheetPdf, setIsExportingScoreSheetPdf] = useState(false);
@@ -59,7 +75,10 @@ export const BulkReportsPrint: React.FC = () => {
   };
 
   const loadInitial = async () => {
-    setLoading(true);
+    // Only show full loading spinner if cache is empty
+    if (!memoClasses || memoClasses.length === 0) {
+      setLoading(true);
+    }
     try {
       const [resC, resE, resS] = await Promise.all([
         fetchWithAuth('/api/classes'),
@@ -71,17 +90,23 @@ export const BulkReportsPrint: React.FC = () => {
       const sData: InstitutionSettings = await resS.json();
 
       const sortedC = [...cData].sort((a, b) => a.numericGrade - b.numericGrade);
+      memoClasses = sortedC;
+      memoExaminations = eData;
+      memoSettings = sData;
+
       setClasses(sortedC);
       setExaminations(eData);
       setSettings(sData);
 
-      const initialClassId = sortedC[0]?.id || '';
-      const initialExamId = eData[0]?.id || '';
-      setSelectedClassId(initialClassId);
-      setSelectedExamId(initialExamId);
+      const targetClassId = memoLastClassId || sortedC[0]?.id || '';
+      const targetExamId = memoLastExamId || eData[0]?.id || '';
+      setSelectedClassId(targetClassId);
+      setSelectedExamId(targetExamId);
+      memoLastClassId = targetClassId;
+      memoLastExamId = targetExamId;
 
-      if (initialClassId && initialExamId) {
-        await fetchClassReports(initialClassId, initialExamId);
+      if (targetClassId && targetExamId) {
+        await fetchClassReports(targetClassId, targetExamId);
       }
     } catch (err) {
       console.error('Error loading initial report data:', err);
@@ -92,6 +117,17 @@ export const BulkReportsPrint: React.FC = () => {
 
   const fetchClassReports = async (cId: string, eId: string): Promise<boolean> => {
     if (!cId || !eId) return false;
+    memoLastClassId = cId;
+    memoLastExamId = eId;
+
+    const cacheKey = `${cId}_${eId}`;
+    if (memoReportsMap.has(cacheKey)) {
+      setReportsData(memoReportsMap.get(cacheKey)!);
+      if (memoSubjectStatusesMap.has(cacheKey)) {
+        setSubjectStatusesMap(memoSubjectStatusesMap.get(cacheKey)!);
+      }
+    }
+
     setFetching(true);
     try {
       const res = await fetchWithAuth(`/api/reports/class/${cId}/exam/${eId}`);
@@ -137,6 +173,7 @@ export const BulkReportsPrint: React.FC = () => {
           });
         });
         setSubjectStatusesMap(statuses);
+        memoSubjectStatusesMap.set(cacheKey, statuses);
 
         // Also fetch mark-sheets list for the exam to ensure full status coverage
         fetchWithAuth(`/api/mark-sheets?examinationId=${eId}`)
@@ -149,7 +186,11 @@ export const BulkReportsPrint: React.FC = () => {
                 .forEach(ms => {
                   if (ms.subjectId) extra[ms.subjectId] = ms.status;
                 });
-              setSubjectStatusesMap(prev => ({ ...prev, ...extra }));
+              setSubjectStatusesMap(prev => {
+                const merged = { ...prev, ...extra };
+                memoSubjectStatusesMap.set(cacheKey, merged);
+                return merged;
+              });
             }
           })
           .catch(() => {});
@@ -162,10 +203,12 @@ export const BulkReportsPrint: React.FC = () => {
           })
           .catch(() => {});
 
-        setReportsData({
+        const resultData = {
           reports: sortedReports,
           settings: data.settings || settings,
-        });
+        };
+        memoReportsMap.set(cacheKey, resultData);
+        setReportsData(resultData);
         return true;
       }
       return false;

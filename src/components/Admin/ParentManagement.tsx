@@ -614,6 +614,60 @@ export const ParentManagement: React.FC = () => {
         throw new Error(err.error || 'Failed to link children');
       }
       const data = await res.json();
+
+      // Direct Firestore batch write for immediate cloud persistence
+      if (db && !isFirestoreQuotaExhausted()) {
+        try {
+          const batch = writeBatch(db);
+          // 1. Update parent doc
+          const parentRef = doc(db, 'parents', linkingParent.id);
+          batch.set(
+            parentRef,
+            cleanForFirestore({
+              ...linkingParent,
+              linkedStudentIds: selectedStudentIdsToLink,
+              childIds: selectedStudentIdsToLink,
+              plainPassword: data.parentPassword || linkingParent.plainPassword,
+            }),
+            { merge: true }
+          );
+
+          // Also mirror in users collection
+          const userRef = doc(db, 'users', linkingParent.id);
+          batch.set(
+            userRef,
+            cleanForFirestore({
+              ...linkingParent,
+              linkedStudentIds: selectedStudentIdsToLink,
+              childIds: selectedStudentIdsToLink,
+              plainPassword: data.parentPassword || linkingParent.plainPassword,
+            }),
+            { merge: true }
+          );
+
+          // 2. Update students
+          selectedStudentIdsToLink.forEach(sId => {
+            const st = students.find(s => s.id === sId || s.admissionNo === sId);
+            const actualDocId = st?.id || sId;
+            const stRef = doc(db, 'students', actualDocId);
+            batch.set(
+              stRef,
+              cleanForFirestore({
+                parentUserId: linkingParent.id,
+                parentPhone: linkingParent.phone || '',
+                parentNameEn: linkingParent.name || '',
+                parentNameMl: linkingParent.nameMl || '',
+              }),
+              { merge: true }
+            );
+          });
+
+          await batch.commit();
+        } catch (fsErr) {
+          console.warn('Direct Firestore link batch error:', fsErr);
+        }
+      }
+
       setLinkingParent(null);
       loadData();
       alert(`Children linked successfully! Login password updated to elder child's admission number: ${data.parentPassword}`);
@@ -631,6 +685,15 @@ export const ParentManagement: React.FC = () => {
         body: JSON.stringify({ studentId }),
       });
       if (res.ok) {
+        if (db && !isFirestoreQuotaExhausted()) {
+          try {
+            const st = students.find(s => s.id === studentId || s.admissionNo === studentId);
+            const actualDocId = st?.id || studentId;
+            await setDoc(doc(db, 'students', actualDocId), { parentUserId: null }, { merge: true });
+          } catch (e) {
+            console.warn('Direct Firestore unlink error:', e);
+          }
+        }
         loadData();
       }
     } catch (err) {

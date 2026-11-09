@@ -146,6 +146,12 @@ export class FirestoreSyncService {
                   return;
                 }
 
+                // Orphan 701 doc purge
+                if (d.id === '701' || d.id === 'st_701') {
+                  duplicateDocIdsToDelete.push(d.id);
+                  return;
+                }
+
                 // If document is legacy 'st_701' and there's also '862' (or duplicate admission numbers)
                 if (adm) {
                   if (seenAdmissions.has(adm)) {
@@ -237,9 +243,39 @@ export class FirestoreSyncService {
                     st.nameEn !== 'Adil Ibrahim'
                 );
 
+              // Safeguard student 862 canonical values against any stale server rollback
+              const safeStudents = rawStudents.map(st => {
+                if (st.admissionNo === '862' || st.id === '862') {
+                  const safeReg = st.regNo === '701' ? '7105' : (st.regNo || '7105');
+                  const safeExamReg = st.examRegNo === '701' ? '7105' : (st.examRegNo || '7105');
+                  const targetActiveExam = 'exam_half_yearly_2026_27';
+                  const regNos = {
+                    ...(st.examRegisterNumbers || {}),
+                    ...(st.examRegisterNos || {}),
+                    [targetActiveExam]: '7105',
+                  };
+                  return {
+                    ...st,
+                    id: '862',
+                    admissionNo: '862',
+                    rollNo: 5,
+                    nameEn: 'MUHAMMED HAFIZ C',
+                    regNo: safeReg,
+                    examRegNo: safeExamReg,
+                    parentUserId: st.parentUserId === 'usr_p1' ? 'usr_1793103035617_z45w' : (st.parentUserId || 'usr_1793103035617_z45w'),
+                    parentPhone: st.parentPhone?.includes('9846123456') ? '9847805859' : (st.parentPhone || '9847805859'),
+                    parentNameEn: st.parentNameEn === 'Hamza K' ? 'Rasheed C' : (st.parentNameEn || 'Rasheed C'),
+                    examRegisterNumbers: regNos,
+                    examRegisterNos: regNos,
+                    isRegNoLocked: true,
+                  };
+                }
+                return st;
+              });
+
               // Strict deduplication by admissionNo or id
               const uniqueStudents = Array.from(
-                new Map(rawStudents.map(s => [s.admissionNo?.toString() || s.id, s])).values()
+                new Map(safeStudents.map(s => [s.admissionNo?.toString() || s.id, s])).values()
               );
               const resequenced = assignClassSequentialRollNumbers(uniqueStudents);
               callbacks.onStudents?.(resequenced);

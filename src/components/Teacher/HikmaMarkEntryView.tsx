@@ -14,6 +14,7 @@ import {
 import {
   getHikmaClassRecord,
   saveHikmaClassRecord,
+  isStudentInSchoolClass,
 } from '../../services/hikmaExamService';
 import {
   Save,
@@ -64,26 +65,9 @@ export const HikmaMarkEntryView: React.FC<Props> = ({
     return classes.find(c => c.id === classId) || classes[0] || null;
   }, [classes, classId]);
 
-  // Sort students sequential roll numbers, boys first
+  // Sort students sequential roll numbers, boys first, strictly filtered by School Class
   const sortedStudents = useMemo(() => {
-    const list = students.filter(s => {
-      if (s.status !== 'active') return false;
-      if (s.classId === classId || s.schoolClass === classId) return true;
-      if (activeClass) {
-        if (s.classId === activeClass.id) return true;
-        if (
-          s.schoolClass &&
-          (s.schoolClass.toLowerCase() === activeClass.name.toLowerCase() ||
-            s.schoolClass.toLowerCase() === `class ${activeClass.numericGrade}`.toLowerCase() ||
-            s.schoolClass.replace(/\D/g, '') === String(activeClass.numericGrade))
-        ) {
-          return true;
-        }
-        const stGrade = s.class ? s.class.replace(/\D/g, '') : '';
-        if (stGrade && stGrade === String(activeClass.numericGrade)) return true;
-      }
-      return false;
-    });
+    const list = students.filter(s => isStudentInSchoolClass(s, classId, activeClass));
     return sortStudentsBoysFirst(list).map((s, idx) => ({
       ...s,
       rollNo: idx + 1,

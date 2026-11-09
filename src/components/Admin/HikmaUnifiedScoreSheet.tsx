@@ -8,8 +8,13 @@ import {
   ALL_STANDARD_CLASSES,
   sortStudentsBoysFirst,
   determineStudentGender,
+  HIKMA_EXAM_ID,
 } from '../../types';
-import { getHikmaUnifiedClassRecords } from '../../services/hikmaExamService';
+import {
+  getHikmaUnifiedClassRecords,
+  getHikmaUnifiedClassRecordsSync,
+  isStudentInSchoolClass,
+} from '../../services/hikmaExamService';
 import {
   Printer,
   Download,
@@ -24,6 +29,9 @@ import {
 
 interface Props {
   initialClassId?: string;
+  selectedClassId?: string;
+  onClassChange?: (classId: string) => void;
+  hideHeaderBar?: boolean;
   classes?: ClassItem[];
   allStudents?: Student[];
 }
@@ -34,22 +42,34 @@ const DEFAULT_SCHOOL_CLASSES = ALL_STANDARD_CLASSES.filter(
 
 export const HikmaUnifiedScoreSheet: React.FC<Props> = ({
   initialClassId,
+  selectedClassId: propSelectedClassId,
+  onClassChange,
+  hideHeaderBar = false,
   classes = DEFAULT_SCHOOL_CLASSES,
   allStudents,
 }) => {
   const { lang, institutionSettings } = useAuth();
   const isMl = lang === 'ml';
 
-  const [selectedClassId, setSelectedClassId] = useState<string>(
-    initialClassId || classes[0]?.id || 'cls_5'
+  const [internalClassId, setInternalClassId] = useState<string>(
+    propSelectedClassId || initialClassId || classes[0]?.id || 'cls_5'
   );
+
+  const selectedClassId = propSelectedClassId || internalClassId;
+
+  const handleSelectClass = (clsId: string) => {
+    setInternalClassId(clsId);
+    if (onClassChange) onClassChange(clsId);
+  };
+
   const [internalStudents, setInternalStudents] = useState<Student[]>(allStudents || []);
-  const [loading, setLoading] = useState(true);
+  const initialSync = getHikmaUnifiedClassRecordsSync(selectedClassId);
+  const [loading, setLoading] = useState(!initialSync);
   const [records, setRecords] = useState<{
     model_1?: HikmaClassModelRecord;
     model_2?: HikmaClassModelRecord;
     model_3?: HikmaClassModelRecord;
-  }>({});
+  }>(initialSync || {});
 
   const printContainerRef = useRef<HTMLDivElement>(null);
 
@@ -71,24 +91,7 @@ export const HikmaUnifiedScoreSheet: React.FC<Props> = ({
   }, [classes, selectedClassId]);
 
   const classStudents = useMemo(() => {
-    const list = internalStudents.filter(s => {
-      if (s.status !== 'active') return false;
-      if (s.classId === selectedClassId || s.schoolClass === selectedClassId) return true;
-      if (activeClass) {
-        if (s.classId === activeClass.id) return true;
-        if (
-          s.schoolClass &&
-          (s.schoolClass.toLowerCase() === activeClass.name.toLowerCase() ||
-            s.schoolClass.toLowerCase() === `class ${activeClass.numericGrade}`.toLowerCase() ||
-            s.schoolClass.replace(/\D/g, '') === String(activeClass.numericGrade))
-        ) {
-          return true;
-        }
-        const stGrade = s.class ? s.class.replace(/\D/g, '') : '';
-        if (stGrade && stGrade === String(activeClass.numericGrade)) return true;
-      }
-      return false;
-    });
+    const list = internalStudents.filter(s => isStudentInSchoolClass(s, selectedClassId, activeClass));
     return sortStudentsBoysFirst(list).map((s, idx) => ({
       ...s,
       rollNo: idx + 1,
@@ -99,7 +102,13 @@ export const HikmaUnifiedScoreSheet: React.FC<Props> = ({
   // Load records for all 3 models
   useEffect(() => {
     let isMounted = true;
-    setLoading(true);
+    const cached = getHikmaUnifiedClassRecordsSync(selectedClassId, classStudents);
+    if (cached) {
+      setRecords(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
 
     getHikmaUnifiedClassRecords(selectedClassId, classStudents).then(unified => {
       if (!isMounted) return;
@@ -108,6 +117,8 @@ export const HikmaUnifiedScoreSheet: React.FC<Props> = ({
     });
 
     const handleUpdate = () => {
+      const updated = getHikmaUnifiedClassRecordsSync(selectedClassId, classStudents);
+      if (updated && isMounted) setRecords(updated);
       getHikmaUnifiedClassRecords(selectedClassId, classStudents).then(unified => {
         if (!isMounted) return;
         setRecords(unified);
@@ -219,65 +230,97 @@ export const HikmaUnifiedScoreSheet: React.FC<Props> = ({
 
   return (
     <div className="space-y-4">
-      {/* Top Action & Controls Bar (Hidden during print) */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800">
-              Principal Portal • Mark Monitoring
+      {/* Top Action & Controls Bar (Hidden during print or if hideHeaderBar is true) */}
+      {!hideHeaderBar && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800">
+                Principal Portal • Mark Monitoring
+              </span>
+              <span className="text-slate-300">•</span>
+              <span className="text-xs text-slate-500 font-mono">Academic Year 2026–2027</span>
+            </div>
+            <h2 className="text-lg sm:text-xl font-bold text-slate-900 mt-1">
+              HIKMA Model Exam — Consolidated Score Sheet
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Side-by-side comparative inspection for Model 1, Model 2, and Model 3 with negative marking logic.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Class Selector Dropdown */}
+            <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+              <label className="text-xs font-bold text-slate-600">Class:</label>
+              <div className="relative">
+                <select
+                  value={selectedClassId}
+                  onChange={e => handleSelectClass(e.target.value)}
+                  className="text-xs font-bold bg-transparent text-slate-900 pr-6 focus:outline-none cursor-pointer"
+                >
+                  {classes.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} {c.nameMl ? `(${c.nameMl})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-500 absolute right-0 top-1 pointer-events-none" />
+              </div>
+            </div>
+
+            {/* Export CSV */}
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              className="px-3.5 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+              <span>Export CSV</span>
+            </button>
+
+            {/* Print */}
+            <button
+              type="button"
+              onClick={handlePrint}
+              className="px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Print Sheet</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {hideHeaderBar && (
+        <div className="flex items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs print:hidden">
+          <div className="flex items-center gap-2 text-xs text-slate-600">
+            <span className="font-bold text-slate-900 bg-slate-100 px-2.5 py-1 rounded-lg">
+              {activeClass?.name || 'Class'}
             </span>
             <span className="text-slate-300">•</span>
-            <span className="text-xs text-slate-500 font-mono">Academic Year 2026–2027</span>
+            <span className="font-semibold text-slate-700">{classStudents.length} Students Listed</span>
           </div>
-          <h2 className="text-lg sm:text-xl font-bold text-slate-900 mt-1">
-            HIKMA Model Exam — Consolidated Score Sheet
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Side-by-side comparative inspection for Model 1, Model 2, and Model 3 with negative marking logic.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2.5">
-          {/* Class Selector Dropdown */}
-          <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
-            <label className="text-xs font-bold text-slate-600">Class:</label>
-            <div className="relative">
-              <select
-                value={selectedClassId}
-                onChange={e => setSelectedClassId(e.target.value)}
-                className="text-xs font-bold bg-transparent text-slate-900 pr-6 focus:outline-none cursor-pointer"
-              >
-                {classes.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} {c.nameMl ? `(${c.nameMl})` : ''}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-500 absolute right-0 top-1 pointer-events-none" />
-            </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              className="px-3 py-1.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+              <span>Export CSV</span>
+            </button>
+            <button
+              type="button"
+              onClick={handlePrint}
+              className="px-3.5 py-1.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Print Sheet</span>
+            </button>
           </div>
-
-          {/* Export CSV */}
-          <button
-            type="button"
-            onClick={handleExportCsv}
-            className="px-3.5 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
-          >
-            <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
-            <span>Export CSV</span>
-          </button>
-
-          {/* Print */}
-          <button
-            type="button"
-            onClick={handlePrint}
-            className="px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition flex items-center gap-1.5 shadow-xs cursor-pointer"
-          >
-            <Printer className="w-4 h-4" />
-            <span>Print Sheet</span>
-          </button>
         </div>
-      </div>
+      )}
 
       {/* Unified Score Sheet Container */}
       <div
@@ -318,7 +361,7 @@ export const HikmaUnifiedScoreSheet: React.FC<Props> = ({
               <thead>
                 {/* Grouped Header Row 1 */}
                 <tr className="bg-slate-100 text-slate-800 border-b border-slate-300 font-bold uppercase text-[10px] tracking-wider select-none">
-                  <th colSpan={3} className="py-2 px-3 text-center border-r border-slate-300 bg-slate-200/70">
+                  <th colSpan={4} className="py-2 px-3 text-center border-r border-slate-300 bg-slate-200/70">
                     Student Information
                   </th>
                   <th
@@ -349,6 +392,7 @@ export const HikmaUnifiedScoreSheet: React.FC<Props> = ({
                   {/* Student Info */}
                   <th className="py-2 px-2 text-center w-10 border-r border-slate-200">Roll</th>
                   <th className="py-2 px-2 w-14 border-r border-slate-200">Adm</th>
+                  <th className="py-2 px-2 text-center w-16 border-r border-slate-200">Reg No</th>
                   <th className="py-2 px-3 min-w-[150px] border-r border-slate-300">Name</th>
 
                   {/* Model 1 Sub-columns */}
@@ -432,6 +476,11 @@ export const HikmaUnifiedScoreSheet: React.FC<Props> = ({
                       {/* Adm */}
                       <td className="py-2 px-2 font-mono text-[11px] text-slate-600 border-r border-slate-200">
                         {st.admissionNo || '—'}
+                      </td>
+
+                      {/* Reg No */}
+                      <td className="py-2 px-2 text-center font-mono text-[11px] text-emerald-800 font-bold border-r border-slate-200">
+                        {st.hikmaRegNo || st.examRegisterNumbers?.[HIKMA_EXAM_ID] || m1?.registerNo || '—'}
                       </td>
 
                       {/* Name */}

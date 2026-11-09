@@ -418,40 +418,66 @@ export const ParentDashboard: React.FC = () => {
     try {
       const unsubStu = safeOnSnapshot(collection(db, 'students'), snapshot => {
         if (!snapshot.empty) {
+          if (!user) return;
           const remoteList = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Student));
-          setChildren(prev =>
-            prev.map(child => {
-              const remote = remoteList.find(r => r.id === child.id || r.admissionNo === child.admissionNo);
-              if (remote) {
-                const regNos = {
-                  ...(child.examRegisterNumbers || {}),
-                  ...((remote as any).examRegisterNumbers || {}),
-                  ...((remote as any).examRegisterNos || {}),
-                };
-                return {
-                  ...child,
-                  ...remote,
-                  examRegisterNumbers: regNos,
-                  examRegisterNos: regNos,
-                  examRegNo:
-                    (remote as any).examRegisterNos?.[selectedExamId] ||
-                    (remote as any).examRegNo ||
-                    (remote as any).regNo ||
-                    remote.examRegisterNumbers?.[selectedExamId] ||
-                    regNos[selectedExamId] ||
-                    '',
-                  regNo:
-                    (remote as any).examRegisterNos?.[selectedExamId] ||
-                    (remote as any).examRegNo ||
-                    (remote as any).regNo ||
-                    remote.examRegisterNumbers?.[selectedExamId] ||
-                    regNos[selectedExamId] ||
-                    '',
-                };
-              }
-              return child;
-            })
-          );
+          const cleanPhone = (user.phone || user.username || '').replace(/\D/g, '');
+          const linkedIds = new Set<string>([
+            ...(Array.isArray((user as any).linkedStudentIds) ? (user as any).linkedStudentIds : []),
+            ...(Array.isArray((user as any).childIds) ? (user as any).childIds : []),
+          ].map(String));
+
+          setChildren(prev => {
+            const matchingRemote = remoteList.filter(r =>
+              linkedIds.has(String(r.id)) ||
+              linkedIds.has(String(r.admissionNo)) ||
+              r.parentUserId === user.id ||
+              (cleanPhone && cleanPhone.length >= 6 && r.parentPhone && r.parentPhone.replace(/\D/g, '') === cleanPhone) ||
+              (r.parentNameEn && r.parentNameEn.toLowerCase() === user.name.toLowerCase()) ||
+              prev.some(p => p.id === r.id || p.admissionNo === r.admissionNo)
+            );
+
+            const sourceList = matchingRemote.length > 0 ? matchingRemote : prev;
+            const updated = sourceList.map(child => {
+              const remote = remoteList.find(r => r.id === child.id || r.admissionNo === child.admissionNo) || child;
+              const regNos = {
+                ...(child.examRegisterNumbers || {}),
+                ...((remote as any).examRegisterNumbers || {}),
+                ...((remote as any).examRegisterNos || {}),
+              };
+              return {
+                ...child,
+                ...remote,
+                examRegisterNumbers: regNos,
+                examRegisterNos: regNos,
+                examRegNo:
+                  (remote as any).examRegisterNos?.[selectedExamId] ||
+                  (remote as any).examRegNo ||
+                  (remote as any).regNo ||
+                  remote.examRegisterNumbers?.[selectedExamId] ||
+                  regNos[selectedExamId] ||
+                  '',
+                regNo:
+                  (remote as any).examRegisterNos?.[selectedExamId] ||
+                  (remote as any).examRegNo ||
+                  (remote as any).regNo ||
+                  remote.examRegisterNumbers?.[selectedExamId] ||
+                  regNos[selectedExamId] ||
+                  '',
+              };
+            });
+
+            const sorted = sortStudentsBoysFirst(updated);
+            if (sorted.length > 0) {
+              setActiveChild(curr => {
+                if (curr) {
+                  const match = sorted.find(s => s.id === curr.id || s.admissionNo === curr.admissionNo);
+                  if (match) return match;
+                }
+                return sorted[0];
+              });
+            }
+            return sorted;
+          });
         }
       });
       unsubs.push(unsubStu);

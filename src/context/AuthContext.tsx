@@ -189,6 +189,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         console.warn('Could not refresh teacher doc from Firestore:', fErr);
       }
+    } else if (current && current.role === 'parent' && !isFirestoreQuotaExhausted()) {
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout')), 2500)
+        );
+        const pDoc = await Promise.race([
+          getDoc(doc(db, 'parents', current.id)),
+          timeoutPromise,
+        ]);
+        if (pDoc.exists()) {
+          const pData = pDoc.data();
+          const updatedUser: User = {
+            ...current,
+            ...pData,
+          } as User;
+          clientStorageApi.setCurrentUser(updatedUser);
+          setUser(updatedUser);
+          setIsLoading(false);
+          return;
+        }
+      } catch (fErr) {
+        if (isQuotaError(fErr)) {
+          markFirestoreQuotaExhausted();
+        }
+        console.warn('Could not refresh parent doc from Firestore:', fErr);
+      }
     }
     setUser(current);
     setIsLoading(false);
@@ -259,6 +285,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             markFirestoreQuotaExhausted();
           }
           console.warn('Could not fetch teacher doc from Firestore during login:', fErr);
+        }
+      }
+
+      // If user is parent, ensure fresh parent doc from Firestore with linkedStudentIds is loaded
+      if (res.user.role === 'parent' && !isFirestoreQuotaExhausted()) {
+        try {
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Timeout')), 2500)
+          );
+          const pDoc = await Promise.race([
+            getDoc(doc(db, 'parents', res.user.id)),
+            timeoutPromise,
+          ]);
+          if (pDoc.exists()) {
+            const pData = pDoc.data();
+            const updatedUser: User = {
+              ...res.user,
+              ...pData,
+            } as User;
+            clientStorageApi.setCurrentUser(updatedUser);
+            res.user = updatedUser;
+          }
+        } catch (fErr) {
+          if (isQuotaError(fErr)) {
+            markFirestoreQuotaExhausted();
+          }
+          console.warn('Could not fetch parent doc from Firestore during login:', fErr);
         }
       }
 

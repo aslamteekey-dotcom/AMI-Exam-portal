@@ -37,7 +37,7 @@ import {
   Award,
 } from 'lucide-react';
 import { PlaceholderView } from '../Common/PlaceholderView';
-import { HikmaUnifiedScoreSheet } from './HikmaUnifiedScoreSheet';
+import { HikmaAdminModule } from './HikmaAdminModule';
 
 export const AdminDashboard: React.FC = () => {
   const { user, fetchWithAuth, lang, t, institutionSettings } = useAuth();
@@ -60,6 +60,18 @@ export const AdminDashboard: React.FC = () => {
     | 'quiz'
     | 'lms'
   >('overview');
+
+  // Keep heavy tabs mounted in background when navigated so switching is instant with 0 delay
+  const [visitedTabs, setVisitedTabs] = useState<Set<string>>(() => new Set(['overview']));
+
+  useEffect(() => {
+    setVisitedTabs(prev => {
+      if (prev.has(activeTab)) return prev;
+      const next = new Set(prev);
+      next.add(activeTab);
+      return next;
+    });
+  }, [activeTab]);
 
   const defaultOverview = {
     totalStudents: 0,
@@ -650,10 +662,14 @@ export const AdminDashboard: React.FC = () => {
       )}
 
       {activeTab === 'monitoring' && <MarkMonitoring />}
-      {activeTab === 'reports' && <BulkReportsPrint />}
-      {activeTab === 'hikma_exam' && (
-        <div className="space-y-4">
-          <HikmaUnifiedScoreSheet />
+      {visitedTabs.has('reports') && (
+        <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
+          <BulkReportsPrint />
+        </div>
+      )}
+      {visitedTabs.has('hikma_exam') && (
+        <div className={activeTab === 'hikma_exam' ? 'block' : 'hidden'}>
+          <HikmaAdminModule />
         </div>
       )}
       {activeTab === 'exams' && <ExamManagement />}

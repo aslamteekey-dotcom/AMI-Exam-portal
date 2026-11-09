@@ -147,6 +147,7 @@ export interface Student {
   examRegisterNos?: Record<string, string>; // examinationId -> exam register number (cloud persistence schema alias)
   examRegNo?: string; // current active exam register number (cloud persistence schema alias)
   regNo?: string; // register number alias
+  hikmaRegNo?: string; // Dedicated HIKMA Exam register number
   isRegNoLocked?: boolean; // Flag indicating manually assigned/edited register number override
   attendance?: {
     daysAttended: number;
@@ -955,6 +956,7 @@ export interface HikmaStudentMark {
   studentNameMl?: string;
   rollNo?: number;
   admissionNo?: string;
+  registerNo?: string;
   isAbsent?: boolean;
   correctAnswers: number;
   wrongAnswers: number;

@@ -1016,16 +1016,52 @@ export class ClientStorageApi {
           parsed.attendanceConfigs = Array.isArray(parsed.attendanceConfigs) ? parsed.attendanceConfigs : [];
           parsed.attendanceEditRequests = Array.isArray(parsed.attendanceEditRequests) ? parsed.attendanceEditRequests : [];
 
-          // Purge legacy dummy students from local storage
+          // Purge legacy dummy students from local storage (862 is a real student, never purge)
           const DUMMY_IDS = new Set([
             'st_101', 'st_102', 'st_103', 'st_104', 'st_201', 'st_202', 'st_401', 'st_501', 'st_502',
-            'st_503', 'st_504', 'st_601', 'st_701', 'st_702', 'st_801', 'st_901', 'st_902', 'st_903', '862'
+            'st_503', 'st_504', 'st_601', 'st_702', 'st_801', 'st_901', 'st_902', 'st_903'
           ]);
-          const DUMMY_ADMS = new Set(['1001', '1002', '1003', '1004', '2001', '2002', '4001', '5001', '5002', '5003', '5004', '6001', '7001', '7002', '8001', '9001', '9002', '9003', '862']);
+          const DUMMY_ADMS = new Set(['1001', '1002', '1003', '1004', '2001', '2002', '4001', '5001', '5002', '5003', '5004', '6001', '7002', '8001', '9001', '9002', '9003']);
           if (Array.isArray(parsed.students)) {
-            parsed.students = parsed.students.filter(
-              (s: any) => s && !DUMMY_IDS.has(s.id) && !DUMMY_ADMS.has(String(s.admissionNo || '').trim())
-            );
+            parsed.students = parsed.students
+              .filter(
+                (s: any) => s && !DUMMY_IDS.has(s.id) && !DUMMY_ADMS.has(String(s.admissionNo || '').trim())
+              )
+              .map((s: any) => {
+                // Canonical enforcement for student 862 to prevent rollback
+                if (String(s.admissionNo || '').trim() === '862' || s.id === '862') {
+                  const targetExam = parsed.settings?.activeExamId || 'exam_half_yearly_2026_27';
+                  const regNos = {
+                    ...(s.examRegisterNumbers || {}),
+                    ...(s.examRegisterNos || {}),
+                    [targetExam]: '7105',
+                  };
+                  return {
+                    ...s,
+                    id: '862',
+                    admissionNo: '862',
+                    rollNo: 5,
+                    nameEn: 'MUHAMMED HAFIZ C',
+                    nameMl: s.nameMl || 'മുഹമ്മദ് ഹാഫിസ് സി',
+                    regNo: '7105',
+                    examRegNo: '7105',
+                    isRegNoLocked: true,
+                    classId: 'cls_7',
+                    class: 'Class 7',
+                    schoolClass: 'Class 7',
+                    gender: 'Boy',
+                    dob: '2013-08-11',
+                    status: 'active',
+                    parentUserId: 'usr_1793103035617_z45w',
+                    parentPhone: '9847805859',
+                    parentNameEn: 'Rasheed C',
+                    parentNameMl: 'റഷീദ് സി',
+                    examRegisterNumbers: regNos,
+                    examRegisterNos: regNos,
+                  };
+                }
+                return s;
+              });
           }
           if (Array.isArray(parsed.markSheets)) {
             parsed.markSheets = parsed.markSheets.filter(
@@ -1381,7 +1417,14 @@ export class ClientStorageApi {
       (user as any).passwordHash === clientHashPassword(trimmedPass);
 
     if (!isPasswordMatch && user.role === 'parent') {
+      const linkedIds = new Set<string>([
+        ...(Array.isArray((user as any).linkedStudentIds) ? (user as any).linkedStudentIds : []),
+        ...(Array.isArray((user as any).childIds) ? (user as any).childIds : []),
+      ].map(String));
+
       const userKids = this.db.students.filter(s =>
+        linkedIds.has(String(s.id)) ||
+        linkedIds.has(String(s.admissionNo)) ||
         s.parentUserId === user?.id ||
         (cleanDigits.length >= 6 && s.parentPhone && s.parentPhone.replace(/\D/g, '') === cleanDigits) ||
         (s.parentNameEn && s.parentNameEn.toLowerCase() === user?.name.toLowerCase())
@@ -1970,8 +2013,19 @@ export class ClientStorageApi {
         let children: Student[] = [];
         if (freshUser.role === 'parent') {
           const cleanPhone = (freshUser.phone || '').replace(/\D/g, '');
+          const parentDoc = this.db.users.find(p => p.role === 'parent' && (p.id === freshUser.id || (cleanPhone && p.phone && p.phone.replace(/\D/g, '') === cleanPhone)));
+          const linkedIds = new Set<string>([
+            ...(Array.isArray((freshUser as any).linkedStudentIds) ? (freshUser as any).linkedStudentIds : []),
+            ...(Array.isArray((freshUser as any).childIds) ? (freshUser as any).childIds : []),
+            ...(parentDoc && Array.isArray((parentDoc as any).linkedStudentIds) ? (parentDoc as any).linkedStudentIds : []),
+            ...(parentDoc && Array.isArray((parentDoc as any).childIds) ? (parentDoc as any).childIds : []),
+          ].map(String));
+
           children = this.db.students.filter(s =>
+            linkedIds.has(String(s.id)) ||
+            linkedIds.has(String(s.admissionNo)) ||
             s.parentUserId === freshUser.id ||
+            (parentDoc && s.parentUserId === parentDoc.id) ||
             (cleanPhone && s.parentPhone && s.parentPhone.replace(/\D/g, '') === cleanPhone) ||
             (s.parentNameEn && s.parentNameEn.toLowerCase() === freshUser.name.toLowerCase()) ||
             (s.parentNameEn && s.parentNameEn.toLowerCase() === freshUser.username.toLowerCase())
@@ -3063,20 +3117,40 @@ export class ClientStorageApi {
         if (!parent) return this.jsonResponse({ error: 'Parent not found' }, 404);
 
         const { studentIds } = bodyData;
+        const linkedIdSet = new Set<string>(Array.isArray(studentIds) ? studentIds.map(String) : []);
         if (Array.isArray(studentIds)) {
           studentIds.forEach(sId => {
-            const st = this.db.students.find(s => s.id === sId);
-            if (st) st.parentUserId = pId;
+            const st = this.db.students.find(s => s.id === sId || s.admissionNo === sId);
+            if (st) {
+              st.parentUserId = pId;
+              if (parent.phone) st.parentPhone = parent.phone;
+              if (parent.name) st.parentNameEn = parent.name;
+              if (parent.nameMl) st.parentNameMl = parent.nameMl;
+              firestoreSync.syncStudent(st).catch(e => console.warn('Sync student on link error:', e));
+            }
           });
         }
 
-        const allLinked = this.db.students.filter(s => s.parentUserId === pId);
+        const allLinked = this.db.students.filter(
+          s => s.parentUserId === pId || linkedIdSet.has(String(s.id)) || linkedIdSet.has(String(s.admissionNo))
+        );
+        (parent as any).linkedStudentIds = allLinked.map(s => s.id);
+        (parent as any).childIds = allLinked.map(s => s.id);
+
         const elder = getElderChild(allLinked, this.db.classes);
         if (elder) {
           parent.plainPassword = `Admn@${elder.admissionNo}`;
         }
 
         this.saveDB();
+        firestoreSync.syncParent(parent).catch(e => {
+          console.warn('Firestore syncParent link error:', e);
+        });
+
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: this.db.students }));
+        }
+
         return this.jsonResponse({
           success: true,
           parent,
@@ -3091,17 +3165,31 @@ export class ClientStorageApi {
       if (parentUnlinkMatch && method === 'POST') {
         const pId = parentUnlinkMatch[1];
         const { studentId } = bodyData;
-        const student = this.db.students.find(s => s.id === studentId);
-        if (student) student.parentUserId = undefined;
+        const student = this.db.students.find(s => s.id === studentId || s.admissionNo === studentId);
+        if (student) {
+          student.parentUserId = undefined;
+          firestoreSync.syncStudent(student).catch(e => console.warn('Sync student on unlink error:', e));
+        }
 
         const parent = this.db.users.find(u => u.id === pId);
-        const allLinked = this.db.students.filter(s => s.parentUserId === pId);
-        const elder = getElderChild(allLinked, this.db.classes);
-        if (parent && elder) {
-          parent.plainPassword = `Admn@${elder.admissionNo}`;
+        const allLinked = this.db.students.filter(s => s.parentUserId === pId && s.id !== studentId && s.admissionNo !== studentId);
+        if (parent) {
+          (parent as any).linkedStudentIds = allLinked.map(s => s.id);
+          (parent as any).childIds = allLinked.map(s => s.id);
+          const elder = getElderChild(allLinked, this.db.classes);
+          if (elder) {
+            parent.plainPassword = `Admn@${elder.admissionNo}`;
+          }
+          firestoreSync.syncParent(parent).catch(e => {
+            console.warn('Firestore syncParent unlink error:', e);
+          });
         }
 
         this.saveDB();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: this.db.students }));
+        }
+
         return this.jsonResponse({ success: true });
       }
 
