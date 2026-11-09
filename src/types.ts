@@ -934,3 +934,92 @@ export interface AppNotification {
   linkUrl?: string;
 }
 
+// -------------------------------------------------------------
+// HIKMA MODEL EXAM TYPES & CALCULATION LOGIC
+// -------------------------------------------------------------
+export type HikmaModelId = 'model_1' | 'model_2' | 'model_3';
+
+export const HIKMA_EXAM_ID = 'exam_hikma_model_2026_27';
+export const HIKMA_EXAM_NAME_EN = 'HIKMA Model Exam';
+export const HIKMA_EXAM_NAME_ML = 'ഹിക്മ മോഡൽ പരീക്ഷ';
+
+export const HIKMA_MODELS: { id: HikmaModelId; labelEn: string; labelMl: string; defaultMaxMarks: number }[] = [
+  { id: 'model_1', labelEn: 'Model 1', labelMl: 'മോഡൽ 1', defaultMaxMarks: 50 },
+  { id: 'model_2', labelEn: 'Model 2', labelMl: 'മോഡൽ 2', defaultMaxMarks: 50 },
+  { id: 'model_3', labelEn: 'Model 3', labelMl: 'മോഡൽ 3', defaultMaxMarks: 50 },
+];
+
+export interface HikmaStudentMark {
+  studentId: string;
+  studentName?: string;
+  studentNameMl?: string;
+  rollNo?: number;
+  admissionNo?: string;
+  isAbsent?: boolean;
+  correctAnswers: number;
+  wrongAnswers: number;
+  unattempted: number;
+  totalPositive: number; // Correct Answers * 1
+  minusMarks: number;    // Wrong Answers * 0.25
+  grandTotal: number;    // Total Positive Marks - Minus Marks
+  maxMarks: number;
+}
+
+export interface HikmaClassModelRecord {
+  examinationId: string;
+  classId: string;
+  modelId: HikmaModelId;
+  maxMarks: number;
+  status: 'draft' | 'submitted' | 'approved' | 'locked';
+  submittedAt?: string;
+  lastUpdated: string;
+  studentMarks: Record<string, HikmaStudentMark>;
+}
+
+/**
+ * Calculates HIKMA Model Exam marks in real time:
+ * - Total Positive Marks = Correct Answers * 1
+ * - Minus Marks = Wrong Answers * 0.25
+ * - Grand Total = Total Positive Marks - Minus Marks
+ */
+export function calculateHikmaStudentScore(
+  correct: number | string,
+  wrong: number | string,
+  unattempted: number | string,
+  maxMarks: number = 50,
+  isAbsent: boolean = false
+): {
+  correctAnswers: number;
+  wrongAnswers: number;
+  unattempted: number;
+  totalPositive: number;
+  minusMarks: number;
+  grandTotal: number;
+} {
+  if (isAbsent) {
+    return {
+      correctAnswers: 0,
+      wrongAnswers: 0,
+      unattempted: 0,
+      totalPositive: 0,
+      minusMarks: 0,
+      grandTotal: 0,
+    };
+  }
+  const c = Math.max(0, parseInt(String(correct), 10) || 0);
+  const w = Math.max(0, parseInt(String(wrong), 10) || 0);
+  const u = Math.max(0, parseInt(String(unattempted), 10) || 0);
+  const totalPositive = c * 1;
+  const minusMarks = Number((w * 0.25).toFixed(2));
+  const grandTotal = Number((totalPositive - minusMarks).toFixed(2));
+  return {
+    correctAnswers: c,
+    wrongAnswers: w,
+    unattempted: u,
+    totalPositive,
+    minusMarks,
+    grandTotal,
+  };
+}
+
+

@@ -27,8 +27,11 @@ import {
   ALL_STANDARD_CLASSES,
   mergeClassesWithStandard,
   normalizeGender,
+  HikmaModelId,
 } from '../../types';
 import { MarkEntryScreen } from './MarkEntryScreen';
+import { HikmaMarkEntryView } from './HikmaMarkEntryView';
+import { HikmaUnifiedScoreSheet } from '../Admin/HikmaUnifiedScoreSheet';
 import { MonthlyAttendanceReport } from '../Attendance/MonthlyAttendanceReport';
 import { exportScoreSheetToPdf } from '../../utils/scoreSheetPdfExport';
 import { PWABottomNav } from '../Common/PWABottomNav';
@@ -126,6 +129,7 @@ export type TeacherPortalTab =
   | 'home'
   | 'my_class'
   | 'mark_entry'
+  | 'hikma_exam'
   | 'attendance'
   | 'fees'
   | 'special_fees'
@@ -211,6 +215,7 @@ export const TeacherDashboard: React.FC = () => {
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [examinations, setExaminations] = useState<Examination[]>([]);
   const [selectedExamId, setSelectedExamId] = useState<string>('exam_half_yearly_2026_27');
+  const [selectedHikmaModel, setSelectedHikmaModel] = useState<HikmaModelId>('model_1');
   const [markSheets, setMarkSheets] = useState<MarkSheet[]>([]);
   const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [currentTeacherInChargeClassId, setCurrentTeacherInChargeClassId] = useState<string | undefined>(user?.inChargeClassId);
@@ -337,8 +342,12 @@ export const TeacherDashboard: React.FC = () => {
   // Mark Entry Sub-tab Segment: 'my_class' (Class In-charge) vs 'teaching_subjects' (All assigned subjects)
   const [markEntrySegment, setMarkEntrySegment] = useState<'my_class' | 'teaching_subjects'>('my_class');
 
-  // View mode switcher in "My Class": 'students' (Students List) vs 'marksheet' (Class Marksheet)
+  // View mode switcher in "My Class": 'students' (Students List) vs 'marksheet' (Score Sheet)
   const [myClassViewMode, setMyClassViewMode] = useState<'students' | 'marksheet'>('students');
+
+  // Standalone HIKMA Exam Tab State:
+  const [hikmaViewMode, setHikmaViewMode] = useState<'mark_entry' | 'score_sheet'>('mark_entry');
+  const [hikmaSchoolClassId, setHikmaSchoolClassId] = useState<string>(() => inChargeClass?.id || 'cls_5');
 
   // Student Edit Modal State in "My Class"
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
@@ -3117,11 +3126,13 @@ export const TeacherDashboard: React.FC = () => {
               onChange={e => handleExamChange(e.target.value)}
               className="bg-emerald-950 text-white text-xs font-semibold px-3 py-1.5 rounded-lg border border-emerald-700 focus:outline-none cursor-pointer"
             >
-              {examinations.map(e => (
-                <option key={e.id} value={e.id}>
-                  {isMl ? e.nameMl : e.nameEn}
-                </option>
-              ))}
+              {examinations
+                .filter(e => e.id !== 'exam_hikma_model_2026_27' && !e.nameEn?.toLowerCase().includes('hikma'))
+                .map(e => (
+                  <option key={e.id} value={e.id}>
+                    {isMl ? e.nameMl : e.nameEn}
+                  </option>
+                ))}
             </select>
           </div>
         </div>
@@ -3191,6 +3202,27 @@ export const TeacherDashboard: React.FC = () => {
             }`}
           >
             {assignments.length}
+          </span>
+        </button>
+
+        {/* Hikma Exam (Independent Main Tab) */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('hikma_exam')}
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'hikma_exam'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
+          }`}
+        >
+          <Award className="w-4 h-4 text-amber-300" />
+          <span>Hikma Exam</span>
+          <span
+            className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+              activeTab === 'hikma_exam' ? 'bg-emerald-950/60 text-emerald-200' : 'bg-emerald-100 text-emerald-800'
+            }`}
+          >
+            3 Models
           </span>
         </button>
 
@@ -3527,6 +3559,21 @@ export const TeacherDashboard: React.FC = () => {
             </div>
 
             <div
+              onClick={() => setActiveTab('hikma_exam')}
+              className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
+            >
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                <Award className="w-5 h-5 text-amber-700" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">HIKMA Model Exam</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  School Class 1 to 9 mark entry with negative marking &amp; unified score sheet.
+                </p>
+              </div>
+            </div>
+
+            <div
               onClick={() => setActiveTab('attendance')}
               className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
             >
@@ -3716,7 +3763,7 @@ export const TeacherDashboard: React.FC = () => {
                     }`}
                   >
                     <BarChart2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
-                    <span className="whitespace-nowrap">Marksheet</span>
+                    <span className="whitespace-nowrap">Score Sheet</span>
                     <span
                       className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold whitespace-nowrap shrink-0 ${
                         myClassViewMode === 'marksheet'
@@ -4398,7 +4445,7 @@ export const TeacherDashboard: React.FC = () => {
          ========================================================================= */}
       {activeTab === 'mark_entry' && (
         <div className="space-y-4">
-          {/* Header & Sub-tab Segments: "My Class" vs "Other Class" */}
+          {/* Header & Sub-tab Segments: "My Class" vs "Teaching Subjects" */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
@@ -4781,6 +4828,108 @@ export const TeacherDashboard: React.FC = () => {
                 </div>
               )}
             </div>
+          )}
+        </div>
+      )}
+
+      {/* =========================================================================
+          TAB: INDEPENDENT "HIKMA EXAM" MODULE (School Classes 1 to 9)
+         ========================================================================= */}
+      {activeTab === 'hikma_exam' && (
+        <div className="space-y-4">
+          {/* Main Hikma Header & Controls Console */}
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4 print:hidden">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800">
+                  {language === 'ML' ? 'ഹിക്മ പരീക്ഷ' : 'HIKMA Model Exam'}
+                </span>
+                <span className="text-slate-300">•</span>
+                <span className="text-xs text-slate-500 font-medium">
+                  {language === 'ML' ? 'സ്കൂൾ ക്ലാസ്സ് 1 മുതൽ 9 വരെ' : 'School Classes 1 to 9'}
+                </span>
+              </div>
+              <h2 className="text-lg sm:text-xl font-bold text-slate-900 mt-0.5 flex items-center gap-2">
+                <Award className="w-5 h-5 text-emerald-800" />
+                <span>{language === 'ML' ? 'ഹിക്മ പരീക്ഷാ പോർട്ടൽ' : 'HIKMA Examination Portal'}</span>
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {language === 'ML'
+                  ? 'സ്കൂൾ ക്ലാസ് അടിസ്ഥാനത്തിലുള്ള പരീക്ഷാ മാർക്ക് എൻട്രിയും ഏകീകൃത സ്കോർ ഷീറ്റും ഇവിടെ നിർവഹിക്കാം.'
+                  : 'Independent evaluation module based on School Class with negative marking & unified 3-models reporting.'}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {/* School Class Selector Dropdown (Class 1 to Class 9) */}
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 p-1.5 rounded-xl">
+                <span className="text-xs font-bold text-slate-600 pl-1 whitespace-nowrap">
+                  School Class:
+                </span>
+                <select
+                  value={hikmaSchoolClassId}
+                  onChange={e => setHikmaSchoolClassId(e.target.value)}
+                  className="bg-white border border-slate-300 text-slate-900 text-xs font-bold rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-emerald-700 focus:outline-none cursor-pointer"
+                >
+                  {classes
+                    .filter(c => c.numericGrade >= 1 && c.numericGrade <= 9)
+                    .map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} {c.nameMl ? `(${c.nameMl})` : ''}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {/* View Switcher: Mark Entry vs Score Sheet */}
+              <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setHikmaViewMode('mark_entry')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                    hikmaViewMode === 'mark_entry'
+                      ? 'bg-emerald-800 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>Mark Entry</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHikmaViewMode('score_sheet')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                    hikmaViewMode === 'score_sheet'
+                      ? 'bg-emerald-800 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Award className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Score Sheet</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 font-bold">
+                    3 Models
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Sub-view Content: Mark Entry vs Unified Score Sheet */}
+          {hikmaViewMode === 'mark_entry' ? (
+            <HikmaMarkEntryView
+              classId={hikmaSchoolClassId}
+              classes={classes.filter(c => c.numericGrade >= 1 && c.numericGrade <= 9)}
+              onClassChange={setHikmaSchoolClassId}
+              selectedModel={selectedHikmaModel}
+              onModelChange={setSelectedHikmaModel}
+              students={allStudents}
+            />
+          ) : (
+            <HikmaUnifiedScoreSheet
+              initialClassId={hikmaSchoolClassId}
+              classes={classes.filter(c => c.numericGrade >= 1 && c.numericGrade <= 9)}
+              allStudents={allStudents}
+            />
           )}
         </div>
       )}

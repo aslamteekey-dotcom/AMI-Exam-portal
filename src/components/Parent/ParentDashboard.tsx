@@ -17,6 +17,7 @@ import {
   SpecialWorkingDay,
   isClassMatch,
   isClassResultsPublished,
+  HIKMA_EXAM_ID,
 } from '../../types';
 import {
   calculateConsolidatedAttendance,
@@ -24,6 +25,7 @@ import {
   ConsolidatedStudentAttendanceResult,
 } from '../../services/attendanceStatsService';
 import { ProgressReportCard } from '../Report/ProgressReportCard';
+import { HikmaProgressReportCard } from './HikmaProgressReportCard';
 import { StudyMaterialsView } from './StudyMaterialsView';
 import { PWABottomNav } from '../Common/PWABottomNav';
 import { Footer } from '../Common/Footer';
@@ -77,6 +79,7 @@ export type ParentPortalTab =
   | 'about'
   | 'attendance'
   | 'report'
+  | 'hikma_exam'
   | 'fees'
   | 'study_materials'
   | 'news'
@@ -159,6 +162,12 @@ export const ParentDashboard: React.FC = () => {
       label: isMl ? 'റിസൾട്ട്' : 'Result',
       icon: Award,
       onClick: () => setActiveTab('report'),
+    },
+    {
+      id: 'hikma_exam',
+      label: isMl ? 'ഹിക്മ പരീക്ഷ' : 'Hikma Exam',
+      icon: Sparkles,
+      onClick: () => setActiveTab('hikma_exam'),
     },
     {
       id: 'fees',
@@ -1167,6 +1176,28 @@ export const ParentDashboard: React.FC = () => {
 
             <button
               type="button"
+              onClick={() => setActiveTab('hikma_exam')}
+              className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
+                activeTab === 'hikma_exam'
+                  ? 'bg-[#047857] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
+              }`}
+            >
+              <Sparkles className="w-4 h-4 text-amber-300" />
+              <span>{isMl ? 'ഹിക്മ പരീക്ഷ' : 'Hikma Exam'}</span>
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                  activeTab === 'hikma_exam'
+                    ? 'bg-emerald-950/60 text-emerald-200'
+                    : 'bg-emerald-100 text-emerald-800'
+                }`}
+              >
+                3 Models
+              </span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveTab('fees')}
               className={`flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer shrink-0 ${
                 activeTab === 'fees'
@@ -1574,6 +1605,21 @@ export const ParentDashboard: React.FC = () => {
                     <h3 className="font-bold text-slate-900 text-sm">Progress Report Card</h3>
                     <p className="text-xs text-slate-500 mt-0.5">
                       View subject marks, grand totals, KMEB grades, and principal verification.
+                    </p>
+                  </div>
+                </div>
+
+                <div
+                  onClick={() => setActiveTab('hikma_exam')}
+                  className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:shadow-xs transition cursor-pointer flex items-start gap-4"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                    <Sparkles className="w-5 h-5 text-amber-700" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">HIKMA Model Exam</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      3-Models comparative performance report with Right, Wrong (-0.25), and Grand Total.
                     </p>
                   </div>
                 </div>
@@ -2027,196 +2073,206 @@ export const ParentDashboard: React.FC = () => {
             <div className="space-y-6">
               {/* Verification Gate Card */}
               <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs print:hidden space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
-                      <Award className="w-5 h-5 text-emerald-700" />
-                    </div>
-                    <div>
-                      <h3 className="text-base font-bold text-slate-900">
-                        View Examination Result
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        Select examination and enter child's official credentials to verify and access results.
-                      </p>
-                    </div>
-                  </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
+                          <Award className="w-5 h-5 text-emerald-700" />
+                        </div>
+                        <div>
+                          <h3 className="text-base font-bold text-slate-900">
+                            View Examination Result
+                          </h3>
+                          <p className="text-xs text-slate-500">
+                            Select examination and enter child's official credentials to verify and access results.
+                          </p>
+                        </div>
+                      </div>
 
-                  {activeChild && (
-                    <div className="text-[11px] bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-slate-600 font-medium">
-                      Active Profile: <strong className="text-slate-900">{activeChild.nameEn}</strong> (Adm: <span className="font-mono font-bold text-emerald-900">{activeChild.admissionNo}</span>)
-                    </div>
-                  )}
-                </div>
-
-                <form onSubmit={handleVerifyAndFetchResult} className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                    {/* 1. Select Examination */}
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Select Examination
-                      </label>
-                      <select
-                        value={resultExamId}
-                        onChange={e => {
-                          setResultExamId(e.target.value);
-                          setIsResultVerified(false);
-                          setVerificationError(null);
-                          setIsExamNotPublishedNotice(false);
-                        }}
-                        className="w-full text-xs font-semibold px-3 py-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none cursor-pointer"
-                      >
-                        {examinations.map(e => {
-                          const pub = isClassResultsPublished(e, activeChild?.classId);
-                          return (
-                            <option key={e.id} value={e.id}>
-                              {isMl ? e.nameMl : e.nameEn} {pub ? '✓ (Published)' : '(Not Published)'}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </div>
-
-                    {/* 2. Date of Birth */}
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Date of Birth
-                      </label>
-                      <input
-                        type="date"
-                        value={inputDob}
-                        onChange={e => {
-                          setInputDob(e.target.value);
-                          setVerificationError(null);
-                        }}
-                        placeholder="Date of Birth"
-                        className="w-full text-xs font-semibold px-3 py-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none cursor-pointer"
-                      />
-                    </div>
-
-                    {/* 3. Admission No */}
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Admission No
-                      </label>
-                      <input
-                        type="text"
-                        value={inputAdmissionNo}
-                        onChange={e => {
-                          setInputAdmissionNo(e.target.value);
-                          setVerificationError(null);
-                        }}
-                        placeholder="Enter Admission Number"
-                        className="w-full text-xs font-semibold px-3 py-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  {/* 4. Action Button */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                    <button
-                      type="submit"
-                      disabled={fetchingReport}
-                      className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs sm:text-sm shadow-xs transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
-                    >
-                      {fetchingReport ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>Verifying & Loading...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Search className="w-4 h-4" />
-                          <span>Find / View Result</span>
-                        </>
+                      {activeChild && (
+                        <div className="text-[11px] bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-slate-600 font-medium">
+                          Active Profile: <strong className="text-slate-900">{activeChild.nameEn}</strong> (Adm: <span className="font-mono font-bold text-emerald-900">{activeChild.admissionNo}</span>)
+                        </div>
                       )}
-                    </button>
+                    </div>
 
-                    {isResultVerified && (
-                      <span className="text-xs font-semibold text-emerald-800 flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        <span>Verified Result Loaded Below</span>
-                      </span>
+                    <form onSubmit={handleVerifyAndFetchResult} className="space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                        {/* 1. Select Examination */}
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">
+                            Select Examination
+                          </label>
+                          <select
+                            value={resultExamId}
+                            onChange={e => {
+                              const nextVal = e.target.value;
+                              setResultExamId(nextVal);
+                              setIsResultVerified(false);
+                              setVerificationError(null);
+                              setIsExamNotPublishedNotice(false);
+                            }}
+                            className="w-full text-xs font-semibold px-3 py-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none cursor-pointer"
+                          >
+                            {examinations
+                              .filter(e => e.id !== HIKMA_EXAM_ID && !e.nameEn?.toLowerCase().includes('hikma'))
+                              .map(e => {
+                                const pub = isClassResultsPublished(e, activeChild?.classId);
+                                return (
+                                  <option key={e.id} value={e.id}>
+                                    {isMl ? e.nameMl : e.nameEn} {pub ? '✓ (Published)' : '(Not Published)'}
+                                  </option>
+                                );
+                              })}
+                          </select>
+                        </div>
+
+                        {/* 2. Date of Birth */}
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">
+                            Date of Birth
+                          </label>
+                          <input
+                            type="date"
+                            value={inputDob}
+                            onChange={e => {
+                              setInputDob(e.target.value);
+                              setVerificationError(null);
+                            }}
+                            placeholder="Date of Birth"
+                            className="w-full text-xs font-semibold px-3 py-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none cursor-pointer"
+                          />
+                        </div>
+
+                        {/* 3. Admission No */}
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">
+                            Admission No
+                          </label>
+                          <input
+                            type="text"
+                            value={inputAdmissionNo}
+                            onChange={e => {
+                              setInputAdmissionNo(e.target.value);
+                              setVerificationError(null);
+                            }}
+                            placeholder="Enter Admission Number"
+                            className="w-full text-xs font-semibold px-3 py-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 4. Action Button */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                        <button
+                          type="submit"
+                          disabled={fetchingReport}
+                          className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs sm:text-sm shadow-xs transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                        >
+                          {fetchingReport ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <span>Verifying & Loading...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Search className="w-4 h-4" />
+                              <span>Find / View Result</span>
+                            </>
+                          )}
+                        </button>
+
+                        {isResultVerified && (
+                          <span className="text-xs font-semibold text-emerald-800 flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                            <span>Verified Result Loaded Below</span>
+                          </span>
+                        )}
+                      </div>
+                    </form>
+
+                    {/* Inline Warning for Mismatched Credentials */}
+                    {verificationError && (
+                      <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start gap-2.5">
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="font-semibold block text-rose-900">Verification Failed</strong>
+                          <span>{verificationError}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Informative Banner for Unpublished Exam */}
+                    {isExamNotPublishedNotice && (
+                      <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-3">
+                        <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <h4 className="font-bold text-amber-950 text-sm">Results Pending Publication</h4>
+                          <p className="mt-0.5 text-amber-800">
+                            Results for this examination have not been published yet.
+                          </p>
+                        </div>
+                      </div>
                     )}
                   </div>
-                </form>
 
-                {/* Inline Warning for Mismatched Credentials */}
-                {verificationError && (
-                  <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start gap-2.5">
-                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                    <div>
-                      <strong className="font-semibold block text-rose-900">Verification Failed</strong>
-                      <span>{verificationError}</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Informative Banner for Unpublished Exam */}
-                {isExamNotPublishedNotice && (
-                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-3">
-                    <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                    <div>
-                      <h4 className="font-bold text-amber-950 text-sm">Results Pending Publication</h4>
-                      <p className="mt-0.5 text-amber-800">
-                        Results for this examination have not been published yet.
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Render Full A4 Progress Report Card below form once verified */}
-              {isResultVerified && (
-                !isExamPublished || isUnpublished ? (
-                  <div className="bg-white rounded-2xl border border-amber-200 p-8 text-center shadow-xs space-y-3">
-                    <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto">
-                      <AlertCircle className="w-6 h-6" />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-amber-950 text-base">Results Pending Publication</h4>
-                      <p className="mt-1 text-xs text-amber-800 max-w-md mx-auto">
-                        Results for this examination have not been published yet.
-                      </p>
-                    </div>
-                  </div>
-                ) : fetchingReport ? (
-                  <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs">
-                    <Loader2 className="w-8 h-8 animate-spin text-emerald-800 mx-auto mb-3" />
-                    <h3 className="text-sm font-bold text-slate-800">
-                      Loading Progress Report for {activeChild?.nameEn}...
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Fetching evaluation results, rankings, and subject assessments.
-                    </p>
-                  </div>
-                ) : reportError ? (
-                  <div className="bg-white rounded-2xl border border-rose-200 p-6 shadow-xs flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3 text-rose-800 text-xs">
-                      <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
-                      <div>
-                        <h4 className="font-bold text-rose-950 text-sm">Unable to load report</h4>
-                        <p className="mt-0.5">{reportError}</p>
+                  {/* Render Full A4 Progress Report Card below form once verified */}
+                  {isResultVerified && (
+                    !isExamPublished || isUnpublished ? (
+                      <div className="bg-white rounded-2xl border border-amber-200 p-8 text-center shadow-xs space-y-3">
+                        <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto">
+                          <AlertCircle className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-amber-950 text-base">Results Pending Publication</h4>
+                          <p className="mt-1 text-xs text-amber-800 max-w-md mx-auto">
+                            Results for this examination have not been published yet.
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleVerifyAndFetchResult()}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                      Retry
-                    </button>
-                  </div>
-                ) : reportData?.report ? (
-                  <div className="space-y-4">
-                    <ProgressReportCard
-                      report={reportData.report}
-                      settings={reportData.settings}
-                    />
-                  </div>
-                ) : null
-              )}
+                    ) : fetchingReport ? (
+                      <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs">
+                        <Loader2 className="w-8 h-8 animate-spin text-emerald-800 mx-auto mb-3" />
+                        <h3 className="text-sm font-bold text-slate-800">
+                          Loading Progress Report for {activeChild?.nameEn}...
+                        </h3>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Fetching evaluation results, rankings, and subject assessments.
+                        </p>
+                      </div>
+                    ) : reportError ? (
+                      <div className="bg-white rounded-2xl border border-rose-200 p-6 shadow-xs flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3 text-rose-800 text-xs">
+                          <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                          <div>
+                            <h4 className="font-bold text-rose-950 text-sm">Unable to load report</h4>
+                            <p className="mt-0.5">{reportError}</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleVerifyAndFetchResult()}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          Retry
+                        </button>
+                      </div>
+                    ) : reportData?.report ? (
+                      <div className="space-y-4">
+                        <ProgressReportCard
+                          report={reportData.report}
+                          settings={reportData.settings}
+                        />
+                      </div>
+                    ) : null
+                  )}
+            </div>
+          )}
+
+          {/* Standalone Primary Tab: HIKMA Model Exam */}
+          {activeTab === 'hikma_exam' && (
+            <div className="space-y-4">
+              <HikmaProgressReportCard student={activeChild} />
             </div>
           )}
 

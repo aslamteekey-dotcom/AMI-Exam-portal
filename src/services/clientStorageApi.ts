@@ -248,6 +248,18 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       classesParticipating: ['cls_1', 'cls_2', 'cls_3', 'cls_4', 'cls_5', 'cls_6', 'cls_7', 'cls_8', 'cls_9'],
       passMarkPercentage: 35,
     },
+    {
+      id: 'exam_hikma_model_2026_27',
+      academicYearId: 'ay_2026_2027',
+      nameEn: 'HIKMA Model Exam',
+      nameMl: 'ഹിക്മ മോഡൽ പരീക്ഷ',
+      startDate: '2027-01-10',
+      endDate: '2027-02-28',
+      isPublished: true,
+      status: 'published',
+      classesParticipating: ['cls_1', 'cls_2', 'cls_3', 'cls_4', 'cls_5', 'cls_6', 'cls_7', 'cls_8', 'cls_9'],
+      passMarkPercentage: 35,
+    },
   ];
 
   const users: User[] = [
@@ -1052,6 +1064,27 @@ export class ClientStorageApi {
                 }
               }
             });
+          }
+
+          // Ensure HIKMA Model Exam is always present
+          if (Array.isArray(parsed?.examinations)) {
+            const hasHikma = parsed.examinations.some(
+              (e: any) => e.id === 'exam_hikma_model_2026_27' || e.nameEn === 'HIKMA Model Exam'
+            );
+            if (!hasHikma) {
+              parsed.examinations.push({
+                id: 'exam_hikma_model_2026_27',
+                academicYearId: 'ay_2026_2027',
+                nameEn: 'HIKMA Model Exam',
+                nameMl: 'ഹിക്മ മോഡൽ പരീക്ഷ',
+                startDate: '2027-01-10',
+                endDate: '2027-02-28',
+                isPublished: true,
+                status: 'published',
+                classesParticipating: ['cls_1', 'cls_2', 'cls_3', 'cls_4', 'cls_5', 'cls_6', 'cls_7', 'cls_8', 'cls_9'],
+                passMarkPercentage: 35,
+              });
+            }
           }
 
           return parsed;

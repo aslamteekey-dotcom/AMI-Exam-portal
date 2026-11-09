@@ -34,8 +34,10 @@ import {
   Calendar,
   Trash2,
   HelpCircle,
+  Award,
 } from 'lucide-react';
 import { PlaceholderView } from '../Common/PlaceholderView';
+import { HikmaUnifiedScoreSheet } from './HikmaUnifiedScoreSheet';
 
 export const AdminDashboard: React.FC = () => {
   const { user, fetchWithAuth, lang, t, institutionSettings } = useAuth();
@@ -51,6 +53,7 @@ export const AdminDashboard: React.FC = () => {
     | 'study_materials'
     | 'monitoring'
     | 'reports'
+    | 'hikma_exam'
     | 'audit_logs'
     | 'settings'
     | 'time_table'
@@ -279,6 +282,23 @@ export const AdminDashboard: React.FC = () => {
           >
             <FileText className="w-3.5 h-3.5 shrink-0" />
             <span>{t.navProgressReport}</span>
+          </button>
+        )}
+
+        {(!user?.permissions || user.permissions.marksReports?.view !== false) && (
+          <button
+            onClick={() => setActiveTab('hikma_exam')}
+            className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+              activeTab === 'hikma_exam'
+                ? 'bg-emerald-800 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Award className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+            <span>Hikma Exam</span>
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800">
+              3 Models
+            </span>
           </button>
         )}
 
@@ -542,7 +562,7 @@ export const AdminDashboard: React.FC = () => {
           </div>
 
           {/* Quick Actions & Navigation Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div
               onClick={() => setActiveTab('monitoring')}
               className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs hover:border-emerald-600 cursor-pointer transition"
@@ -566,6 +586,19 @@ export const AdminDashboard: React.FC = () => {
               <h3 className="font-bold text-slate-900 text-sm">Class Progress Reports & Print</h3>
               <p className="text-xs text-slate-500 mt-1">
                 Generate and print authentic A4 Progress Reports with Malayalam & English translations.
+              </p>
+            </div>
+
+            <div
+              onClick={() => setActiveTab('hikma_exam')}
+              className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs hover:border-emerald-600 cursor-pointer transition"
+            >
+              <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-800 flex items-center justify-center mb-3">
+                <Award className="w-5 h-5 text-amber-600" />
+              </div>
+              <h3 className="font-bold text-slate-900 text-sm">HIKMA Model Exam</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Unified 3-model score sheet, rank calculation, and negative marking reporting across School Classes 1–9.
               </p>
             </div>
 
@@ -618,6 +651,11 @@ export const AdminDashboard: React.FC = () => {
 
       {activeTab === 'monitoring' && <MarkMonitoring />}
       {activeTab === 'reports' && <BulkReportsPrint />}
+      {activeTab === 'hikma_exam' && (
+        <div className="space-y-4">
+          <HikmaUnifiedScoreSheet />
+        </div>
+      )}
       {activeTab === 'exams' && <ExamManagement />}
       {activeTab === 'classes_subjects' && <ClassSubjectConfig />}
       {activeTab === 'students' && <StudentManagement />}

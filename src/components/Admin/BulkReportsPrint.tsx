@@ -809,43 +809,41 @@ export const BulkReportsPrint: React.FC = () => {
         </div>
 
         {/* View Mode Switcher Toggle: Result Ledger Table | Score Sheet | Full-Class Cards */}
-        {safeReports.length > 0 && (
-          <div className="pt-4 ml-auto flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
-            <button
-              onClick={() => setViewMode('ledger_table')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
-                viewMode === 'ledger_table'
-                  ? 'bg-emerald-800 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Table className="w-3.5 h-3.5" />
-              Result Ledger Table
-            </button>
-            <button
-              onClick={() => setViewMode('score_sheet')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
-                viewMode === 'score_sheet'
-                  ? 'bg-emerald-800 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              Score Sheet
-            </button>
-            <button
-              onClick={() => setViewMode('bulk_cards')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
-                viewMode === 'bulk_cards'
-                  ? 'bg-emerald-800 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5" />
-              Full-Class Cards ({enrichedReports.length})
-            </button>
-          </div>
-        )}
+        <div className="pt-4 ml-auto flex flex-wrap items-center bg-slate-100 p-1 rounded-xl border border-slate-200 gap-1">
+          <button
+            onClick={() => setViewMode('ledger_table')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
+              viewMode === 'ledger_table'
+                ? 'bg-emerald-800 text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Table className="w-3.5 h-3.5" />
+            Result Ledger Table
+          </button>
+          <button
+            onClick={() => setViewMode('score_sheet')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
+              viewMode === 'score_sheet'
+                ? 'bg-emerald-800 text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            Score Sheet
+          </button>
+          <button
+            onClick={() => setViewMode('bulk_cards')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
+              viewMode === 'bulk_cards'
+                ? 'bg-emerald-800 text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5" />
+            Full-Class Cards ({enrichedReports.length})
+          </button>
+        </div>
       </div>
 
       {/* Main Content Area */}

@@ -22,7 +22,9 @@ import {
   RotateCcw,
   ShieldCheck,
   CheckCircle2,
+  Award,
 } from 'lucide-react';
+import { Student } from '../../types';
 
 export const MarkMonitoring: React.FC = () => {
   const { fetchWithAuth, lang, t, user } = useAuth();
@@ -33,6 +35,7 @@ export const MarkMonitoring: React.FC = () => {
   const [selectedExamId, setSelectedExamId] = useState('');
   const [matrix, setMatrix] = useState<any[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [filterClass, setFilterClass] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [search, setSearch] = useState('');
@@ -49,14 +52,17 @@ export const MarkMonitoring: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [resExams, resCls] = await Promise.all([
+      const [resExams, resCls, resStudents] = await Promise.all([
         fetchWithAuth('/api/examinations'),
         fetchWithAuth('/api/classes'),
+        fetchWithAuth('/api/students'),
       ]);
       const exams = await resExams.json();
       const cls = await resCls.json();
+      const stData = await resStudents.json();
       setExaminations(Array.isArray(exams) ? exams : []);
       setClasses(Array.isArray(cls) ? cls : []);
+      setAllStudents(Array.isArray(stData) ? stData : []);
 
       const activeExamId = selectedExamId || exams[0]?.id;
       if (activeExamId) {
