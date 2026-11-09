@@ -5,6 +5,7 @@ import {
   Student,
   ALL_STANDARD_CLASSES,
   sortStudentsBoysFirst,
+  sortStudentsGirlsFirst,
   determineStudentGender,
   HIKMA_EXAM_ID,
 } from '../../types';
@@ -16,6 +17,10 @@ import {
   saveStudentHikmaRegNo,
   batchSaveHikmaRegNumbers,
   isStudentInSchoolClass,
+  isStudentHikmaParticipating,
+  getHikmaExcludedStudentIds,
+  getHikmaSavedRegNumbers,
+  setHikmaStudentParticipation,
 } from '../../services/hikmaExamService';
 import { HikmaUnifiedScoreSheet } from './HikmaUnifiedScoreSheet';
 import {
@@ -61,6 +66,7 @@ export const HikmaAdminModule: React.FC = () => {
 
   // Registration state
   const [regMap, setRegMap] = useState<Record<string, string>>({});
+  const [participatingMap, setParticipatingMap] = useState<Record<string, boolean>>({});
   const [savedRegStatus, setSavedRegStatus] = useState<Record<string, 'saved' | 'saving' | 'dirty'>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [isBatchSaving, setIsBatchSaving] = useState(false);
@@ -72,12 +78,13 @@ export const HikmaAdminModule: React.FC = () => {
     [selectedClassId]
   );
   const gradeNum = selectedClass ? selectedClass.numericGrade : 5;
-  const [seqPrefix, setSeqPrefix] = useState(`HK${gradeNum}`);
+  const [seqPrefix, setSeqPrefix] = useState(`2609${gradeNum}`);
   const [seqStart, setSeqStart] = useState('101');
+  const [overwriteExisting, setOverwriteExisting] = useState(false);
 
   useEffect(() => {
-    setSeqPrefix(`HK${gradeNum}`);
-    setSeqStart(`${gradeNum}01`);
+    setSeqPrefix(`2609${gradeNum}`);
+    setSeqStart('101');
   }, [gradeNum]);
 
   // Exam Settings state
@@ -163,29 +170,52 @@ export const HikmaAdminModule: React.FC = () => {
   }, []);
 
   // Filter students belonging STRICTLY to the chosen School Class (1 to 9) using schoolClass attribute
+  // Official KMEB / HIKMA Sorting: Girls First (A-Z), then Boys (A-Z)
   const classStudents = useMemo(() => {
     const list = students.filter(s => isStudentInSchoolClass(s, selectedClassId, selectedClass));
+    const sorted = sortStudentsGirlsFirst(list);
 
-    return sortStudentsBoysFirst(list).map((s, idx) => ({
+    return sorted.map((s, idx) => ({
       ...s,
       rollNo: idx + 1,
       gender: determineStudentGender(s),
     }));
   }, [students, selectedClassId, selectedClass]);
 
-  // Synchronize regMap when classStudents load or change
+  // Synchronize regMap and participatingMap when classStudents load or change
   useEffect(() => {
+    const excluded = getHikmaExcludedStudentIds();
+    const savedRegs = getHikmaSavedRegNumbers();
     const map: Record<string, string> = {};
+    const partMap: Record<string, boolean> = {};
+
     classStudents.forEach(st => {
+      // Find existing saved registration number from all available sources
       const existingReg =
         st.hikmaRegNo ||
         st.examRegisterNumbers?.[HIKMA_EXAM_ID] ||
         st.examRegisterNos?.[HIKMA_EXAM_ID] ||
+        savedRegs[st.id] ||
+        (st.admissionNo ? savedRegs[st.admissionNo] : '') ||
         st.regNo ||
         '';
       map[st.id] = existingReg;
+
+      const isPart = isStudentHikmaParticipating(st, excluded);
+      partMap[st.id] = isPart;
     });
-    setRegMap(prev => ({ ...map, ...prev }));
+
+    setRegMap(prev => {
+      const merged: Record<string, string> = { ...map };
+      // Preserve user typed edits during current session
+      Object.keys(prev).forEach(id => {
+        if (prev[id] && prev[id].trim()) {
+          merged[id] = prev[id];
+        }
+      });
+      return merged;
+    });
+    setParticipatingMap(prev => ({ ...partMap, ...prev }));
   }, [classStudents]);
 
   // Search filtered student list
@@ -202,19 +232,36 @@ export const HikmaAdminModule: React.FC = () => {
     );
   }, [classStudents, searchQuery, regMap]);
 
-  // Registration metrics
+  // Registration metrics with participating & excluded counts
+  const participatingStudents = useMemo(() => {
+    return classStudents.filter(s => participatingMap[s.id] !== false);
+  }, [classStudents, participatingMap]);
+
+  const excludedCount = classStudents.length - participatingStudents.length;
+
   const registeredCount = useMemo(() => {
-    return classStudents.filter(s => Boolean(String(regMap[s.id] || '').trim())).length;
-  }, [classStudents, regMap]);
+    return participatingStudents.filter(s => Boolean(String(regMap[s.id] || '').trim())).length;
+  }, [participatingStudents, regMap]);
 
-  const pendingCount = classStudents.length - registeredCount;
+  const pendingCount = Math.max(0, participatingStudents.length - registeredCount);
 
-  // Single student Reg No save
+  // Toggle single student participation
+  const handleToggleParticipation = (studentId: string, current: boolean) => {
+    const nextVal = !current;
+    setParticipatingMap(prev => ({ ...prev, [studentId]: nextVal }));
+    if (!nextVal) {
+      setRegMap(prev => ({ ...prev, [studentId]: '' }));
+    }
+  };
+
+  // Single student Reg No & Participation save
   const handleSaveSingleRegNo = async (student: Student) => {
     const val = regMap[student.id] || '';
+    const isPart = participatingMap[student.id] !== false;
     setSavedRegStatus(prev => ({ ...prev, [student.id]: 'saving' }));
     try {
-      await saveStudentHikmaRegNo(student.id, student.admissionNo, val);
+      await setHikmaStudentParticipation(student.id, isPart, student.admissionNo);
+      await saveStudentHikmaRegNo(student.id, student.admissionNo, isPart ? val : '');
       setSavedRegStatus(prev => ({ ...prev, [student.id]: 'saved' }));
       setTimeout(() => {
         setSavedRegStatus(prev => {
@@ -229,13 +276,15 @@ export const HikmaAdminModule: React.FC = () => {
     }
   };
 
-  // Batch Save all Registration Numbers
+  // Batch Save all Registration Numbers & Participation Statuses
   const handleSaveAllRegNumbers = async () => {
     setIsBatchSaving(true);
     setBatchSaveMessage(null);
     try {
-      await batchSaveHikmaRegNumbers(regMap, classStudents);
-      setBatchSaveMessage(`Successfully saved registration numbers for all ${classStudents.length} students.`);
+      await batchSaveHikmaRegNumbers(regMap, classStudents, participatingMap);
+      setBatchSaveMessage(
+        `Successfully saved registration numbers & exam participation for ${classStudents.length} students.`
+      );
       setTimeout(() => setBatchSaveMessage(null), 4000);
     } catch (e) {
       console.error('Failed to batch save reg numbers:', e);
@@ -245,20 +294,91 @@ export const HikmaAdminModule: React.FC = () => {
     }
   };
 
-  // Auto-generate sequential numbers for this class
+  // Auto-generate sequential numbers for participating students without hyphens
+  // Supports Overwrite existing option (force regeneration) vs Safe fill (empty fields only)
   const handleAutoGenerateSequence = () => {
     let startInt = parseInt(seqStart, 10);
     if (isNaN(startInt)) startInt = parseInt(`${gradeNum}01`, 10) || 101;
 
+    const cleanPrefix = (seqPrefix || '').trim();
     const newMap: Record<string, string> = { ...regMap };
+    let assignedCount = 0;
+    let preservedCount = 0;
+    let skippedCount = 0;
+
+    // If NOT overwriting, gather all existing registration numbers in this class to avoid duplicates
+    const assignedNumbers = new Set<string>();
+    if (!overwriteExisting) {
+      classStudents.forEach(st => {
+        const existing = String(
+          regMap[st.id] ||
+          st.hikmaRegNo ||
+          st.examRegisterNumbers?.[HIKMA_EXAM_ID] ||
+          ''
+        ).trim();
+        if (existing) {
+          assignedNumbers.add(existing);
+        }
+      });
+    }
+
     classStudents.forEach(st => {
-      const generated = `${seqPrefix ? `${seqPrefix}-` : ''}${startInt}`;
+      const isParticipating = participatingMap[st.id] !== false;
+      if (!isParticipating) {
+        // Excluded student - do not assign auto-generated registration number
+        newMap[st.id] = '';
+        skippedCount++;
+        return;
+      }
+
+      // If NOT overwriting, preserve existing registration number
+      if (!overwriteExisting) {
+        const existingVal = String(
+          regMap[st.id] ||
+          st.hikmaRegNo ||
+          st.examRegisterNumbers?.[HIKMA_EXAM_ID] ||
+          ''
+        ).trim();
+
+        if (existingVal) {
+          // STRICT PROTECTION: Preserve existing registration number without altering or overwriting
+          newMap[st.id] = existingVal;
+          preservedCount++;
+          return;
+        }
+
+        // Only fill empty registration fields
+        // Ensure the generated number does not collide with an already assigned number
+        while (assignedNumbers.has(`${cleanPrefix}${startInt}`)) {
+          startInt++;
+        }
+      }
+
+      // Assign sequence number
+      const generated = `${cleanPrefix}${startInt}`;
       newMap[st.id] = generated;
+      if (!overwriteExisting) {
+        assignedNumbers.add(generated);
+      }
       startInt++;
+      assignedCount++;
     });
 
     setRegMap(newMap);
-    setBatchSaveMessage(`Generated sequential numbers ${seqPrefix ? `${seqPrefix}-` : ''}${seqStart} onwards. Click "Save All" to commit.`);
+    if (overwriteExisting) {
+      setBatchSaveMessage(
+        `Fill Sequence: Regenerated & overwritten all ${assignedCount} registration numbers from ${cleanPrefix}${seqStart}${
+          skippedCount > 0 ? ` (${skippedCount} excluded skipped)` : ''
+        }. Click "Save All" to commit.`
+      );
+    } else {
+      setBatchSaveMessage(
+        `Fill Sequence: Filled ${assignedCount} empty fields${
+          preservedCount > 0 ? ` (${preservedCount} existing numbers strictly preserved)` : ''
+        }${skippedCount > 0 ? `, ${skippedCount} excluded skipped` : ''}. Click "Save All" to commit.`
+      );
+    }
+    setTimeout(() => setBatchSaveMessage(null), 5000);
   };
 
   // Exam Settings update
@@ -374,46 +494,63 @@ export const HikmaAdminModule: React.FC = () => {
       {activeSubTab === 'registration' && (
         <div className="space-y-4">
           {/* Summary & Helper Strip */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between">
               <div>
                 <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
-                  Total Students
+                  Total Class
                 </span>
-                <div className="text-2xl font-black text-slate-900 font-mono mt-0.5">
+                <div className="text-xl sm:text-2xl font-black text-slate-900 font-mono mt-0.5">
                   {classStudents.length}
                 </div>
               </div>
-              <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center">
-                <Users className="w-5 h-5" />
+              <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center">
+                <Users className="w-4 h-4" />
               </div>
             </div>
 
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between">
+            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between">
+              <div>
+                <span className="text-[11px] font-bold text-indigo-700 uppercase tracking-wide">
+                  Writing Exam
+                </span>
+                <div className="text-xl sm:text-2xl font-black text-indigo-900 font-mono mt-0.5">
+                  {participatingStudents.length}
+                </div>
+                {excludedCount > 0 && (
+                  <div className="text-[10px] text-amber-600 font-semibold">{excludedCount} excluded</div>
+                )}
+              </div>
+              <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between">
               <div>
                 <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">
-                  Registered Numbers
+                  Registered
                 </span>
-                <div className="text-2xl font-black text-emerald-800 font-mono mt-0.5">
+                <div className="text-xl sm:text-2xl font-black text-emerald-800 font-mono mt-0.5">
                   {registeredCount}
                 </div>
               </div>
-              <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-800 flex items-center justify-center">
-                <CheckCircle2 className="w-5 h-5" />
+              <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-800 flex items-center justify-center">
+                <Hash className="w-4 h-4" />
               </div>
             </div>
 
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between">
+            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between">
               <div>
                 <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wide">
-                  Pending Numbers
+                  Pending
                 </span>
-                <div className="text-2xl font-black text-amber-800 font-mono mt-0.5">
+                <div className="text-xl sm:text-2xl font-black text-amber-800 font-mono mt-0.5">
                   {pendingCount}
                 </div>
               </div>
-              <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-800 flex items-center justify-center">
-                <AlertCircle className="w-5 h-5" />
+              <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-800 flex items-center justify-center">
+                <AlertCircle className="w-4 h-4" />
               </div>
             </div>
           </div>
@@ -421,7 +558,7 @@ export const HikmaAdminModule: React.FC = () => {
           {/* Action Toolbar: Auto-generator & Search */}
           <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs space-y-3">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-              {/* Quick Sequence Generator */}
+              {/* Quick Sequence Generator without hyphen */}
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="font-bold text-slate-700 flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-amber-600" />
@@ -432,9 +569,9 @@ export const HikmaAdminModule: React.FC = () => {
                   <input
                     type="text"
                     value={seqPrefix}
-                    onChange={e => setSeqPrefix(e.target.value.toUpperCase())}
-                    className="w-16 font-mono text-xs font-bold text-slate-900 bg-transparent focus:outline-none"
-                    placeholder="HK5"
+                    onChange={e => setSeqPrefix(e.target.value)}
+                    className="w-20 font-mono text-xs font-bold text-slate-900 bg-transparent focus:outline-none"
+                    placeholder="e.g. 26092"
                   />
                 </div>
                 <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
@@ -450,10 +587,37 @@ export const HikmaAdminModule: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleAutoGenerateSequence}
-                  className="px-3 py-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 transition cursor-pointer"
+                  className={`px-3.5 py-1.5 text-xs font-bold rounded-lg border transition cursor-pointer flex items-center gap-1 shadow-2xs ${
+                    overwriteExisting
+                      ? 'text-amber-900 bg-amber-50 hover:bg-amber-100 border-amber-300'
+                      : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border-emerald-300'
+                  }`}
+                  title={
+                    overwriteExisting
+                      ? 'Forcibly regenerates and overwrites all registration numbers in sequence for participating students.'
+                      : 'Directly joins prefix and start number without hyphens (e.g. 26092101). Only fills empty fields, strictly preserving existing numbers and skipping excluded students.'
+                  }
                 >
-                  Fill Sequence
+                  <span>{overwriteExisting ? 'Force Overwrite Sequence' : 'Fill Sequence'}</span>
                 </button>
+                <label className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 select-none cursor-pointer hover:bg-slate-100 transition shadow-2xs">
+                  <input
+                    type="checkbox"
+                    checked={overwriteExisting}
+                    onChange={e => setOverwriteExisting(e.target.checked)}
+                    className="w-3.5 h-3.5 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer"
+                  />
+                  <span className={overwriteExisting ? 'font-bold text-amber-900' : 'font-medium text-slate-700'}>
+                    Overwrite existing
+                  </span>
+                </label>
+                <span className="text-[10px] text-slate-500 hidden xl:inline-block">
+                  {overwriteExisting ? (
+                    <span className="text-amber-700 font-semibold">⚠️ Will overwrite ALL existing numbers in sequence for participating students</span>
+                  ) : (
+                    <span>(No hyphen e.g. {seqPrefix || '26092'}{seqStart || '101'} • Only fills empty fields • Preserves existing numbers)</span>
+                  )}
+                </span>
               </div>
 
               {/* Search & Save All */}
@@ -511,6 +675,9 @@ export const HikmaAdminModule: React.FC = () => {
                     <tr className="bg-slate-50 text-slate-700 border-b border-slate-200 font-bold uppercase text-[10px] tracking-wider select-none">
                       <th className="py-2.5 px-3 text-center w-12 border-r border-slate-200">Roll</th>
                       <th className="py-2.5 px-3 w-16 border-r border-slate-200">Adm No</th>
+                      <th className="py-2.5 px-3 text-center w-28 border-r border-slate-200" title="Un-tick to exclude student from HIKMA Exam">
+                        Writing Exam
+                      </th>
                       <th className="py-2.5 px-4 min-w-[200px] border-r border-slate-200">Student Name</th>
                       <th className="py-2.5 px-3 text-center w-20 border-r border-slate-200">Gender</th>
                       <th className="py-2.5 px-4 min-w-[220px] border-r border-slate-200">
@@ -522,6 +689,7 @@ export const HikmaAdminModule: React.FC = () => {
                   <tbody className="divide-y divide-slate-100">
                     {filteredStudents.map((st, idx) => {
                       const currentVal = regMap[st.id] ?? '';
+                      const isParticipating = participatingMap[st.id] !== false;
                       const isSaved = savedRegStatus[st.id] === 'saved';
                       const isSaving = savedRegStatus[st.id] === 'saving';
                       const hasValue = Boolean(String(currentVal).trim());
@@ -529,8 +697,12 @@ export const HikmaAdminModule: React.FC = () => {
                       return (
                         <tr
                           key={st.id}
-                          className={`hover:bg-slate-50/80 transition-colors ${
-                            idx % 2 === 1 ? 'bg-slate-50/30' : 'bg-white'
+                          className={`transition-colors ${
+                            !isParticipating
+                              ? 'bg-amber-50/25 hover:bg-amber-50/40 opacity-80'
+                              : idx % 2 === 1
+                              ? 'bg-slate-50/30 hover:bg-slate-50/80'
+                              : 'bg-white hover:bg-slate-50/80'
                           }`}
                         >
                           {/* Roll */}
@@ -543,11 +715,51 @@ export const HikmaAdminModule: React.FC = () => {
                             {st.admissionNo || '—'}
                           </td>
 
+                          {/* Participating Checkbox */}
+                          <td className="py-2 px-3 text-center border-r border-slate-200">
+                            <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={isParticipating}
+                                onChange={() => handleToggleParticipation(st.id, isParticipating)}
+                                className="w-4 h-4 rounded text-emerald-700 focus:ring-emerald-600 focus:ring-offset-0 border-slate-300 cursor-pointer"
+                              />
+                              <span
+                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition ${
+                                  isParticipating
+                                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                    : 'bg-rose-50 text-rose-800 border border-rose-200'
+                                }`}
+                              >
+                                {isParticipating ? 'Writing' : 'Excluded'}
+                              </span>
+                            </label>
+                          </td>
+
                           {/* Student Name */}
                           <td className="py-2 px-4 border-r border-slate-200">
-                            <div className="font-bold text-slate-900">{st.nameEn}</div>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`font-bold ${
+                                  isParticipating ? 'text-slate-900' : 'text-slate-500 line-through'
+                                }`}
+                              >
+                                {st.nameEn}
+                              </span>
+                              {!isParticipating && (
+                                <span className="text-[9px] font-bold uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.2 rounded-sm shrink-0">
+                                  Excluded
+                                </span>
+                              )}
+                            </div>
                             {st.nameMl && (
-                              <div className="text-[10px] text-slate-500 font-ml">{st.nameMl}</div>
+                              <div
+                                className={`text-[10px] font-ml ${
+                                  isParticipating ? 'text-slate-500' : 'text-slate-400'
+                                }`}
+                              >
+                                {st.nameMl}
+                              </div>
                             )}
                           </td>
 
@@ -566,30 +778,37 @@ export const HikmaAdminModule: React.FC = () => {
 
                           {/* Reg No Input Field */}
                           <td className="py-2 px-4 border-r border-slate-200">
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="text"
-                                value={currentVal}
-                                onChange={e => {
-                                  const val = e.target.value;
-                                  setRegMap(prev => ({ ...prev, [st.id]: val }));
-                                }}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') handleSaveSingleRegNo(st);
-                                }}
-                                placeholder={`e.g. HK${gradeNum}-${st.rollNo + 100}`}
-                                className={`w-full px-3 py-1.5 text-xs font-mono font-bold rounded-lg border transition ${
-                                  hasValue
-                                    ? 'border-emerald-300 bg-emerald-50/40 text-emerald-950 focus:bg-white focus:border-emerald-600'
-                                    : 'border-slate-200 bg-slate-50 text-slate-900 focus:bg-white focus:border-emerald-600'
-                                } focus:outline-none`}
-                              />
-                              {hasValue && (
-                                <span className="text-[10px] text-emerald-700 font-bold bg-emerald-100 px-1.5 py-0.5 rounded shrink-0">
-                                  Set
-                                </span>
-                              )}
-                            </div>
+                            {isParticipating ? (
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={currentVal}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    setRegMap(prev => ({ ...prev, [st.id]: val }));
+                                  }}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') handleSaveSingleRegNo(st);
+                                  }}
+                                  placeholder={`e.g. ${seqPrefix || '26092'}${st.rollNo + 100}`}
+                                  className={`w-full px-3 py-1.5 text-xs font-mono font-bold rounded-lg border transition ${
+                                    hasValue
+                                      ? 'border-emerald-300 bg-emerald-50/40 text-emerald-950 focus:bg-white focus:border-emerald-600'
+                                      : 'border-slate-200 bg-slate-50 text-slate-900 focus:bg-white focus:border-emerald-600'
+                                  } focus:outline-none`}
+                                />
+                                {hasValue && (
+                                  <span className="text-[10px] text-emerald-700 font-bold bg-emerald-100 px-1.5 py-0.5 rounded shrink-0">
+                                    Set
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="text-[11px] font-mono text-slate-400 italic px-3 py-1.5 bg-slate-50 rounded-lg border border-slate-200/80 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block"></span>
+                                <span>— Skipped (Not Writing Exam) —</span>
+                              </div>
+                            )}
                           </td>
 
                           {/* Action Button */}

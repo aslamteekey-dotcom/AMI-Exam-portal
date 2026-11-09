@@ -480,12 +480,32 @@ export async function saveStudentHikmaRegNo(
 }
 
 /**
- * Batch saves multiple student registration numbers for HIKMA Exam.
+ * Batch saves multiple student registration numbers and optional participation flags for HIKMA Exam.
  */
 export async function batchSaveHikmaRegNumbers(
   regMap: Record<string, string>,
-  students: Student[]
+  students: Student[],
+  participationMap?: Record<string, boolean>
 ): Promise<void> {
+  // If participationMap is provided, also sync the excluded set
+  if (participationMap) {
+    try {
+      const set = getHikmaExcludedStudentIds();
+      Object.entries(participationMap).forEach(([sId, isPart]) => {
+        const target = students.find(s => s.id === sId || s.admissionNo === sId);
+        const adm = target?.admissionNo;
+        if (isPart) {
+          set.delete(String(sId));
+          if (adm) set.delete(String(adm));
+        } else {
+          set.add(String(sId));
+          if (adm) set.add(String(adm));
+        }
+      });
+      localStorage.setItem(EXCLUDED_STORAGE_KEY, JSON.stringify(Array.from(set)));
+    } catch {}
+  }
+
   // Update localStorage 'madrasa_students'
   try {
     const raw = localStorage.getItem('madrasa_students');
@@ -493,19 +513,22 @@ export async function batchSaveHikmaRegNumbers(
       const list: Student[] = JSON.parse(raw);
       if (Array.isArray(list)) {
         const updated = list.map(st => {
-          const reg = regMap[st.id] ?? regMap[st.admissionNo];
+          const reg = regMap[st.id] ?? (st.admissionNo ? regMap[st.admissionNo] : undefined);
+          const isPart = participationMap?.[st.id] ?? (st.admissionNo && participationMap ? participationMap[st.admissionNo] : undefined);
+
+          let updatedSt = { ...st };
           if (reg !== undefined) {
             const clean = String(reg).trim();
-            return {
-              ...st,
-              hikmaRegNo: clean,
-              examRegisterNumbers: {
-                ...(st.examRegisterNumbers || {}),
-                [HIKMA_EXAM_ID]: clean,
-              },
+            updatedSt.hikmaRegNo = clean;
+            updatedSt.examRegisterNumbers = {
+              ...(st.examRegisterNumbers || {}),
+              [HIKMA_EXAM_ID]: clean,
             };
           }
-          return st;
+          if (isPart !== undefined) {
+            updatedSt.hikmaParticipating = isPart;
+          }
+          return updatedSt;
         });
         localStorage.setItem('madrasa_students', JSON.stringify(updated));
         window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: updated }));
@@ -527,26 +550,152 @@ export async function batchSaveHikmaRegNumbers(
 
   // Update in Firestore
   if (db && !isFirestoreQuotaExhausted()) {
-    const promises = Object.entries(regMap).map(async ([sId, reg]) => {
-      const clean = String(reg).trim();
+    const allIds = new Set<string>([
+      ...Object.keys(regMap),
+      ...(participationMap ? Object.keys(participationMap) : []),
+    ]);
+
+    const promises = Array.from(allIds).map(async sId => {
       const target = students.find(s => s.id === sId || s.admissionNo === sId);
       const actualId = target?.id || sId;
+      const reg = regMap[sId] ?? (target?.id ? regMap[target.id] : undefined);
+      const isPart = participationMap?.[sId] ?? (target?.id && participationMap ? participationMap[target.id] : undefined);
+
+      const payload: Record<string, any> = {
+        updatedAt: new Date().toISOString(),
+      };
+      if (reg !== undefined) {
+        const clean = String(reg).trim();
+        payload.hikmaRegNo = clean;
+        payload[`examRegisterNumbers.${HIKMA_EXAM_ID}`] = clean;
+      }
+      if (isPart !== undefined) {
+        payload.hikmaParticipating = isPart;
+      }
+
       try {
         const docRef = doc(db, 'students', actualId);
-        await setDoc(
-          docRef,
-          {
-            hikmaRegNo: clean,
-            [`examRegisterNumbers.${HIKMA_EXAM_ID}`]: clean,
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
+        await setDoc(docRef, payload, { merge: true });
       } catch (e) {
-        console.warn(`Failed to sync reg no for student ${actualId}:`, e);
+        console.warn(`Failed to sync student ${actualId}:`, e);
       }
     });
     await Promise.allSettled(promises);
+  }
+
+  window.dispatchEvent(new CustomEvent('hikma_exam_updated'));
+}
+
+/**
+ * Returns currently saved HIKMA registration numbers from dedicated localStorage map.
+ */
+export function getHikmaSavedRegNumbers(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem('madrasa_hikma_reg_numbers');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+    }
+  } catch {}
+  return {};
+}
+
+const EXCLUDED_STORAGE_KEY = 'madrasa_hikma_excluded_students';
+
+/**
+ * Returns set of student IDs or admission numbers that have been opted out / excluded from HIKMA Exam.
+ */
+export function getHikmaExcludedStudentIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(EXCLUDED_STORAGE_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        return new Set(arr.map(String));
+      }
+    }
+  } catch {}
+  return new Set();
+}
+
+/**
+ * Check if a student is participating in HIKMA Exam.
+ * By default, returns true (ticked by default).
+ * Returns false only if explicitly opted out via student.hikmaParticipating === false or in excluded set.
+ */
+export function isStudentHikmaParticipating(
+  student: Student,
+  excludedSet?: Set<string>
+): boolean {
+  if (!student) return false;
+  if (student.hikmaParticipating === false) return false;
+  if ((student as any).hikmaOptOut === true) return false;
+
+  const set = excludedSet || getHikmaExcludedStudentIds();
+  if (student.id && set.has(String(student.id))) return false;
+  if (student.admissionNo && set.has(String(student.admissionNo))) return false;
+
+  return true;
+}
+
+/**
+ * Updates single student's HIKMA Exam participation status (opt-in / opt-out).
+ */
+export async function setHikmaStudentParticipation(
+  studentId: string,
+  participating: boolean,
+  admissionNo?: string
+): Promise<void> {
+  // 1. Update excluded set in localStorage
+  try {
+    const set = getHikmaExcludedStudentIds();
+    if (participating) {
+      set.delete(String(studentId));
+      if (admissionNo) set.delete(String(admissionNo));
+    } else {
+      set.add(String(studentId));
+      if (admissionNo) set.add(String(admissionNo));
+    }
+    localStorage.setItem(EXCLUDED_STORAGE_KEY, JSON.stringify(Array.from(set)));
+  } catch {}
+
+  // 2. Update student in 'madrasa_students'
+  try {
+    const raw = localStorage.getItem('madrasa_students');
+    if (raw) {
+      const list: Student[] = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        const updated = list.map(st => {
+          if (st.id === studentId || (admissionNo && st.admissionNo === admissionNo)) {
+            return {
+              ...st,
+              hikmaParticipating: participating,
+            };
+          }
+          return st;
+        });
+        localStorage.setItem('madrasa_students', JSON.stringify(updated));
+        window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: updated }));
+      }
+    }
+  } catch {}
+
+  // 3. Update in Firestore
+  if (db && !isFirestoreQuotaExhausted()) {
+    try {
+      await setDoc(
+        doc(db, 'students', studentId),
+        {
+          hikmaParticipating: participating,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    } catch (e) {
+      console.warn(`Failed to update participation for student ${studentId}:`, e);
+    }
   }
 
   window.dispatchEvent(new CustomEvent('hikma_exam_updated'));

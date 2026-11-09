@@ -373,6 +373,7 @@ export const StudentManagement: React.FC = () => {
           admissionNo: trimmedAdmission,
           rollNo: Number(formData.rollNo) || editingStudent.rollNo,
           nameEn: trimmedNameEn,
+          name: trimmedNameEn,
           nameMl: formData.nameMl.trim().replace(/\s+/g, ' ') || trimmedNameEn,
           classId: formData.classId,
           parentNameEn: (formData.parentNameEn || '').trim().replace(/\s+/g, ' '),
@@ -401,58 +402,7 @@ export const StudentManagement: React.FC = () => {
           updateData
         );
 
-        // Direct in-memory mutation
-        Object.assign(editingStudent, updateData);
-
-        // 2. Re-sequence class roll numbers strictly (Boys A-Z first: 1, 2, 3..., then Girls A-Z)
-        // NEVER auto-recalculate or overwrite existing exam register numbers!
-        const targetClassId = formData.classId;
-        const currentClassStudents = students
-          .filter(s => s.classId === targetClassId && s.id !== editingStudent.id && s.admissionNo !== editingStudent.admissionNo)
-          .concat([{ ...editingStudent, ...updateData } as Student]);
-
-        const resequencedClass = assignClassSequentialRollNumbers(currentClassStudents, targetExamKey);
-
-        // Retain explicitly edited examRegNo for the edited student
-        const finalResequencedClass = resequencedClass.map(st => {
-          if (st.id === editingStudent.id || (editingStudent.admissionNo && st.admissionNo === editingStudent.admissionNo)) {
-            return {
-              ...st,
-              ...updateData,
-              examRegNo: trimmedExamReg,
-              regNo: trimmedExamReg,
-              examRegisterNos: updatedExamRegNos,
-              examRegisterNumbers: updatedExamRegNos,
-              isRegNoLocked: true,
-              updatedAt: new Date().toISOString(),
-            };
-          }
-          return st;
-        });
-
-        // CRITICAL FIX: Only send edited student to Firebase. NEVER loop or write other class students to Firestore!
-        const resequencedMap = new Map(finalResequencedClass.map(s => [s.id, s]));
-
-        // Immediately update React state so the card / directory updates instantly without requiring a page reload
-        const updatedAll = students.map(s => {
-          if (s.id === editingStudent.id || (editingStudent.admissionNo && s.admissionNo === editingStudent.admissionNo)) {
-            return {
-              ...s,
-              ...updateData,
-              examRegNo: trimmedExamReg,
-              regNo: trimmedExamReg,
-              examRegisterNos: updatedExamRegNos,
-              examRegisterNumbers: updatedExamRegNos,
-              isRegNoLocked: true,
-            };
-          }
-          if (resequencedMap.has(s.id)) {
-            return resequencedMap.get(s.id)!;
-          }
-          return s;
-        });
-        setStudents(updatedAll);
-
+        // 2. Perform API call to save student record
         const res = await fetchWithAuth(`/api/students/${editingStudent.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -463,17 +413,66 @@ export const StudentManagement: React.FC = () => {
           throw new Error(err.error || 'Failed to update student');
         }
 
+        // 3. Obtain returned data from API response
+        const returnedStudent = await res.json().catch(() => null);
+
+        // 4. Construct complete updated student object
+        const finalUpdatedStudent: Student = {
+          ...editingStudent,
+          ...updateData,
+          ...(returnedStudent || {}),
+          nameEn: trimmedNameEn,
+          name: trimmedNameEn,
+          nameMl: formData.nameMl.trim().replace(/\s+/g, ' ') || trimmedNameEn,
+          admissionNo: trimmedAdmission,
+          examRegNo: trimmedExamReg,
+          regNo: trimmedExamReg,
+          examRegisterNos: updatedExamRegNos,
+          examRegisterNumbers: updatedExamRegNos,
+          gender: normalizeGender(formData.gender),
+          isRegNoLocked: true,
+          updatedAt: new Date().toISOString(),
+        };
+
+        // 5. Direct state synchronization:
+        // Immediately update main students state array with the new returned data using a new array reference
+        // (prev.map) so React triggers an immediate re-render and reflects the updated name in the list.
+        let finalStudentsList: Student[] = [];
+        setStudents(prev => {
+          const targetId = finalUpdatedStudent.id || editingStudent.id;
+          const targetAdm = (finalUpdatedStudent.admissionNo || editingStudent.admissionNo || '').trim().toLowerCase();
+
+          const mapped = prev.map(s => {
+            const isMatch =
+              s.id === targetId ||
+              s.id === editingStudent.id ||
+              (targetAdm && (s.admissionNo?.toString() || '').trim().toLowerCase() === targetAdm);
+            return isMatch ? { ...s, ...finalUpdatedStudent } : s;
+          });
+
+          // Resequence roll numbers within the class (Boys A-Z first: 1, 2, 3..., then Girls A-Z)
+          const resequenced = assignClassSequentialRollNumbers(mapped, activeExamId);
+          finalStudentsList = resequenced;
+          return resequenced;
+        });
+
+        // Close modal and reset editing state
+        setShowAddModal(false);
+        setEditingStudent(null);
+
         // Broadcast updates for real-time reflection across other tabs (marks entry, parent portal, etc.)
-        window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: updatedAll }));
+        window.dispatchEvent(new CustomEvent('madrasa_students_updated', { detail: finalStudentsList }));
         window.dispatchEvent(new CustomEvent('madrasa_marks_updated'));
 
         logAuditEvent({
           action: 'STUDENT_UPDATED',
-          details: `User ${user?.name || 'Administrator'} updated student ${editingStudent.nameEn} (Adm: ${editingStudent.admissionNo}, Gender: ${formData.gender}, RegNo: ${trimmedExamReg || 'N/A'}, Class: ${formData.classId}).`,
+          details: `User ${user?.name || 'Administrator'} updated student ${finalUpdatedStudent.nameEn} (Adm: ${finalUpdatedStudent.admissionNo}, Gender: ${formData.gender}, RegNo: ${trimmedExamReg || 'N/A'}, Class: ${formData.classId}).`,
           currentUser: user,
           recordType: 'student',
-          recordId: editingStudent.id,
+          recordId: finalUpdatedStudent.id,
         }).catch(e => console.warn('Audit log error:', e));
+
+        return;
       } else {
         const studentId = trimmedAdmission;
         const updatedExamRegNos = trimmedExamReg ? { [targetExamKey]: trimmedExamReg } : undefined;

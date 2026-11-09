@@ -9,12 +9,14 @@ import {
   HIKMA_MODELS,
   calculateHikmaStudentScore,
   sortStudentsBoysFirst,
+  sortStudentsGirlsFirst,
   determineStudentGender,
 } from '../../types';
 import {
   getHikmaClassRecord,
   saveHikmaClassRecord,
   isStudentInSchoolClass,
+  isStudentHikmaParticipating,
 } from '../../services/hikmaExamService';
 import {
   Save,
@@ -65,10 +67,15 @@ export const HikmaMarkEntryView: React.FC<Props> = ({
     return classes.find(c => c.id === classId) || classes[0] || null;
   }, [classes, classId]);
 
-  // Sort students sequential roll numbers, boys first, strictly filtered by School Class
+  // Sort students sequential roll numbers, strictly filtered by School Class and Participating status (Girls First, then Boys)
   const sortedStudents = useMemo(() => {
-    const list = students.filter(s => isStudentInSchoolClass(s, classId, activeClass));
-    return sortStudentsBoysFirst(list).map((s, idx) => ({
+    const list = students.filter(
+      s => isStudentInSchoolClass(s, classId, activeClass) && isStudentHikmaParticipating(s)
+    );
+
+    const sorted = sortStudentsGirlsFirst(list);
+
+    return sorted.map((s, idx) => ({
       ...s,
       rollNo: idx + 1,
       gender: determineStudentGender(s),

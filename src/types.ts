@@ -148,6 +148,7 @@ export interface Student {
   examRegNo?: string; // current active exam register number (cloud persistence schema alias)
   regNo?: string; // register number alias
   hikmaRegNo?: string; // Dedicated HIKMA Exam register number
+  hikmaParticipating?: boolean; // Whether student is participating/writing HIKMA Exam (defaults to true)
   isRegNoLocked?: boolean; // Flag indicating manually assigned/edited register number override
   attendance?: {
     daysAttended: number;
@@ -598,6 +599,29 @@ export function sortStudentsBoysFirst<T extends { gender?: any; nameEn?: string;
     const genderB = determineStudentGender(studentB, activeExamId);
     if (genderA !== genderB) {
       return genderA === 'Boy' ? -1 : 1; // Boys first (-1), Girls second (1)
+    }
+    const nameA = String(studentA?.nameEn || studentA?.name || '').trim().toLowerCase();
+    const nameB = String(studentB?.nameEn || studentB?.name || '').trim().toLowerCase();
+    const comp = nameA.localeCompare(nameB);
+    if (comp !== 0) return comp;
+    return (studentA?.rollNo || 0) - (studentB?.rollNo || 0);
+  });
+}
+
+/**
+ * Official KMEB / HIKMA Sorting Order:
+ * 1. Primary Sort: Gender — Girls first, followed by Boys
+ * 2. Secondary Sort: Alphabetical order by Student Name (A to Z) within each gender group
+ */
+export function sortStudentsGirlsFirst<T extends { gender?: any; nameEn?: string; name?: string; rollNo?: number; examRegNo?: string; regNo?: string; examRegisterNos?: Record<string, string>; examRegisterNumbers?: Record<string, string> }>(
+  students: T[],
+  activeExamId?: string
+): T[] {
+  return [...students].sort((studentA, studentB) => {
+    const genderA = determineStudentGender(studentA, activeExamId);
+    const genderB = determineStudentGender(studentB, activeExamId);
+    if (genderA !== genderB) {
+      return genderA === 'Girl' ? -1 : 1; // Girls first (-1), Boys second (1)
     }
     const nameA = String(studentA?.nameEn || studentA?.name || '').trim().toLowerCase();
     const nameB = String(studentB?.nameEn || studentB?.name || '').trim().toLowerCase();

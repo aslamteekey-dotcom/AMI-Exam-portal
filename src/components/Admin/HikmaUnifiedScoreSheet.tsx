@@ -7,6 +7,7 @@ import {
   HikmaStudentMark,
   ALL_STANDARD_CLASSES,
   sortStudentsBoysFirst,
+  sortStudentsGirlsFirst,
   determineStudentGender,
   HIKMA_EXAM_ID,
 } from '../../types';
@@ -14,6 +15,7 @@ import {
   getHikmaUnifiedClassRecords,
   getHikmaUnifiedClassRecordsSync,
   isStudentInSchoolClass,
+  isStudentHikmaParticipating,
 } from '../../services/hikmaExamService';
 import {
   Printer,
@@ -91,8 +93,13 @@ export const HikmaUnifiedScoreSheet: React.FC<Props> = ({
   }, [classes, selectedClassId]);
 
   const classStudents = useMemo(() => {
-    const list = internalStudents.filter(s => isStudentInSchoolClass(s, selectedClassId, activeClass));
-    return sortStudentsBoysFirst(list).map((s, idx) => ({
+    const list = internalStudents.filter(
+      s => isStudentInSchoolClass(s, selectedClassId, activeClass) && isStudentHikmaParticipating(s)
+    );
+
+    const sorted = sortStudentsGirlsFirst(list);
+
+    return sorted.map((s, idx) => ({
       ...s,
       rollNo: idx + 1,
       gender: determineStudentGender(s),

@@ -2560,6 +2560,13 @@ export class ClientStorageApi {
 
         const prevClassId = student.classId;
         Object.assign(student, bodyData);
+        if (bodyData?.nameEn) {
+          student.nameEn = bodyData.nameEn.trim();
+          (student as any).name = bodyData.nameEn.trim();
+        }
+        if (bodyData?.nameMl) {
+          student.nameMl = bodyData.nameMl.trim();
+        }
 
         if (bodyData?.examRegNo !== undefined || bodyData?.regNo !== undefined || bodyData?.examRegisterNos || bodyData?.examRegisterNumbers) {
           const regVal = String(bodyData.examRegNo || bodyData.regNo || '').trim();
