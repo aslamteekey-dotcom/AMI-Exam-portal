@@ -179,9 +179,23 @@ export const AdminDashboard: React.FC = () => {
       }
     );
 
+    const unsubTeachers = safeOnSnapshot(
+      collection(db, 'teachers'),
+      snapshot => {
+        setOverviewData((prev: any) => ({
+          ...prev,
+          totalTeachers: snapshot.size,
+        }));
+      },
+      err => {
+        console.warn('AdminDashboard teachers listener warning:', err);
+      }
+    );
+
     return () => {
       window.removeEventListener('madrasa_students_updated', handleStudentsUpdated);
       if (unsubStudents) unsubStudents();
+      if (unsubTeachers) unsubTeachers();
     };
   }, []);
 

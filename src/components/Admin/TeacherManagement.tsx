@@ -3,8 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { User, ClassItem, SubjectItem, TeacherAssignment } from '../../types';
 import { db, handleFirestoreError, OperationType, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
-import { collection, doc, setDoc, deleteDoc, getDocs } from 'firebase/firestore';
-import { clientStorageApi } from '../../services/clientStorageApi';
+import { collection, doc, setDoc, deleteDoc, getDocs, onSnapshot } from 'firebase/firestore';
 import { logAuditEvent } from '../../services/auditLogger';
 import {
   Users,
@@ -67,6 +66,11 @@ export const TeacherManagement: React.FC = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  }, []);
+
+  useEffect(() => {
     if (toastMessage) {
       const timer = setTimeout(() => setToastMessage(null), 3000);
       return () => clearTimeout(timer);
@@ -86,6 +90,16 @@ export const TeacherManagement: React.FC = () => {
 
       const cData = await resC.json();
       const sData = await resS.json();
+      setClasses(cData);
+      setSubjects(sData);
+      if (cData.length > 0 && !assignClassId) setAssignClassId(cData[0].id);
+      if (sData.length > 0 && !assignSubjectId) setAssignSubjectId(sData[0].id);
+
+      if (teachersSnap.empty || teachersSnap.docs.length === 0) {
+        setTeachers([]);
+        setAssignments([]);
+        return;
+      }
 
       const remoteTeachers = teachersSnap.docs.map(docSnap => {
         const d = docSnap.data();
@@ -106,13 +120,8 @@ export const TeacherManagement: React.FC = () => {
         if (Array.isArray(rt.assignments)) collectedAsgs.push(...rt.assignments);
       });
 
-      clientStorageApi.syncTeachersFromRemote(remoteTeachers);
       setTeachers(remoteTeachers);
-      setClasses(cData);
-      setSubjects(sData);
       setAssignments(collectedAsgs);
-      if (cData.length > 0 && !assignClassId) setAssignClassId(cData[0].id);
-      if (sData.length > 0 && !assignSubjectId) setAssignSubjectId(sData[0].id);
     } catch (err) {
       console.error('Error loading teachers from Firestore:', err);
       setTeachers([]);
@@ -125,12 +134,18 @@ export const TeacherManagement: React.FC = () => {
   useEffect(() => {
     loadData();
 
-    // Real-time listener for Firestore 'teachers' collection
+    // Real-time listener strictly from live Firestore 'teachers' collection
     let unsub: (() => void) | undefined;
     try {
-      unsub = safeOnSnapshot(
+      unsub = onSnapshot(
         collection(db, 'teachers'),
         (snapshot) => {
+          if (snapshot.empty || snapshot.docs.length === 0) {
+            setTeachers([]);
+            setAssignments([]);
+            return;
+          }
+
           const remoteTeachers = snapshot.docs.map((docSnap) => {
             const d = docSnap.data();
             const asgs = Array.isArray(d.assignedSubjects)
@@ -150,7 +165,6 @@ export const TeacherManagement: React.FC = () => {
             if (Array.isArray(rt.assignments)) collectedAsgs.push(...rt.assignments);
           });
 
-          clientStorageApi.syncTeachersFromRemote(remoteTeachers);
           setTeachers(remoteTeachers);
           setAssignments(collectedAsgs);
         },
@@ -649,13 +663,7 @@ export const TeacherManagement: React.FC = () => {
       </div>
 
       {teachers.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
-          <Users className="w-10 h-10 mx-auto text-slate-400 mb-2" />
-          <h3 className="font-bold text-slate-800 text-sm">No Teachers Added Yet</h3>
-          <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-            The database is in a fresh clean state. Click the "Create Teacher Account" button above to add teachers and assign them to classes and subjects.
-          </p>
-        </div>
+        <div>No teachers found in database.</div>
       ) : (
         /* Teachers Cards List */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
