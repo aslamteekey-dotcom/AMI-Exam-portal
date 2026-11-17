@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { Printer, Download, Award, GraduationCap, ShieldAlert, AlertTriangle } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { extractComponentColumns, calculateStudentReportMetrics } from '../../utils/reportCalculations';
-import { collection, doc } from 'firebase/firestore';
+import { collection, doc, getDocs } from 'firebase/firestore';
 import { db, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 
 interface Props {
@@ -121,27 +121,40 @@ export const ProgressReportCard: React.FC<Props> = ({
     let isMounted = true;
     const fetchTeacher = async () => {
       try {
-        const res = await (fetchWithAuth ? fetchWithAuth('/api/teachers') : fetch('/api/teachers'));
-        if (res.ok) {
-          const teachers: any[] = await res.json();
-          if (Array.isArray(teachers) && isMounted) {
-            const classId = report?.student?.classId;
-            const cleanNum = cleanClassName.replace(/[^0-9]/g, '');
-            const match = teachers.find(
+        let teachers: any[] = [];
+        if (!isFirestoreQuotaExhausted()) {
+          try {
+            const snap = await getDocs(collection(db, 'teachers'));
+            if (!snap.empty) {
+              teachers = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+            }
+          } catch {}
+        }
+        if (teachers.length === 0) {
+          const res = await (fetchWithAuth ? fetchWithAuth('/api/teachers') : fetch('/api/teachers'));
+          if (res.ok) {
+            teachers = await res.json();
+          }
+        }
+        if (Array.isArray(teachers) && isMounted) {
+          const classId = report?.student?.classId;
+          const cleanNum = cleanClassName.replace(/[^0-9]/g, '');
+          const match = teachers.find(
+            t =>
+              (classId && t.inChargeClassId === classId) ||
+              (cleanNum && t.inChargeClassId === `cls_${cleanNum}`) ||
+              (t.inChargeClassId && report?.classNameEn && report.classNameEn.toLowerCase().includes(t.inChargeClassId.toLowerCase()))
+          );
+          if (match) {
+            setTeacherName(match.name || match.nameEn || '');
+          } else {
+            const assigned = teachers.find(
               t =>
-                (classId && t.inChargeClassId === classId) ||
-                (cleanNum && t.inChargeClassId === `cls_${cleanNum}`) ||
-                (t.inChargeClassId && report?.classNameEn && report.classNameEn.toLowerCase().includes(t.inChargeClassId.toLowerCase()))
+                (Array.isArray(t.assignedSubjects) && t.assignedSubjects.some((a: any) => a.classId === classId || a.classId === `cls_${cleanNum}`)) ||
+                (Array.isArray(t.assignments) && t.assignments.some((a: any) => a.classId === classId || a.classId === `cls_${cleanNum}`))
             );
-            if (match) {
-              setTeacherName(match.name || match.nameEn);
-            } else {
-              const assigned = teachers.find(
-                t => Array.isArray(t.assignments) && t.assignments.some((a: any) => a.classId === classId || a.classId === `cls_${cleanNum}`)
-              );
-              if (assigned) {
-                setTeacherName(assigned.name || assigned.nameEn);
-              }
+            if (assigned) {
+              setTeacherName(assigned.name || assigned.nameEn || '');
             }
           }
         }
@@ -160,7 +173,7 @@ export const ProgressReportCard: React.FC<Props> = ({
       ? teacherName
       : report?.classTeacherName && report.classTeacherName !== 'Class In-Charge'
       ? report.classTeacherName
-      : 'Abdul Rahman';
+      : '';
 
   // CRITICAL SAFE GUARD (ELIMINATE WHITE SCREEN / CRASH)
   if (!report || !report.student) {

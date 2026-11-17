@@ -495,6 +495,7 @@ export const TeacherDashboard: React.FC = () => {
       }
 
       let currentAssignments: TeacherAssignment[] = authData.assignments || [];
+      let resolvedInChargeClassId: string | undefined = user?.inChargeClassId ?? authData.user?.inChargeClassId;
 
       // DIRECT CLOUD SYNC: Fetch teacher profile directly from Firestore on mount/load
       const teacherId = user?.id || authData.user?.id;
@@ -509,16 +510,14 @@ export const TeacherDashboard: React.FC = () => {
             const rawSubs = Array.isArray(tData.assignedSubjects)
               ? tData.assignedSubjects
               : (Array.isArray(tData.assignments) ? tData.assignments : []);
-            if (rawSubs.length > 0) {
-              currentAssignments = rawSubs.map((a: any, idx: number) => ({
-                id: a.id || `asg_${teacherId}_${idx}`,
-                teacherId: a.teacherId || teacherId,
-                classId: a.classId,
-                subjectId: a.subjectId,
-              }));
-            }
+            currentAssignments = rawSubs.map((a: any, idx: number) => ({
+              id: a.id || `asg_${teacherId}_${idx}`,
+              teacherId: a.teacherId || teacherId,
+              classId: a.classId,
+              subjectId: a.subjectId,
+            }));
             if (tData.inChargeClassId !== undefined) {
-              setCurrentTeacherInChargeClassId(tData.inChargeClassId || undefined);
+              resolvedInChargeClassId = tData.inChargeClassId || undefined;
             }
           } else {
             // Fallback collection scan if teacher was stored under different ID or username
@@ -529,16 +528,14 @@ export const TeacherDashboard: React.FC = () => {
               const rawSubs = Array.isArray(tData.assignedSubjects)
                 ? tData.assignedSubjects
                 : (Array.isArray(tData.assignments) ? tData.assignments : []);
-              if (rawSubs.length > 0) {
-                currentAssignments = rawSubs.map((a: any, idx: number) => ({
-                  id: a.id || `asg_${matched.id}_${idx}`,
-                  teacherId: a.teacherId || matched.id,
-                  classId: a.classId,
-                  subjectId: a.subjectId,
-                }));
-              }
+              currentAssignments = rawSubs.map((a: any, idx: number) => ({
+                id: a.id || `asg_${matched.id}_${idx}`,
+                teacherId: a.teacherId || matched.id,
+                classId: a.classId,
+                subjectId: a.subjectId,
+              }));
               if (tData.inChargeClassId !== undefined) {
-                setCurrentTeacherInChargeClassId(tData.inChargeClassId || undefined);
+                resolvedInChargeClassId = tData.inChargeClassId || undefined;
               }
             }
           }
@@ -552,11 +549,9 @@ export const TeacherDashboard: React.FC = () => {
       setSubjects(subData);
       setExaminations(examData);
       setAllStudents(sortStudentsBoysFirst(stuData));
-      if (authData.user?.inChargeClassId !== undefined) {
-        setCurrentTeacherInChargeClassId(authData.user.inChargeClassId);
-      }
+      setCurrentTeacherInChargeClassId(resolvedInChargeClassId);
 
-      const targetInChargeId = authData.user?.inChargeClassId !== undefined ? authData.user.inChargeClassId : currentAssignments[0]?.classId;
+      const targetInChargeId = resolvedInChargeClassId || currentAssignments[0]?.classId;
       if (targetInChargeId) {
         setFeeClassId(targetInChargeId);
         try {
@@ -3395,7 +3390,7 @@ export const TeacherDashboard: React.FC = () => {
                     {language === 'ML' ? 'അസ്സലാമു അലൈക്കും,' : 'Assalamu Alaikum,'}
                   </span>
                   <span className={`text-2xl md:text-3xl font-bold text-gray-900 ${language === 'ML' ? 'font-ml' : ''}`}>
-                    {language === 'ML' && teacher?.nameMl ? teacher.nameMl : (teacher?.name || 'Usthad')}
+                    {language === 'ML' && teacher?.nameMl ? teacher.nameMl : (teacher?.name || '')}
                   </span>
                 </div>
                 <p className={`text-xs text-slate-500 mt-1 leading-relaxed max-w-2xl ${lang?.toLowerCase() === 'ml' ? 'font-ml' : ''}`}>

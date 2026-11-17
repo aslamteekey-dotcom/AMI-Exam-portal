@@ -275,45 +275,6 @@ export function getInitialClientSeedData(): MadrasaDatabase {
       phone: '+91 9447123456',
       createdAt: '2026-06-01T08:00:00Z',
     },
-    {
-      id: 'usr_t1',
-      username: 'teacher.abdulrahman',
-      name: 'Abdul Rahman',
-      nameMl: 'അബ്ദുൽ റഹ്മാൻ',
-      role: 'teacher',
-      plainPassword: 'teacher123',
-      inChargeClassId: 'cls_1',
-      active: true,
-      email: 'abdulrahman@madrasapallikkuth.edu',
-      phone: '+91 9847123456',
-      createdAt: '2026-06-01T08:00:00Z',
-    },
-    {
-      id: 'usr_t2',
-      username: 'teacher.muhammad',
-      name: 'Muhammad Faizy',
-      nameMl: 'മുഹമ്മദ് ഫൈസി',
-      role: 'teacher',
-      plainPassword: 'teacher123',
-      inChargeClassId: 'cls_2',
-      active: true,
-      email: 'muhammadfaizy@madrasapallikkuth.edu',
-      phone: '+91 9847234567',
-      createdAt: '2026-06-01T08:00:00Z',
-    },
-    {
-      id: 'usr_t3',
-      username: 'teacher.usman',
-      name: 'Usman Musliyar',
-      nameMl: 'ഉസ്മാൻ മുസ്ലിയാർ',
-      role: 'teacher',
-      plainPassword: 'teacher123',
-      inChargeClassId: 'cls_7',
-      active: true,
-      email: 'usmanmusliyar@madrasapallikkuth.edu',
-      phone: '+91 9847345678',
-      createdAt: '2026-06-01T08:00:00Z',
-    },
   ];
 
   // Real production start: No dummy students or mock marksheets
@@ -735,7 +696,7 @@ export class ClientStorageApi {
           }
         },
         getInitialTeachers: () => {
-          return this.db.users.filter(u => u.role === 'teacher');
+          return [];
         },
         onParents: (remoteParents) => {
           if (Array.isArray(remoteParents)) {
@@ -1069,7 +1030,13 @@ export class ClientStorageApi {
             );
           }
           if (Array.isArray(parsed.users)) {
-            parsed.users = parsed.users.filter((u: any) => u.id !== 'usr_p1' && u.username !== 'parent.hamza');
+            parsed.users = parsed.users.filter((u: any) => {
+              if (!u) return false;
+              if (u.id === 'usr_p1' || u.username === 'parent.hamza') return false;
+              // Never retain cached/mock teacher entries in local DB storage; teachers come strictly from live Firestore
+              if (u.role === 'teacher') return false;
+              return true;
+            });
           }
 
           // Ensure admin user exists
@@ -1293,15 +1260,92 @@ export class ClientStorageApi {
     };
   }
 
+  public purgeCorruptedTeacherCache(): void {
+    const LEGACY_TEACHER_KEYS = [
+      'teacherProfile',
+      'mockAuthState',
+      'teacherData',
+      'mockTeachers',
+      'dummyTeacherData',
+      'madrasa_teacher_profile',
+      'teachersCache',
+      'auth_teacher_cache',
+    ];
+    const DUMMY_TEACHER_USERNAMES = new Set([
+      'teacher.abdulrahman',
+      'teacher.muhammad',
+      'teacher.usman',
+    ]);
+    const DUMMY_TEACHER_NAMES = new Set([
+      'abdul rahman',
+      'muhammad faizy',
+      'usman musliyar',
+    ]);
+
+    try {
+      LEGACY_TEACHER_KEYS.forEach(k => localStorage.removeItem(k));
+
+      // Purge corrupted or dummy current user session (preserving real auth tokens)
+      const rawCurrent = localStorage.getItem(CURRENT_USER_KEY);
+      if (rawCurrent) {
+        try {
+          const u = JSON.parse(rawCurrent);
+          const uname = String(u?.username || '').trim().toLowerCase();
+          const nameLower = String(u?.name || u?.nameEn || '').trim().toLowerCase();
+          if (u && (DUMMY_TEACHER_USERNAMES.has(uname) || DUMMY_TEACHER_NAMES.has(nameLower))) {
+            localStorage.removeItem(CURRENT_USER_KEY);
+            localStorage.removeItem(TOKEN_KEY);
+          }
+        } catch {
+          localStorage.removeItem(CURRENT_USER_KEY);
+        }
+      }
+
+      // Strip stale teacher entries from persisted storage blob without clearing auth tokens
+      const rawDb = localStorage.getItem(STORAGE_KEY);
+      if (rawDb) {
+        try {
+          const parsed = JSON.parse(rawDb);
+          if (parsed && typeof parsed === 'object') {
+            if (Array.isArray(parsed.users)) {
+              parsed.users = parsed.users.filter((u: any) => u && u.role !== 'teacher');
+            }
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+          }
+        } catch {}
+      }
+
+      // Keep in-memory DB clean of unverified teacher records until live Firestore hydrates
+      if (this.db && Array.isArray(this.db.users)) {
+        this.db.users = this.db.users.filter(u => u && u.role !== 'teacher');
+      }
+    } catch {}
+  }
+
   public getCurrentUser(): User | null {
     try {
       const raw = localStorage.getItem(CURRENT_USER_KEY);
       if (raw) {
         const u = JSON.parse(raw);
+        if (!u) return null;
+        const uname = String(u.username || '').trim().toLowerCase();
+        const nameLower = String(u.name || u.nameEn || '').trim().toLowerCase();
+        if (
+          ['teacher.abdulrahman', 'teacher.muhammad', 'teacher.usman'].includes(uname) ||
+          ['abdul rahman', 'muhammad faizy', 'usman musliyar'].includes(nameLower)
+        ) {
+          localStorage.removeItem(CURRENT_USER_KEY);
+          localStorage.removeItem(TOKEN_KEY);
+          return null;
+        }
         // Refresh with latest in DB
         const inDb = this.db.users.find(x => x.id === u.id);
         if (inDb && inDb.active !== false) {
           return inDb;
+        }
+        // For live DB-hydrated teacher/parent sessions not yet in local cache
+        if (u.id && u.role && u.active !== false) {
+          return u;
         }
       }
     } catch (e) {
@@ -1313,8 +1357,11 @@ export class ClientStorageApi {
   public setCurrentUser(user: User | null): void {
     if (user) {
       localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
-      const token = `token_${user.id}_${Date.now()}`;
-      localStorage.setItem(TOKEN_KEY, token);
+      const existingToken = localStorage.getItem(TOKEN_KEY);
+      if (!existingToken || !existingToken.startsWith(`token_${user.id}_`)) {
+        const token = `token_${user.id}_${Date.now()}`;
+        localStorage.setItem(TOKEN_KEY, token);
+      }
     } else {
       localStorage.removeItem(CURRENT_USER_KEY);
       localStorage.removeItem(TOKEN_KEY);
@@ -1923,10 +1970,6 @@ export class ClientStorageApi {
         const t = this.db.users.find(u => u.id === asgn.teacherId);
         if (t) classTeacherName = t.name;
       }
-    }
-    if (!classTeacherName) {
-      const anyTeacher = this.db.users.find(u => u.role === 'teacher' && u.active);
-      if (anyTeacher) classTeacherName = anyTeacher.name;
     }
 
     return {
@@ -2717,9 +2760,16 @@ export class ClientStorageApi {
       }
 
       if (path === '/api/teachers/clear-demo' && method === 'POST') {
-        const count = this.db.users.filter(u => u.role === 'teacher').length;
-        this.db.users = this.db.users.filter(u => u.role !== 'teacher');
-        this.db.teacherAssignments = [];
+        const dummyUsernames = new Set(['teacher.abdulrahman', 'teacher.muhammad', 'teacher.usman']);
+        const dummyNames = new Set(['abdul rahman', 'muhammad faizy', 'usman musliyar']);
+        const isDummy = (u: any) =>
+          u.role === 'teacher' &&
+          (dummyUsernames.has(String(u.username || '').trim().toLowerCase()) ||
+            dummyNames.has(String(u.name || u.nameEn || '').trim().toLowerCase()));
+        const dummyIds = new Set(this.db.users.filter(isDummy).map(u => u.id));
+        const count = dummyIds.size;
+        this.db.users = this.db.users.filter(u => !isDummy(u));
+        this.db.teacherAssignments = this.db.teacherAssignments.filter(a => !dummyIds.has(a.teacherId));
         this.saveDB();
         await firestoreSync.purgeDemoTeachersFromFirestore();
         return this.jsonResponse({ success: true, clearedCount: count });

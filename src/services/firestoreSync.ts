@@ -309,27 +309,8 @@ export class FirestoreSyncService {
               } as User));
               callbacks.onTeachers?.(teachers);
             } else {
-              // Collection is empty in Firestore
-              if (!isGloballySeeded() && !localSeeded && callbacks.getInitialTeachers) {
-                localSeeded = true;
-                markGloballySeeded();
-                try {
-                  const initialList = callbacks.getInitialTeachers();
-                  if (Array.isArray(initialList) && initialList.length > 0) {
-                    callbacks.onTeachers?.(initialList);
-                    for (const t of initialList) {
-                      await setDoc(doc(db, 'teachers', t.id), cleanForFirestore(t));
-                    }
-                  } else {
-                    callbacks.onTeachers?.([]);
-                  }
-                } catch (seedErr) {
-                  console.warn('Initial teacher seed error:', seedErr);
-                  callbacks.onTeachers?.([]);
-                }
-              } else {
-                callbacks.onTeachers?.([]);
-              }
+              // Collection is empty in Firestore: strictly maintain empty list and NEVER re-seed dummy teachers
+              callbacks.onTeachers?.([]);
             }
           },
           err => {
@@ -1799,11 +1780,15 @@ export class FirestoreSyncService {
 
   public async purgeDemoTeachersFromFirestore(): Promise<void> {
     if (isFirestoreQuotaExhausted()) return;
+    const dummyUsernames = new Set(['teacher.abdulrahman', 'teacher.muhammad', 'teacher.usman']);
+    const dummyNames = new Set(['abdul rahman', 'muhammad faizy', 'usman musliyar']);
     try {
       const teachersSnap = await getDocs(collection(db, 'teachers'));
       for (const d of teachersSnap.docs) {
         const data = d.data();
-        if (data.role !== 'admin' && data.username !== 'principal') {
+        const uname = String(data.username || '').trim().toLowerCase();
+        const name = String(data.name || data.nameEn || '').trim().toLowerCase();
+        if (dummyUsernames.has(uname) || dummyNames.has(name)) {
           await deleteDoc(d.ref);
         }
       }

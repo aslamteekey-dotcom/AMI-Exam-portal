@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { GraduationCap, Lock, User, AlertCircle, ArrowRight } from 'lucide-react';
+import { GraduationCap, Lock, User, AlertCircle, ArrowRight, RefreshCw } from 'lucide-react';
 
 export const LoginForm: React.FC = () => {
-  const { login, lang, institutionSettings } = useAuth();
+  const { login, lang, institutionSettings, authError, clearAuthError, token, refreshUser, logout } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -12,6 +12,7 @@ export const LoginForm: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    clearAuthError();
     if (!username.trim() || !password) {
       setError('Please provide both username and password.');
       return;
@@ -26,6 +27,7 @@ export const LoginForm: React.FC = () => {
     }
   };
 
+  const displayError = error || authError;
   const isMl = lang === 'ml';
 
   return (
@@ -51,10 +53,31 @@ export const LoginForm: React.FC = () => {
 
         {/* Login Form */}
         <div className="p-4 sm:p-6 bg-white/40">
-          {error && (
-            <div className="mb-3 p-2.5 rounded-xl bg-rose-50/90 border border-rose-200 text-rose-800 text-xs flex items-center gap-2 shadow-2xs">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{error}</span>
+          {displayError && (
+            <div className="mb-3 p-2.5 rounded-xl bg-rose-50/90 border border-rose-200 text-rose-800 text-xs space-y-2 shadow-2xs">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{displayError}</span>
+              </div>
+              {authError && token && (
+                <div className="flex items-center gap-2 pt-1 pl-6">
+                  <button
+                    type="button"
+                    onClick={() => refreshUser()}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-700 hover:bg-rose-800 text-white font-semibold text-[11px] transition cursor-pointer"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Retry Connection
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => logout()}
+                    className="px-2.5 py-1 rounded-lg bg-white border border-rose-200 text-rose-700 hover:bg-rose-100 font-semibold text-[11px] transition cursor-pointer"
+                  >
+                    Sign Out
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

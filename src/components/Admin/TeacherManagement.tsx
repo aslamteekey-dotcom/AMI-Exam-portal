@@ -3,7 +3,8 @@ import { useAuth } from '../../context/AuthContext';
 import { User, ClassItem, SubjectItem, TeacherAssignment } from '../../types';
 import { db, handleFirestoreError, OperationType, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
 import { firestoreSync, cleanForFirestore } from '../../services/firestoreSync';
-import { collection, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, deleteDoc, getDocs } from 'firebase/firestore';
+import { clientStorageApi } from '../../services/clientStorageApi';
 import { logAuditEvent } from '../../services/auditLogger';
 import {
   Users,
@@ -77,25 +78,45 @@ export const TeacherManagement: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [resT, resC, resS, resA] = await Promise.all([
-        fetchWithAuth('/api/teachers'),
+      const [teachersSnap, resC, resS] = await Promise.all([
+        getDocs(collection(db, 'teachers')),
         fetchWithAuth('/api/classes'),
         fetchWithAuth('/api/subjects'),
-        fetchWithAuth('/api/teacher-assignments'),
       ]);
-      const tData = await resT.json();
+
       const cData = await resC.json();
       const sData = await resS.json();
-      const aData = await resA.json();
 
-      setTeachers(tData);
+      const remoteTeachers = teachersSnap.docs.map(docSnap => {
+        const d = docSnap.data();
+        const asgs = Array.isArray(d.assignedSubjects)
+          ? d.assignedSubjects
+          : (Array.isArray(d.assignments) ? d.assignments : []);
+        return {
+          ...d,
+          id: docSnap.id,
+          role: 'teacher',
+          assignments: asgs,
+          assignedSubjects: asgs,
+        } as User;
+      });
+
+      const collectedAsgs: TeacherAssignment[] = [];
+      remoteTeachers.forEach(rt => {
+        if (Array.isArray(rt.assignments)) collectedAsgs.push(...rt.assignments);
+      });
+
+      clientStorageApi.syncTeachersFromRemote(remoteTeachers);
+      setTeachers(remoteTeachers);
       setClasses(cData);
       setSubjects(sData);
-      setAssignments(aData);
+      setAssignments(collectedAsgs);
       if (cData.length > 0 && !assignClassId) setAssignClassId(cData[0].id);
       if (sData.length > 0 && !assignSubjectId) setAssignSubjectId(sData[0].id);
     } catch (err) {
-      console.error('Error loading teachers:', err);
+      console.error('Error loading teachers from Firestore:', err);
+      setTeachers([]);
+      setAssignments([]);
     } finally {
       setLoading(false);
     }
@@ -104,37 +125,34 @@ export const TeacherManagement: React.FC = () => {
   useEffect(() => {
     loadData();
 
-    if (isFirestoreQuotaExhausted()) return;
-
     // Real-time listener for Firestore 'teachers' collection
     let unsub: (() => void) | undefined;
     try {
       unsub = safeOnSnapshot(
         collection(db, 'teachers'),
         (snapshot) => {
-          if (!snapshot.empty) {
-            const remoteTeachers = snapshot.docs.map((docSnap) => ({
-              ...docSnap.data(),
+          const remoteTeachers = snapshot.docs.map((docSnap) => {
+            const d = docSnap.data();
+            const asgs = Array.isArray(d.assignedSubjects)
+              ? d.assignedSubjects
+              : (Array.isArray(d.assignments) ? d.assignments : []);
+            return {
+              ...d,
               id: docSnap.id,
-            } as User));
+              role: 'teacher',
+              assignments: asgs,
+              assignedSubjects: asgs,
+            } as User;
+          });
 
-            // Sync state strictly with Firestore snapshot docs (never re-injecting 2 default teachers)
-            setTeachers((prevTeachers) => {
-              return remoteTeachers.map((rt) => {
-                const prev = prevTeachers.find((p) => p.id === rt.id);
-                const asgs = Array.isArray((rt as any).assignedSubjects)
-                  ? (rt as any).assignedSubjects
-                  : (Array.isArray(rt.assignments) ? rt.assignments : (prev?.assignments || []));
-                return {
-                  ...rt,
-                  assignments: asgs,
-                  assignedSubjects: asgs,
-                };
-              });
-            });
-          } else {
-            setTeachers([]);
-          }
+          const collectedAsgs: TeacherAssignment[] = [];
+          remoteTeachers.forEach(rt => {
+            if (Array.isArray(rt.assignments)) collectedAsgs.push(...rt.assignments);
+          });
+
+          clientStorageApi.syncTeachersFromRemote(remoteTeachers);
+          setTeachers(remoteTeachers);
+          setAssignments(collectedAsgs);
         },
         (error) => {
           console.error('Firestore teachers onSnapshot error:', error);

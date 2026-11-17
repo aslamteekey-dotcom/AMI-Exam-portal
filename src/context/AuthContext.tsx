@@ -1,7 +1,7 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { User, InstitutionSettings } from '../types';
 import { Language, translations } from '../i18n';
-import { clientStorageApi } from '../services/clientStorageApi';
+import { clientStorageApi, clientHashPassword } from '../services/clientStorageApi';
 import { db, isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, isQuotaError } from '../services/firebase';
 import { collection, getDocs, doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { logAuditEvent } from '../services/auditLogger';
@@ -16,6 +16,8 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   isLoading: boolean;
+  authError: string | null;
+  clearAuthError: () => void;
   lang: Language;
   t: typeof translations['en'];
   institutionSettings: InstitutionSettings | null;
@@ -30,13 +32,36 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(() => clientStorageApi.getCurrentUser());
+  // Strictly null until verified from live database (prevents stale/dummy teacher flash)
+  const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('madrasa_auth_token'));
   const [lang, setLangState] = useState<Language>(() => (localStorage.getItem('madrasa_lang') as Language) || 'en');
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(() => Boolean(localStorage.getItem('madrasa_auth_token')));
+  const [authError, setAuthError] = useState<string | null>(null);
   const [institutionSettings, setInstitutionSettings] = useState<InstitutionSettings | null>(() =>
     clientStorageApi.getSettings()
   );
+  const cachePurgedRef = useRef(false);
+
+  const clearAuthError = () => setAuthError(null);
+
+  const runCacheBustingPurge = () => {
+    if (cachePurgedRef.current) return;
+    cachePurgedRef.current = true;
+    clientStorageApi.purgeCorruptedTeacherCache();
+    // If purge removed a dummy teacher's token, sync React token state
+    const survivingToken = localStorage.getItem('madrasa_auth_token');
+    if (!survivingToken && token) {
+      setToken(null);
+      setIsLoading(false);
+    }
+  };
+
+  // Automated cache-busting on initialization: purge corrupted/dummy teacher localStorage keys
+  // while preserving valid auth tokens
+  useEffect(() => {
+    runCacheBustingPurge();
+  }, []);
 
   const setLang = (l: Language) => {
     setLangState(l);
@@ -157,42 +182,103 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const refreshUser = async () => {
+    runCacheBustingPurge();
+
+    const activeToken = localStorage.getItem('madrasa_auth_token');
+    if (!activeToken) {
+      setUser(null);
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    setAuthError(null);
+
     const current = clientStorageApi.getCurrentUser();
-    if (current && current.role === 'teacher' && !isFirestoreQuotaExhausted()) {
+    if (!current) {
+      setUser(null);
+      setIsLoading(false);
+      return;
+    }
+
+    if (current.role === 'teacher') {
+      // Strictly fetch teacher profile from live Firestore — never fall back to local/mock teacher data
       try {
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout')), 2500)
+          setTimeout(() => reject(new Error('Database connection timed out')), 10000)
         );
-        const tDoc = await Promise.race([
+        let tSnap = await Promise.race([
           getDoc(doc(db, 'teachers', current.id)),
           timeoutPromise,
         ]);
-        if (tDoc.exists()) {
-          const tData = tDoc.data();
-          const asgs = Array.isArray(tData.assignedSubjects)
-            ? tData.assignedSubjects
-            : (Array.isArray(tData.assignments) ? tData.assignments : []);
-          const updatedUser: User = {
-            ...current,
-            ...tData,
-            assignments: asgs,
-            assignedSubjects: asgs,
-          } as User;
-          clientStorageApi.setCurrentUser(updatedUser);
-          setUser(updatedUser);
+
+        if (!tSnap.exists() && current.username) {
+          const allTeachersSnap = await Promise.race([
+            getDocs(collection(db, 'teachers')),
+            timeoutPromise,
+          ]);
+          const matched = allTeachersSnap.docs.find(
+            d => String(d.data()?.username || '').trim().toLowerCase() === String(current.username).trim().toLowerCase()
+          );
+          if (matched) {
+            tSnap = matched as any;
+          }
+        }
+
+        if (!tSnap.exists()) {
+          clientStorageApi.logout();
+          setToken(null);
+          setUser(null);
+          setAuthError('Your teacher account was not found in the live database. Please sign in again.');
           setIsLoading(false);
           return;
         }
+
+        const tData = tSnap.data();
+        if (tData.active === false) {
+          clientStorageApi.logout();
+          setToken(null);
+          setUser(null);
+          setAuthError('Your teacher account has been deactivated.');
+          setIsLoading(false);
+          return;
+        }
+
+        const asgs = Array.isArray(tData.assignedSubjects)
+          ? tData.assignedSubjects
+          : (Array.isArray(tData.assignments) ? tData.assignments : []);
+
+        const liveTeacherUser: User = {
+          ...(tData as User),
+          id: tSnap.id,
+          role: 'teacher',
+          assignments: asgs,
+          assignedSubjects: asgs,
+        };
+
+        clientStorageApi.setCurrentUser(liveTeacherUser);
+        clientStorageApi.syncTeachersFromRemote([liveTeacherUser]);
+        setUser(liveTeacherUser);
+        setAuthError(null);
+        setIsLoading(false);
+        return;
       } catch (fErr) {
         if (isQuotaError(fErr)) {
           markFirestoreQuotaExhausted();
         }
-        console.warn('Could not refresh teacher doc from Firestore:', fErr);
+        console.error('Failed to verify teacher profile from live Firestore:', fErr);
+        // Never fallback to cached/dummy teacher data on DB fetch failure
+        setUser(null);
+        setAuthError('Failed to fetch teacher profile from live database. Please check your connection and try again.');
+        setIsLoading(false);
+        return;
       }
-    } else if (current && current.role === 'parent' && !isFirestoreQuotaExhausted()) {
+    }
+
+    if (current.role === 'parent' && !isFirestoreQuotaExhausted()) {
       try {
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout')), 2500)
+          setTimeout(() => reject(new Error('Timeout')), 5000)
         );
         const pDoc = await Promise.race([
           getDoc(doc(db, 'parents', current.id)),
@@ -203,6 +289,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const updatedUser: User = {
             ...current,
             ...pData,
+            id: pDoc.id,
+            role: 'parent',
           } as User;
           clientStorageApi.setCurrentUser(updatedUser);
           setUser(updatedUser);
@@ -216,6 +304,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('Could not refresh parent doc from Firestore:', fErr);
       }
     }
+
     setUser(current);
     setIsLoading(false);
   };
@@ -225,74 +314,180 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [token]);
 
   const login = async (username: string, pass: string) => {
+    setAuthError(null);
+    const trimmedUsername = username.trim();
+    const trimmedLower = trimmedUsername.toLowerCase();
+    const trimmedPass = pass.trim();
+    const cleanDigits = trimmedLower.replace(/\D/g, '');
+
     try {
-      // 1. Fresh cloud fetch on login: fetch fresh teachers from Firestore if quota is available
-      if (!isFirestoreQuotaExhausted()) {
-        try {
-          const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Timeout')), 2500)
+      // Admin / Principal shortcut
+      if (trimmedLower === 'principal' || trimmedLower === 'admin') {
+        const adminRes = clientStorageApi.login(trimmedUsername, trimmedPass);
+        if (!adminRes.success || !adminRes.user || !adminRes.token) {
+          return { success: false, error: adminRes.error || 'Authentication failed. Please check your credentials.' };
+        }
+        setToken(adminRes.token);
+        setUser(adminRes.user);
+        requestNotificationPermissionAndToken(adminRes.user).catch(e =>
+          console.warn('[FCM] Notification token request error:', e)
+        );
+        logAuditEvent({
+          action: 'ADMIN_LOGIN',
+          details: `Admin ${adminRes.user.name} logged in successfully.`,
+          user: adminRes.user.name,
+          role: adminRes.user.role,
+          userId: adminRes.user.id,
+          currentUser: adminRes.user,
+        }).catch(e => console.warn('Audit log error:', e));
+        return { success: true };
+      }
+
+      // Strictly authenticate teachers against the live Firestore database (no local mock fallback)
+      let remoteTeachers: User[] = [];
+      let firestoreTeachersReachable = false;
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Database connection timed out')), 10000)
+        );
+        const teachersSnap = await Promise.race([
+          getDocs(collection(db, 'teachers')),
+          timeoutPromise,
+        ]);
+        firestoreTeachersReachable = true;
+        remoteTeachers = teachersSnap.docs.map(d => ({
+          ...(d.data() as User),
+          id: d.id,
+          role: 'teacher',
+        }));
+        clientStorageApi.syncTeachersFromRemote(remoteTeachers);
+      } catch (syncErr) {
+        if (isQuotaError(syncErr)) {
+          markFirestoreQuotaExhausted();
+        }
+        console.error('Live Firestore teacher authentication failed:', syncErr);
+      }
+
+      if (firestoreTeachersReachable) {
+        const matchedTeacher = remoteTeachers.find(t => {
+          const uname = String(t.username || '').trim().toLowerCase();
+          const uDigits = uname.replace(/\D/g, '');
+          const pDigits = String(t.phone || '').replace(/\D/g, '');
+          return (
+            uname === trimmedLower ||
+            (cleanDigits.length >= 6 && uDigits === cleanDigits) ||
+            (cleanDigits.length >= 6 && pDigits === cleanDigits)
           );
-          const teachersSnap = await Promise.race([
-            getDocs(collection(db, 'teachers')),
-            timeoutPromise,
-          ]);
-          if (!teachersSnap.empty) {
-            const remoteTeachers = teachersSnap.docs.map(d => ({
-              ...d.data(),
-              id: d.id,
-            } as User));
-            clientStorageApi.syncTeachersFromRemote(remoteTeachers);
+        });
+
+        if (matchedTeacher) {
+          if (matchedTeacher.active === false) {
+            return { success: false, error: 'Account is deactivated' };
           }
-        } catch (syncErr) {
-          if (isQuotaError(syncErr)) {
-            markFirestoreQuotaExhausted();
+
+          const isPasswordMatch =
+            matchedTeacher.plainPassword === trimmedPass ||
+            (matchedTeacher as any).passwordHash === clientHashPassword(trimmedPass);
+
+          if (!isPasswordMatch) {
+            return { success: false, error: 'Invalid password' };
           }
-          console.warn('Could not pre-sync teachers from Firestore on login:', syncErr);
+
+          // Re-fetch authoritative live teacher document by ID
+          let authoritativeDocData: any = matchedTeacher;
+          try {
+            const tDoc = await Promise.race([
+              getDoc(doc(db, 'teachers', matchedTeacher.id)),
+              new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000)),
+            ]);
+            if (tDoc.exists()) {
+              authoritativeDocData = { ...tDoc.data(), id: tDoc.id };
+            }
+          } catch (docErr) {
+            console.warn('Could not re-fetch single teacher doc, using live query snapshot:', docErr);
+          }
+
+          const asgs = Array.isArray(authoritativeDocData.assignedSubjects)
+            ? authoritativeDocData.assignedSubjects
+            : (Array.isArray(authoritativeDocData.assignments) ? authoritativeDocData.assignments : []);
+
+          const liveTeacherUser: User = {
+            ...(authoritativeDocData as User),
+            id: authoritativeDocData.id || matchedTeacher.id,
+            role: 'teacher',
+            assignments: asgs,
+            assignedSubjects: asgs,
+          };
+
+          clientStorageApi.setCurrentUser(liveTeacherUser);
+          const issuedToken = localStorage.getItem('madrasa_auth_token') || `token_${liveTeacherUser.id}_${Date.now()}`;
+          localStorage.setItem('madrasa_auth_token', issuedToken);
+          setToken(issuedToken);
+          setUser(liveTeacherUser);
+
+          requestNotificationPermissionAndToken(liveTeacherUser).catch(e =>
+            console.warn('[FCM] Notification token request error:', e)
+          );
+
+          logAuditEvent({
+            action: 'TEACHER_LOGIN',
+            details: `Teacher ${liveTeacherUser.name} logged in successfully.`,
+            user: liveTeacherUser.name,
+            role: liveTeacherUser.role,
+            userId: liveTeacherUser.id,
+            currentUser: liveTeacherUser,
+          }).catch(e => console.warn('Audit log error:', e));
+
+          return { success: true };
         }
       }
 
-      const res = clientStorageApi.login(username, pass);
+      // Check live parents (and sub-admins) if user is not a teacher in live Firestore
+      if (!isFirestoreQuotaExhausted()) {
+        try {
+          const parentsSnap = await Promise.race([
+            getDocs(collection(db, 'parents')),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 6000)),
+          ]);
+          if (!parentsSnap.empty) {
+            const remoteParents: User[] = parentsSnap.docs.map(d => ({
+              ...(d.data() as User),
+              id: d.id,
+              role: 'parent' as const,
+            }));
+            const dbRef = clientStorageApi.getDB();
+            const nonParents = dbRef.users.filter(u => u.role !== 'parent');
+            dbRef.users = [...nonParents, ...remoteParents];
+          }
+        } catch {}
+      }
+
+      // Check local non-teacher accounts (parents / sub-admins)
+      const res = clientStorageApi.login(trimmedUsername, trimmedPass);
       if (!res.success || !res.user || !res.token) {
+        if (!firestoreTeachersReachable) {
+          return {
+            success: false,
+            error: 'Unable to reach the live database to verify credentials. Please check your connection and try again.',
+          };
+        }
         return { success: false, error: res.error || 'Authentication failed. Please check your credentials.' };
       }
 
-      // If user is teacher, ensure their fresh document with assignedSubjects is active
-      if (res.user.role === 'teacher' && !isFirestoreQuotaExhausted()) {
-        try {
-          const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Timeout')), 2500)
-          );
-          const tDoc = await Promise.race([
-            getDoc(doc(db, 'teachers', res.user.id)),
-            timeoutPromise,
-          ]);
-          if (tDoc.exists()) {
-            const tData = tDoc.data();
-            const asgs = Array.isArray(tData.assignedSubjects)
-              ? tData.assignedSubjects
-              : (Array.isArray(tData.assignments) ? tData.assignments : []);
-            const updatedUser: User = {
-              ...res.user,
-              ...tData,
-              assignments: asgs,
-              assignedSubjects: asgs,
-            } as User;
-            clientStorageApi.setCurrentUser(updatedUser);
-            res.user = updatedUser;
-          }
-        } catch (fErr) {
-          if (isQuotaError(fErr)) {
-            markFirestoreQuotaExhausted();
-          }
-          console.warn('Could not fetch teacher doc from Firestore during login:', fErr);
-        }
+      // Safety guard: never allow a non-live teacher login fallback
+      if (res.user.role === 'teacher') {
+        clientStorageApi.logout();
+        return {
+          success: false,
+          error: 'Unable to verify teacher account against the live database. Please try again.',
+        };
       }
 
       // If user is parent, ensure fresh parent doc from Firestore with linkedStudentIds is loaded
       if (res.user.role === 'parent' && !isFirestoreQuotaExhausted()) {
         try {
           const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Timeout')), 2500)
+            setTimeout(() => reject(new Error('Timeout')), 4000)
           );
           const pDoc = await Promise.race([
             getDoc(doc(db, 'parents', res.user.id)),
@@ -303,6 +498,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const updatedUser: User = {
               ...res.user,
               ...pData,
+              id: pDoc.id,
+              role: 'parent',
             } as User;
             clientStorageApi.setCurrentUser(updatedUser);
             res.user = updatedUser;
@@ -318,25 +515,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setToken(res.token);
       setUser(res.user);
 
-      // On user login (Teacher, Parent, or Admin), prompt for Notification Permissions & store FCM token
       requestNotificationPermissionAndToken(res.user).catch(e =>
         console.warn('[FCM] Notification token request error:', e)
       );
 
-      // Trigger immutable audit logging for system access
       if (res.user.role === 'admin') {
         logAuditEvent({
           action: 'ADMIN_LOGIN',
           details: `Admin ${res.user.name} logged in successfully.`,
-          user: res.user.name,
-          role: res.user.role,
-          userId: res.user.id,
-          currentUser: res.user,
-        }).catch(e => console.warn('Audit log error:', e));
-      } else if (res.user.role === 'teacher') {
-        logAuditEvent({
-          action: 'TEACHER_LOGIN',
-          details: `Teacher ${res.user.name} logged in successfully.`,
           user: res.user.name,
           role: res.user.role,
           userId: res.user.id,
@@ -354,6 +540,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     clientStorageApi.logout();
     setToken(null);
     setUser(null);
+    setAuthError(null);
   };
 
   return (
@@ -362,6 +549,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         token,
         isLoading,
+        authError,
+        clearAuthError,
         lang,
         t,
         institutionSettings,
