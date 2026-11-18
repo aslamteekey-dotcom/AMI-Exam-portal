@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { User, ClassItem, SubjectItem, TeacherAssignment } from '../../types';
 import { db, handleFirestoreError, OperationType, safeOnSnapshot, isFirestoreQuotaExhausted } from '../../services/firebase';
@@ -38,6 +38,7 @@ export const TeacherManagement: React.FC = () => {
   const [tPhone, setTPhone] = useState('');
   const [tEmail, setTEmail] = useState('');
   const [tInChargeClassId, setTInChargeClassId] = useState('');
+  const [tShortCode, setTShortCode] = useState('');
 
   // Edit Teacher Modal
   const [editingTeacher, setEditingTeacher] = useState<any | null>(null);
@@ -47,6 +48,7 @@ export const TeacherManagement: React.FC = () => {
   const [editPhone, setEditPhone] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editInChargeClassId, setEditInChargeClassId] = useState('');
+  const [editShortCode, setEditShortCode] = useState('');
 
   // Class In-Charge Modal
   const [inChargeModalTeacher, setInChargeModalTeacher] = useState<any | null>(null);
@@ -207,6 +209,7 @@ export const TeacherManagement: React.FC = () => {
       phone: tPhone.trim(),
       email: tEmail.trim() || undefined,
       inChargeClassId: tInChargeClassId || undefined,
+      shortCode: tShortCode.trim().toUpperCase() || undefined,
       active: true,
       createdAt: new Date().toISOString(),
     };
@@ -260,6 +263,7 @@ export const TeacherManagement: React.FC = () => {
       setTPhone('');
       setTEmail('');
       setTInChargeClassId('');
+      setTShortCode('');
       await loadData();
     } catch (err: any) {
       console.error('Error in handleAddTeacher:', err);
@@ -335,6 +339,7 @@ export const TeacherManagement: React.FC = () => {
     setEditPhone(teacher.phone || '');
     setEditEmail(teacher.email || '');
     setEditInChargeClassId(teacher.inChargeClassId || '');
+    setEditShortCode(teacher.shortCode || '');
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
@@ -348,6 +353,7 @@ export const TeacherManagement: React.FC = () => {
         phone: editPhone.trim(),
         email: editEmail.trim() || undefined,
         inChargeClassId: editInChargeClassId || undefined,
+        shortCode: editShortCode.trim().toUpperCase() || '',
       };
 
       // 1. Update in Firestore
@@ -629,6 +635,66 @@ export const TeacherManagement: React.FC = () => {
     return sub.nameMl || sub.nameEn;
   };
 
+  const extractClassNumber = (rawClass: any): number | null => {
+    if (rawClass === undefined || rawClass === null || rawClass === '') return null;
+    const valStr = String(rawClass).trim();
+    if (!valStr) return null;
+    const matchedClass = classes.find(
+      c => c.id === valStr || c.name.toLowerCase() === valStr.toLowerCase()
+    );
+    if (matchedClass && Number.isFinite(matchedClass.numericGrade)) {
+      return matchedClass.numericGrade;
+    }
+    const digitMatch = valStr.match(/\d+/);
+    if (digitMatch) {
+      const parsed = parseInt(digitMatch[0], 10);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    return null;
+  };
+
+  const getTeacherSortKey = (teacher: any): number => {
+    const inChargeVal = teacher.inChargeClassId || teacher.classInCharge;
+    const inChargeGrade = extractClassNumber(inChargeVal);
+    if (inChargeGrade !== null) return inChargeGrade;
+
+    const teacherAssigned = Array.isArray(teacher.assignedSubjects)
+      ? teacher.assignedSubjects
+      : (Array.isArray(teacher.assignments) ? teacher.assignments : []);
+    const fromList = assignments.filter(a => a.teacherId === teacher.id);
+    const combinedAsgs = fromList.length > 0 ? fromList : teacherAssigned;
+    const assignedClassesArr = Array.isArray(teacher.assignedClasses) ? teacher.assignedClasses : [];
+
+    const grades: number[] = [];
+    combinedAsgs.forEach((a: any) => {
+      const g = extractClassNumber(a?.classId ?? a);
+      if (g !== null) grades.push(g);
+    });
+    assignedClassesArr.forEach((c: any) => {
+      const g = extractClassNumber(c?.classId ?? c);
+      if (g !== null) grades.push(g);
+    });
+
+    if (grades.length > 0) {
+      return Math.min(...grades);
+    }
+    return Number.MAX_SAFE_INTEGER;
+  };
+
+  const sortedTeachers = useMemo(() => {
+    return [...teachers].sort((a, b) => {
+      const keyA = getTeacherSortKey(a);
+      const keyB = getTeacherSortKey(b);
+      if (keyA !== keyB) return keyA - keyB;
+
+      const inChargeA = extractClassNumber(a.inChargeClassId || a.classInCharge) !== null;
+      const inChargeB = extractClassNumber(b.inChargeClassId || b.classInCharge) !== null;
+      if (inChargeA !== inChargeB) return inChargeA ? -1 : 1;
+
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+  }, [teachers, assignments, classes]);
+
   if (loading) {
     return <div className="text-center py-10 text-xs text-slate-500">Loading teacher accounts...</div>;
   }
@@ -667,7 +733,7 @@ export const TeacherManagement: React.FC = () => {
       ) : (
         /* Teachers Cards List */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {teachers.map(teacher => {
+          {sortedTeachers.map(teacher => {
             const teacherAssigned = Array.isArray((teacher as any).assignedSubjects)
               ? (teacher as any).assignedSubjects
               : (Array.isArray(teacher.assignments) ? teacher.assignments : []);
@@ -942,6 +1008,17 @@ export const TeacherManagement: React.FC = () => {
                 </p>
               </div>
 
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Timetable Short Code (Optional)</label>
+                <input
+                  type="text"
+                  value={tShortCode}
+                  onChange={e => setTShortCode(e.target.value)}
+                  placeholder="e.g. YP, CH, VK"
+                  className="w-full p-2 border rounded-lg font-mono uppercase focus:outline-emerald-700"
+                />
+              </div>
+
               <div className="flex justify-end gap-2 pt-3">
                 <button
                   type="button"
@@ -1049,6 +1126,17 @@ export const TeacherManagement: React.FC = () => {
                 <p className="text-[10px] text-slate-400 mt-1">
                   A teacher can be assigned as Class In-charge for exactly one class.
                 </p>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Timetable Short Code (Optional)</label>
+                <input
+                  type="text"
+                  value={editShortCode}
+                  onChange={e => setEditShortCode(e.target.value)}
+                  placeholder="e.g. VK, MP"
+                  className="w-full p-2 border rounded-lg font-mono uppercase focus:outline-emerald-700"
+                />
               </div>
 
               <div className="flex justify-end gap-2 pt-3">

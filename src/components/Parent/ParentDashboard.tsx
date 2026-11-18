@@ -30,6 +30,7 @@ import { StudyMaterialsView } from './StudyMaterialsView';
 import { PWABottomNav } from '../Common/PWABottomNav';
 import { Footer } from '../Common/Footer';
 import { PlaceholderView } from '../Common/PlaceholderView';
+import { ParentTimetableView } from './ParentTimetableView';
 import { formatTuitionMonths } from '../Admin/FeeManagement';
 import { useHorizontalScroll, handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
 import { getAttendanceMedalEmoji } from '../../utils/reportCalculations';
@@ -3114,10 +3115,14 @@ export const ParentDashboard: React.FC = () => {
             <StudyMaterialsView onBackToHome={() => setActiveTab('home')} />
           )}
 
-          {/* TAB: TIME TABLE (Placeholder) */}
-          {/* TAB: TIME TABLE (Placeholder) */}
+          {/* TAB: TIME TABLE */}
           {activeTab === 'time_table' && (
-            <PlaceholderView type="time_table" onBack={() => setActiveTab('home')} />
+            <ParentTimetableView
+              student={activeChild}
+              classLabel={activeChild?.classId ? classesMap[activeChild.classId] : activeChild?.class}
+              onBack={() => setActiveTab('home')}
+              isMl={isMl}
+            />
           )}
 
           {/* TAB: QUIZ (Placeholder) */}

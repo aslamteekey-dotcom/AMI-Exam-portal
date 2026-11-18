@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { PlaceholderView } from '../Common/PlaceholderView';
 import { HikmaAdminModule } from './HikmaAdminModule';
+import { TimetableManager } from './TimetableManager';
 
 export const AdminDashboard: React.FC = () => {
   const { user, fetchWithAuth, lang, t, institutionSettings } = useAuth();
@@ -696,9 +697,7 @@ export const AdminDashboard: React.FC = () => {
       {activeTab === 'study_materials' && <StudyMaterialsManagement />}
       {activeTab === 'audit_logs' && <AuditLogsView />}
       {activeTab === 'settings' && <BackupSettings />}
-      {activeTab === 'time_table' && (
-        <PlaceholderView type="time_table" onBack={() => setActiveTab('overview')} />
-      )}
+      {activeTab === 'time_table' && <TimetableManager />}
       {activeTab === 'quiz' && (
         <PlaceholderView type="quiz" onBack={() => setActiveTab('overview')} />
       )}

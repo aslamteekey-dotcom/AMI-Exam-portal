@@ -124,6 +124,7 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { PlaceholderView } from '../Common/PlaceholderView';
+import { TeacherTimetableView } from './TeacherTimetableView';
 
 export type TeacherPortalTab =
   | 'home'
@@ -3133,7 +3134,7 @@ export const TeacherDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Primary Tabs in EXACT STRICT ORDER: 1. Home, 2. My Class, 3. Mark Entry, 4. Attendance, 5. Fees, 6. News, 7. Notification, 8. Contact, 9. About */}
+      {/* Primary Tabs in EXACT STRICT ORDER: 1. Home, 2. My Class, 3. Timetable, 4. Attendance, 5. Mark Entry, 6. Hikma Exam, 7. Quiz, 8. LMS, 9. Fee Record, 10. News, 11. Notification, 12. Contact, 13. About */}
       <div
         {...navScrollProps}
         className="bg-white/75 backdrop-blur-md px-3 sm:px-4 py-2 rounded-2xl border border-white/60 shadow-xl flex items-center gap-1.5 sm:gap-2 text-xs font-bold overflow-x-auto no-scrollbar cursor-grab active:cursor-grabbing select-none print:hidden no-print"
@@ -3164,61 +3165,20 @@ export const TeacherDashboard: React.FC = () => {
         >
           <Shield className="w-4 h-4" />
           <span>My Class</span>
-          {inChargeClass ? (
-            <span
-              className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                activeTab === 'my_class' ? 'bg-emerald-950/60 text-emerald-200' : 'bg-emerald-100 text-emerald-800'
-              }`}
-            >
-              {inChargeClass.name}
-            </span>
-          ) : (
-            <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-200 text-slate-600">
-              —
-            </span>
-          )}
         </button>
 
-        {/* 3. Mark Entry */}
+        {/* 3. Timetable */}
         <button
           type="button"
-          onClick={() => setActiveTab('mark_entry')}
+          onClick={() => setActiveTab('time_table')}
           className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
-            activeTab === 'mark_entry'
+            activeTab === 'time_table'
               ? 'bg-[#047857] text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
           }`}
         >
-          <BookOpen className="w-4 h-4" />
-          <span>Mark Entry</span>
-          <span
-            className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-              activeTab === 'mark_entry' ? 'bg-emerald-950/60 text-emerald-200' : 'bg-slate-200 text-slate-700'
-            }`}
-          >
-            {assignments.length}
-          </span>
-        </button>
-
-        {/* Hikma Exam (Independent Main Tab) */}
-        <button
-          type="button"
-          onClick={() => setActiveTab('hikma_exam')}
-          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
-            activeTab === 'hikma_exam'
-              ? 'bg-[#047857] text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
-          }`}
-        >
-          <Award className="w-4 h-4 text-amber-300" />
-          <span>Hikma Exam</span>
-          <span
-            className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
-              activeTab === 'hikma_exam' ? 'bg-emerald-950/60 text-emerald-200' : 'bg-emerald-100 text-emerald-800'
-            }`}
-          >
-            3 Models
-          </span>
+          <Clock className="w-4 h-4" />
+          <span>Timetable</span>
         </button>
 
         {/* 4. Attendance */}
@@ -3235,112 +3195,35 @@ export const TeacherDashboard: React.FC = () => {
           <span>Attendance</span>
         </button>
 
-        {/* 5. Fees (Consolidated Single Tab) */}
+        {/* 5. Mark Entry */}
         <button
           type="button"
-          onClick={() => setActiveTab('fees')}
+          onClick={() => setActiveTab('mark_entry')}
           className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
-            activeTab === 'fees'
+            activeTab === 'mark_entry'
               ? 'bg-[#047857] text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
           }`}
         >
-          <CreditCard className="w-4 h-4" />
-          <span>{inChargeClass ? 'Class Fees' : 'Fees'}</span>
-          {inChargeClass && (
-            <span
-              className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                activeTab === 'fees'
-                  ? 'bg-emerald-950 text-emerald-200'
-                  : 'bg-emerald-100 text-emerald-800'
-              }`}
-            >
-              {inChargeClass.name}
-            </span>
-          )}
+          <BookOpen className="w-4 h-4" />
+          <span>Mark Entry</span>
         </button>
 
-        {/* 6. News */}
+        {/* 6. Hikma Exam */}
         <button
           type="button"
-          onClick={() => setActiveTab('news')}
+          onClick={() => setActiveTab('hikma_exam')}
           className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
-            activeTab === 'news'
+            activeTab === 'hikma_exam'
               ? 'bg-[#047857] text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
           }`}
         >
-          <Newspaper className="w-4 h-4" />
-          <span>News</span>
-          <span
-            className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-              activeTab === 'news' ? 'bg-emerald-950/60 text-emerald-200' : 'bg-slate-200 text-slate-700'
-            }`}
-          >
-            {newsList.length}
-          </span>
+          <Award className="w-4 h-4 text-amber-300" />
+          <span>Hikma Exam</span>
         </button>
 
-        {/* 7. Notification */}
-        <button
-          type="button"
-          onClick={() => setActiveTab('notification')}
-          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
-            activeTab === 'notification'
-              ? 'bg-[#047857] text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
-          }`}
-        >
-          <Bell className="w-4 h-4" />
-          <span>Notification</span>
-          {notifications.some(n => !n.read) && (
-            <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-          )}
-        </button>
-
-        {/* 8. Contact */}
-        <button
-          type="button"
-          onClick={() => setActiveTab('contact')}
-          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
-            activeTab === 'contact'
-              ? 'bg-[#047857] text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
-          }`}
-        >
-          <PhoneCall className="w-4 h-4" />
-          <span>Contact</span>
-        </button>
-
-        {/* 9. About */}
-        <button
-          type="button"
-          onClick={() => setActiveTab('about')}
-          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
-            activeTab === 'about'
-              ? 'bg-[#047857] text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
-          }`}
-        >
-          <Sparkles className="w-4 h-4 text-amber-300" />
-          <span>About</span>
-        </button>
-
-        {/* 10. Time table */}
-        <button
-          type="button"
-          onClick={() => setActiveTab('time_table')}
-          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
-            activeTab === 'time_table'
-              ? 'bg-[#047857] text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
-          }`}
-        >
-          <Clock className="w-4 h-4" />
-          <span>Time table</span>
-        </button>
-
-        {/* 11. Quiz */}
+        {/* 7. Quiz */}
         <button
           type="button"
           onClick={() => setActiveTab('quiz')}
@@ -3354,7 +3237,7 @@ export const TeacherDashboard: React.FC = () => {
           <span>Quiz</span>
         </button>
 
-        {/* 12. LMS */}
+        {/* 8. LMS */}
         <button
           type="button"
           onClick={() => setActiveTab('lms')}
@@ -3366,6 +3249,76 @@ export const TeacherDashboard: React.FC = () => {
         >
           <GraduationCap className="w-4 h-4" />
           <span>LMS</span>
+        </button>
+
+        {/* 9. Fee Record */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('fees')}
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'fees'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
+          }`}
+        >
+          <CreditCard className="w-4 h-4" />
+          <span>Fee Record</span>
+        </button>
+
+        {/* 10. News */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('news')}
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'news'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
+          }`}
+        >
+          <Newspaper className="w-4 h-4" />
+          <span>News</span>
+        </button>
+
+        {/* 11. Notification */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('notification')}
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'notification'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
+          }`}
+        >
+          <Bell className="w-4 h-4" />
+          <span>Notification</span>
+        </button>
+
+        {/* 12. Contact */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('contact')}
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'contact'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
+          }`}
+        >
+          <PhoneCall className="w-4 h-4" />
+          <span>Contact</span>
+        </button>
+
+        {/* 13. About */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('about')}
+          className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+            activeTab === 'about'
+              ? 'bg-[#047857] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 bg-white/60 hover:bg-white/90'
+          }`}
+        >
+          <Sparkles className="w-4 h-4 text-amber-300" />
+          <span>About</span>
         </button>
       </div>
 
@@ -8104,9 +8057,9 @@ export const TeacherDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Placeholders for Time table, Quiz, and LMS */}
+      {/* Time table, Quiz, and LMS */}
       {activeTab === 'time_table' && (
-        <PlaceholderView type="time_table" onBack={() => setActiveTab('home')} />
+        <TeacherTimetableView user={user} onBack={() => setActiveTab('home')} isMl={lang === 'ml'} />
       )}
       {activeTab === 'quiz' && (
         <PlaceholderView type="quiz" onBack={() => setActiveTab('home')} />

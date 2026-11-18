@@ -38,6 +38,7 @@ export interface User {
   email?: string;
   phone?: string;
   inChargeClassId?: string;
+  shortCode?: string;
   assignments?: TeacherAssignment[];
   assignedSubjects?: TeacherAssignment[];
   createdAt?: string;
@@ -1048,4 +1049,29 @@ export function calculateHikmaStudentScore(
   };
 }
 
+// -------------------------------------------------------------
+// MASTER TIMETABLE SYSTEM TYPES
+// -------------------------------------------------------------
+export type TimetableDayName =
+  | 'Monday'
+  | 'Tuesday'
+  | 'Wednesday'
+  | 'Thursday'
+  | 'Friday'
+  | 'Saturday';
 
+export interface TimetablePeriod {
+  period: 1 | 2 | 3;
+  subject: string;
+  teacherShortName: string;
+}
+
+export type TimetableScheduleMap = Partial<Record<TimetableDayName, TimetablePeriod[]>>;
+
+export interface ClassTimetableDoc {
+  id?: string;
+  classId: string; // "1" to "9"
+  schedule: TimetableScheduleMap;
+  updatedAt?: string;
+  updatedBy?: string;
+}
