@@ -31,9 +31,9 @@ import { PWABottomNav } from '../Common/PWABottomNav';
 import { Footer } from '../Common/Footer';
 import { PlaceholderView } from '../Common/PlaceholderView';
 import { ParentTimetableView } from './ParentTimetableView';
+import { AttendanceBadgeCard } from './AttendanceBadgeCard';
 import { formatTuitionMonths } from '../Admin/FeeManagement';
 import { useHorizontalScroll, handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
-import { getAttendanceMedalEmoji } from '../../utils/reportCalculations';
 import {
   User,
   GraduationCap,
@@ -960,16 +960,17 @@ export const ParentDashboard: React.FC = () => {
     <div className="w-full flex-1 flex flex-col min-h-0">
       {/* Welcome Banner: Spacious */}
       <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-[#047857] text-white rounded-2xl sm:rounded-3xl p-4 sm:p-5 shadow-xl border border-white/30 print:hidden shrink-0 mb-3 sm:mb-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-lg sm:text-2xl font-bold font-serif leading-tight truncate">
+        <div className="flex flex-col gap-2.5">
+          <div className="min-w-0 w-full">
+            <h1 className="text-lg sm:text-2xl font-bold font-serif leading-tight whitespace-normal break-words">
               {isMl && user?.nameMl ? user.nameMl : user?.name}
             </h1>
-            <p className="text-xs sm:text-sm text-emerald-200 mt-1 truncate">
-              {t.parentRole} • {currentMadrasaName}
+            <p className="text-xs sm:text-sm text-emerald-200 mt-1 whitespace-normal break-words leading-snug">
+              <span className="block whitespace-normal">{t.parentRole}</span>
+              <span className="block whitespace-normal">{currentMadrasaName}</span>
             </p>
           </div>
-          <div className="text-right font-serif text-emerald-300 text-sm sm:text-base shrink-0" dir="rtl">
+          <div className="w-full text-center font-serif text-emerald-300 text-sm sm:text-base" dir="rtl">
             السلام عليكم و رحمة الله
           </div>
         </div>
@@ -1111,12 +1112,12 @@ export const ParentDashboard: React.FC = () => {
 
                   {/* Student Details (Right Side) */}
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
-                      <h3 className="font-bold text-sm sm:text-base text-[#047857] leading-tight truncate">
+                    <div className="flex flex-col items-start gap-0.5">
+                      <h3 className="font-bold text-sm sm:text-base text-[#047857] leading-tight whitespace-normal break-words">
                         {student.nameEn || 'Aliza Fathima TK'}
                       </h3>
                       {student.nameMl && (
-                        <span className="text-black text-xs sm:text-sm font-medium leading-tight truncate font-ml">
+                        <span className="text-black text-xs sm:text-sm font-medium leading-tight whitespace-normal break-words font-ml">
                           {student.nameMl}
                         </span>
                       )}
@@ -1909,109 +1910,68 @@ export const ParentDashboard: React.FC = () => {
                 const leavesTaken = attData.leavesTaken;
                 const percentage = attData.percentageStr;
                 const totalHolidaysCount = attData.totalHolidaysCount;
-                const medalEmoji = getAttendanceMedalEmoji(percentage);
                 const monthlyRecords = attData.monthlyRecords;
 
                 return (
                   <div className="space-y-6">
                     {/* Header Card with 4 Stat Cards & Attendance Badge */}
                     <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <CalendarCheck className="w-5 h-5 text-emerald-800" />
-                            <h2 className="text-base sm:text-lg font-bold text-slate-900">
-                              {isMl ? 'ഹാജർ നിലവാര രേഖ' : 'Student Attendance Record'}
-                            </h2>
-                          </div>
-                          <p className="text-xs text-slate-500 mt-1">
-                            Official attendance log for {selectedChild?.nameEn} (Class: {(classesMap[selectedChild?.classId || ''] || selectedChild?.classId || '').replace(/^Class\s*/i, '')})
-                          </p>
-                        </div>
-
+                      <div className="border-b border-slate-100 pb-4">
                         <div className="flex items-center gap-2">
-                          <span className="bg-emerald-100 text-emerald-900 border border-emerald-300 font-bold px-3 py-1 rounded-full text-xs font-mono">
-                            {percentage}% Attendance Rate
-                          </span>
+                          <CalendarCheck className="w-5 h-5 text-emerald-800" />
+                          <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                            {isMl ? 'ഹാജർ നിലവാര രേഖ' : 'Student Attendance Record'}
+                          </h2>
                         </div>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Official attendance log for {selectedChild?.nameEn} (Class: {(classesMap[selectedChild?.classId || ''] || selectedChild?.classId || '').replace(/^Class\s*/i, '')})
+                        </p>
                       </div>
 
-                      {/* 4 Dedicated Attendance & Holiday KPI Badges + Attendance Badge */}
-                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-5 text-xs">
-                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                      {/* 4 Stat Cards in a Single Horizontal Row */}
+                      <div
+                        onWheel={handleHorizontalWheel}
+                        className="flex flex-row overflow-x-auto no-scrollbar sm:grid sm:grid-cols-4 gap-2.5 sm:gap-3 pt-5 text-xs"
+                      >
+                        <div className="bg-slate-50 p-3.5 sm:p-4 rounded-xl border border-slate-200 min-w-[130px] flex-1 sm:min-w-0 shrink-0">
                           <span className="text-[10px] font-bold text-slate-500 uppercase block">
                             Total Working Days
                           </span>
                           <span className="text-2xl font-black text-slate-900 font-mono mt-1 block">
                             {totalWorkingDays}
                           </span>
-                          <span className="text-[10px] text-slate-400">Excludes Holidays</span>
                         </div>
 
-                        <div className="bg-emerald-50/70 p-4 rounded-xl border border-emerald-200">
+                        <div className="bg-emerald-50/70 p-3.5 sm:p-4 rounded-xl border border-emerald-200 min-w-[130px] flex-1 sm:min-w-0 shrink-0">
                           <span className="text-[10px] font-bold text-emerald-800 uppercase block">
                             Attended Days
                           </span>
                           <span className="text-2xl font-black text-emerald-900 font-mono mt-1 block">
                             {attendedDays}
                           </span>
-                          <span className="text-[10px] text-emerald-700 font-semibold">Present in Classes</span>
                         </div>
 
-                        <div className="bg-amber-50/80 p-4 rounded-xl border border-amber-300">
-                          <span className="text-[10px] font-bold text-amber-900 uppercase block flex items-center gap-1">
-                            <span>🏖️</span>
-                            <span>Official Holidays</span>
+                        <div className="bg-amber-50/80 p-3.5 sm:p-4 rounded-xl border border-amber-300 min-w-[130px] flex-1 sm:min-w-0 shrink-0">
+                          <span className="text-[10px] font-bold text-amber-900 uppercase block">
+                            Official Holidays
                           </span>
                           <span className="text-2xl font-black text-amber-950 font-mono mt-1 block">
                             {totalHolidaysCount}
                           </span>
-                          <span className="text-[10px] text-amber-800 font-medium">Exempt / Non-Penalized</span>
                         </div>
 
-                        <div className="bg-rose-50/70 p-4 rounded-xl border border-rose-200">
+                        <div className="bg-rose-50/70 p-3.5 sm:p-4 rounded-xl border border-rose-200 min-w-[130px] flex-1 sm:min-w-0 shrink-0">
                           <span className="text-[10px] font-bold text-rose-800 uppercase block">
                             Leaves Taken
                           </span>
                           <span className="text-2xl font-black text-rose-900 font-mono mt-1 block">
                             {leavesTaken}
                           </span>
-                          <span className="text-[10px] text-rose-700">Authorized / Medical</span>
-                        </div>
-
-                        <div className="bg-emerald-900 text-white p-4 rounded-xl shadow-xs col-span-2 sm:col-span-1">
-                          <span className="text-[10px] font-bold text-emerald-200 uppercase block">
-                            Attendance Badge
-                          </span>
-                          <div className="flex items-center mt-1">
-                            <span className="text-2xl font-black text-emerald-300 font-mono">
-                              {percentage}%
-                            </span>
-                            {medalEmoji && (
-                              <span className="ml-2 text-2xl" aria-label="Attendance Medal">
-                                {medalEmoji}
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-[10px] text-emerald-100 block mt-1">
-                            {Number(percentage) >= 80 ? '✓ Qualified for Exams' : 'Needs Regularity'}
-                          </span>
                         </div>
                       </div>
 
-                      {/* Progress Bar Gauge */}
-                      <div className="mt-5 pt-4 border-t border-slate-100">
-                        <div className="flex items-center justify-between text-xs text-slate-600 mb-1.5 font-medium">
-                          <span>Overall Attendance Compliance</span>
-                          <span className="font-bold text-emerald-800">{percentage}% (Minimum 80% required)</span>
-                        </div>
-                        <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
-                          <div
-                            className="bg-emerald-700 h-2.5 rounded-full transition-all duration-500"
-                            style={{ width: `${Math.min(100, Math.max(10, Number(percentage)))}%` }}
-                          ></div>
-                        </div>
-                      </div>
+                      {/* Dynamic Circular SVG Attendance Badge */}
+                      <AttendanceBadgeCard percentage={percentage} />
                     </div>
 
                     {/* Month-wise Attendance Breakdown Table */}
