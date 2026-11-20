@@ -33,6 +33,7 @@ import { MarkEntryScreen } from './MarkEntryScreen';
 import { HikmaMarkEntryView } from './HikmaMarkEntryView';
 import { HikmaUnifiedScoreSheet } from '../Admin/HikmaUnifiedScoreSheet';
 import { MonthlyAttendanceReport } from '../Attendance/MonthlyAttendanceReport';
+import { MonthlyMarkingCalendar } from './MonthlyMarkingCalendar';
 import { exportScoreSheetToPdf } from '../../utils/scoreSheetPdfExport';
 import { PWABottomNav } from '../Common/PWABottomNav';
 import { useHorizontalScroll, handleHorizontalWheel } from '../../hooks/useHorizontalScroll';
@@ -268,7 +269,9 @@ export const TeacherDashboard: React.FC = () => {
 
   const todayStr = formatLocalDate(new Date());
   const [attendanceClassId, setAttendanceClassId] = useState<string>('');
-  const [attendanceMode, setAttendanceMode] = useState<'daily' | 'weekly' | 'monthly_report'>('daily');
+  const [attendanceMainTab, setAttendanceMainTab] = useState<'marking' | 'report'>('marking');
+  const [attendanceMode, setAttendanceMode] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+  const [attendanceReportSubTab, setAttendanceReportSubTab] = useState<'overview' | 'monthly_report'>('overview');
   const [selectedAttendanceDate, setSelectedAttendanceDate] = useState<string>(() => {
     return formatLocalDate(new Date());
   });
@@ -306,7 +309,8 @@ export const TeacherDashboard: React.FC = () => {
   const [dailySaveSuccess, setDailySaveSuccess] = useState(false);
   const [isSavingWeekly, setIsSavingWeekly] = useState(false);
   const [weeklySaveSuccess, setWeeklySaveSuccess] = useState(false);
-  const [dailyViewLayout, setDailyViewLayout] = useState<'table' | 'cards'>('table');
+  const [isSavingMonthly, setIsSavingMonthly] = useState(false);
+  const [monthlySaveSuccess, setMonthlySaveSuccess] = useState(false);
   const [isSpecialWorkingDay, setIsSpecialWorkingDay] = useState<boolean>(false);
 
   // Reset teacher special working day override when switching date or class
@@ -1626,36 +1630,6 @@ export const TeacherDashboard: React.FC = () => {
     }));
   };
 
-  // Mark all present in Daily view (disallowed if holiday, locked, or future)
-  const markAllDailyPresent = () => {
-    if (isDateHoliday(selectedAttendanceDate, attendanceClassId) || isDateLocked(selectedAttendanceDate) || selectedAttendanceDate > todayStr) {
-      return;
-    }
-    const currentStudents = allStudents.filter(
-      s => (s.classId === attendanceClassId || isClassMatch([attendanceClassId], s.classId)) && s.status === 'active'
-    );
-    const newMap: Record<string, boolean> = {};
-    currentStudents.forEach(st => {
-      newMap[st.id] = true;
-    });
-    setDailyStatusMap(newMap);
-  };
-
-  // Mark all absent in Daily view (disallowed if holiday, locked, or future)
-  const markAllDailyAbsent = () => {
-    if (isDateHoliday(selectedAttendanceDate, attendanceClassId) || isDateLocked(selectedAttendanceDate) || selectedAttendanceDate > todayStr) {
-      return;
-    }
-    const currentStudents = allStudents.filter(
-      s => (s.classId === attendanceClassId || isClassMatch([attendanceClassId], s.classId)) && s.status === 'active'
-    );
-    const newMap: Record<string, boolean> = {};
-    currentStudents.forEach(st => {
-      newMap[st.id] = false;
-    });
-    setDailyStatusMap(newMap);
-  };
-
   // Toggle student day in Weekly view (strictly disallow holiday, future days, and locked days)
   const toggleWeeklyStudentDay = (studentId: string, dateStr: string) => {
     if (isDateHoliday(dateStr, attendanceClassId) || dateStr > todayStr || isDateLocked(dateStr)) {
@@ -2229,6 +2203,179 @@ export const TeacherDashboard: React.FC = () => {
       alert('Failed to save weekly attendance: ' + (err.message || 'Unknown error'));
     } finally {
       setIsSavingWeekly(false);
+    }
+  };
+
+  // Batch Save Monthly Attendance for a Selected Student
+  const handleSaveMonthlyAttendance = async (
+    studentId: string,
+    monthKey: string,
+    changes: Record<string, boolean>
+  ) => {
+    if (!attendanceClassId || !studentId || Object.keys(changes).length === 0) return;
+    setIsSavingMonthly(true);
+    setMonthlySaveSuccess(false);
+    try {
+      const currentStudents = sortStudentsBoysFirst(
+        allStudents.filter(
+          s =>
+            (s.classId === attendanceClassId ||
+              (s.classId &&
+                attendanceClassId &&
+                s.classId.replace(/[^0-9]/g, '') === attendanceClassId.replace(/[^0-9]/g, '')) ||
+              isClassMatch([attendanceClassId], s.classId)) &&
+            s.status === 'active'
+        )
+      );
+
+      const updatedDailyRecords: Record<string, DailyAttendanceRecord> = {
+        ...(classAttendanceConfig?.dailyRecords || {}),
+      };
+
+      const modifiedDateKeys: string[] = [];
+
+      Object.entries(changes).forEach(([dateStr, isPres]) => {
+        if (!dateStr || dateStr > todayStr) return;
+        if (isDateHoliday(dateStr, attendanceClassId)) return;
+        if (isDateSunday(dateStr) && !isSundayUnlockedForClass(dateStr, attendanceClassId)) return;
+
+        const existingRec = updatedDailyRecords[dateStr];
+        const nextStatusMap: Record<string, boolean> = {
+          ...(existingRec?.statusMap || {}),
+          [studentId]: isPres,
+        };
+
+        const presentSet = new Set<string>(existingRec?.presentStudentIds || []);
+        const absentSet = new Set<string>(existingRec?.absentStudentIds || []);
+
+        if (isPres) {
+          presentSet.add(studentId);
+          absentSet.delete(studentId);
+        } else {
+          absentSet.add(studentId);
+          presentSet.delete(studentId);
+        }
+
+        updatedDailyRecords[dateStr] = {
+          ...(existingRec || {}),
+          date: dateStr,
+          presentStudentIds: Array.from(presentSet),
+          absentStudentIds: Array.from(absentSet),
+          statusMap: nextStatusMap,
+          markedAt: new Date().toISOString(),
+          markedBy: user?.name || 'Class Teacher',
+          isHoliday: false,
+        };
+        modifiedDateKeys.push(dateStr);
+      });
+
+      const workingDateKeys = Object.keys(updatedDailyRecords).filter(dKey => {
+        const rec = updatedDailyRecords[dKey];
+        if (!rec) return false;
+        if (rec.isHoliday || isDateHoliday(dKey, attendanceClassId)) return false;
+        if (isDateSunday(dKey) && !isSundayUnlockedForClass(dKey, attendanceClassId)) return false;
+        const hasMarks =
+          (rec.statusMap && Object.keys(rec.statusMap).length > 0) ||
+          (rec.presentStudentIds && rec.presentStudentIds.length > 0) ||
+          (rec.absentStudentIds && rec.absentStudentIds.length > 0) ||
+          Boolean(rec.markedAt);
+        return hasMarks;
+      });
+
+      const totalWorking = workingDateKeys.length;
+      const updatedDaysAttended: Record<string, number> = {
+        ...(classAttendanceConfig?.studentDaysAttended || {}),
+      };
+
+      currentStudents.forEach(st => {
+        let count = 0;
+        workingDateKeys.forEach(dKey => {
+          const rec = updatedDailyRecords[dKey];
+          const isPres = Boolean(
+            rec.statusMap?.[st.id] === true ||
+              (rec.statusMap?.[st.id] as any) === 'Present' ||
+              (rec.statusMap?.[st.id] as any) === 'P' ||
+              (rec.presentStudentIds && rec.presentStudentIds.includes(st.id))
+          );
+          if (isPres) count++;
+        });
+        updatedDaysAttended[st.id] = count;
+      });
+
+      const updatedConfig: ClassAttendanceConfig = {
+        classId: attendanceClassId,
+        totalWorkingDays: totalWorking,
+        studentDaysAttended: updatedDaysAttended,
+        dailyRecords: updatedDailyRecords,
+        lockedDays: { ...(classAttendanceConfig?.lockedDays || {}) },
+        updatedAt: new Date().toISOString(),
+      };
+
+      // 1. Save class attendance document to Firestore
+      await setDoc(doc(db, 'attendance', attendanceClassId), cleanForFirestore(updatedConfig), {
+        merge: true,
+      });
+
+      // 2. Save individual daily docs for modified dates
+      for (const dateStr of modifiedDateKeys) {
+        if (updatedDailyRecords[dateStr]) {
+          await setDoc(
+            doc(db, 'attendance', `${attendanceClassId}_${dateStr}`),
+            cleanForFirestore({
+              classId: attendanceClassId,
+              ...updatedDailyRecords[dateStr],
+              date: dateStr,
+              updatedAt: new Date().toISOString(),
+            }),
+            { merge: true }
+          ).catch(() => {});
+        }
+      }
+
+      // 3. Update student summary doc(s)
+      for (const st of currentStudents) {
+        try {
+          await setDoc(
+            doc(db, 'students', st.id),
+            cleanForFirestore({
+              attendance: {
+                daysAttended: updatedDaysAttended[st.id],
+                totalWorkingDays: totalWorking,
+              },
+            }),
+            { merge: true }
+          );
+        } catch {}
+      }
+
+      // 4. Sync local API state
+      await fetchWithAuth(`/api/attendance/class/${attendanceClassId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedConfig),
+      });
+
+      // 5. Immediate React UI state update
+      setClassAttendanceConfig(updatedConfig);
+      setStudentDaysAttendedMap(updatedDaysAttended);
+      setAttendanceTotalWorkingDays(totalWorking);
+      setMonthlySaveSuccess(true);
+
+      const targetStudent = currentStudents.find(s => s.id === studentId);
+      logAuditEvent({
+        action: 'ATTENDANCE_MARKED',
+        details: `Teacher ${user?.name || 'Teacher'} batch-saved monthly attendance for ${targetStudent?.nameEn || studentId} (${monthKey}, ${modifiedDateKeys.length} day(s)) in Class ${classes.find(c => c.id === attendanceClassId)?.name || attendanceClassId}.`,
+        currentUser: user,
+        recordType: 'attendance',
+        recordId: `${attendanceClassId}_${studentId}_${monthKey}`,
+      }).catch(e => console.warn('Audit log error:', e));
+
+      setTimeout(() => setMonthlySaveSuccess(false), 3500);
+    } catch (err: any) {
+      console.error('Error saving monthly attendance:', err);
+      alert('Failed to save monthly attendance: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsSavingMonthly(false);
     }
   };
 
@@ -4936,6 +5083,8 @@ export const TeacherDashboard: React.FC = () => {
           '2027-01': { en: 'January 2027', ml: 'ജനുവരി 2027' },
           '2027-02': { en: 'February 2027', ml: 'ഫെബ്രുവരി 2027' },
           '2027-03': { en: 'March 2027', ml: 'മാർച്ച് 2027' },
+          '2027-04': { en: 'April 2027', ml: 'ഏപ്രിൽ 2027' },
+          '2027-05': { en: 'May 2027', ml: 'മേയ് 2027' },
         };
 
         const allCandidateMonths = [
@@ -5047,31 +5196,31 @@ export const TeacherDashboard: React.FC = () => {
 
         return (
           <div className="space-y-6">
-            {/* Header Control Card: Class Selector, Sync Badge & View Toggle */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
+            {/* Header Control Card: Class Selector, Main Tabs & Sub-View Toggles */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 shadow-xs space-y-4">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="p-1.5 rounded-xl bg-emerald-100 text-emerald-800">
                       <CalendarCheck className="w-5 h-5 text-emerald-800" />
                     </span>
-                    <h2 className="text-lg font-bold text-slate-900">
+                    <h2 className="text-base sm:text-lg font-bold text-slate-900">
                       Attendance Management System
                     </h2>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
-                    Mark morning session attendance with instant real-time cloud synchronization to Parent Portal.
+                    Manage student attendance marking and review monthly attendance reports.
                   </p>
                 </div>
 
-                {/* Class Selector Dropdown */}
+                {/* Class Selector Dropdown (No Live Sync Active badge) */}
                 <div className="flex flex-wrap items-center gap-2.5">
-                  <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                  <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 w-full sm:w-auto">
                     <label className="text-xs font-bold text-slate-700 whitespace-nowrap">Class:</label>
                     <select
                       value={attendanceClassId}
                       onChange={e => setAttendanceClassId(e.target.value)}
-                      className="bg-white text-xs font-bold text-slate-800 py-1.5 px-2.5 rounded-lg border border-slate-300 focus:outline-emerald-600 cursor-pointer"
+                      className="bg-white text-xs font-bold text-slate-800 py-1.5 px-2.5 rounded-lg border border-slate-300 focus:outline-emerald-600 cursor-pointer flex-1 sm:flex-initial"
                     >
                       {classes.map(c => {
                         const isInCharge = (inChargeClass && inChargeClass.id === c.id);
@@ -5084,11 +5233,6 @@ export const TeacherDashboard: React.FC = () => {
                     </select>
                   </div>
 
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                    <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
-                    Live Sync Active
-                  </span>
-
                   {isAlternateScheduleClass(classes.find(c => c.id === attendanceClassId)?.name || attendanceClassId) && (
                     <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-blue-50 text-blue-900 border border-blue-200">
                       <Clock className="w-3.5 h-3.5 text-blue-600" />
@@ -5098,51 +5242,110 @@ export const TeacherDashboard: React.FC = () => {
                 </div>
               </div>
 
-              {/* Mode Toggle: Daily vs Weekly */}
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold">
-                  <button
-                    type="button"
-                    onClick={() => setAttendanceMode('daily')}
-                    className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition cursor-pointer ${
-                      attendanceMode === 'daily'
-                        ? 'bg-emerald-800 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    <Calendar className="w-4 h-4" />
-                    <span>Daily Marking</span>
-                  </button>
+              {/* 2 Main Navigation Tabs: Attendance Marking | Attendance Report */}
+              <div className="grid grid-cols-2 sm:inline-flex gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setAttendanceMainTab('marking')}
+                  className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg transition cursor-pointer ${
+                    attendanceMainTab === 'marking'
+                      ? 'bg-emerald-900 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                  }`}
+                >
+                  <CalendarCheck className="w-4 h-4 shrink-0" />
+                  <span>Attendance Marking</span>
+                </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setAttendanceMode('weekly')}
-                    className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition cursor-pointer ${
-                      attendanceMode === 'weekly'
-                        ? 'bg-emerald-800 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    <CalendarDays className="w-4 h-4" />
-                    <span>Weekly Marking</span>
-                  </button>
+                <button
+                  type="button"
+                  onClick={() => setAttendanceMainTab('report')}
+                  className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg transition cursor-pointer ${
+                    attendanceMainTab === 'report'
+                      ? 'bg-emerald-900 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                  }`}
+                >
+                  <FileSpreadsheet className="w-4 h-4 shrink-0" />
+                  <span>Attendance Report</span>
+                </button>
+              </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setAttendanceMode('monthly_report')}
-                    className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition cursor-pointer ${
-                      attendanceMode === 'monthly_report'
-                        ? 'bg-emerald-800 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    <FileSpreadsheet className="w-4 h-4" />
-                    <span>Monthly Report</span>
-                  </button>
-                </div>
+              {/* Sub-Navigation & Save Toasts */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                {attendanceMainTab === 'marking' ? (
+                  <div className="grid grid-cols-3 sm:inline-flex gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 text-[11px] sm:text-xs font-bold w-full sm:w-auto">
+                    <button
+                      type="button"
+                      onClick={() => setAttendanceMode('daily')}
+                      className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-4 py-2 rounded-lg transition cursor-pointer ${
+                        attendanceMode === 'daily'
+                          ? 'bg-emerald-800 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                      <span className="truncate">Daily Marking</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setAttendanceMode('weekly')}
+                      className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-4 py-2 rounded-lg transition cursor-pointer ${
+                        attendanceMode === 'weekly'
+                          ? 'bg-emerald-800 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <CalendarDays className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                      <span className="truncate">Weekly Marking</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setAttendanceMode('monthly')}
+                      className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-4 py-2 rounded-lg transition cursor-pointer ${
+                        attendanceMode === 'monthly'
+                          ? 'bg-emerald-800 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                      <span className="truncate">Monthly Marking</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 sm:inline-flex gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold w-full sm:w-auto">
+                    <button
+                      type="button"
+                      onClick={() => setAttendanceReportSubTab('overview')}
+                      className={`flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg transition cursor-pointer ${
+                        attendanceReportSubTab === 'overview'
+                          ? 'bg-emerald-800 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Users className="w-4 h-4 shrink-0" />
+                      <span>Monthly wise attendance overview</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setAttendanceReportSubTab('monthly_report')}
+                      className={`flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg transition cursor-pointer ${
+                        attendanceReportSubTab === 'monthly_report'
+                          ? 'bg-emerald-800 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <FileSpreadsheet className="w-4 h-4 shrink-0" />
+                      <span>Monthly report</span>
+                    </button>
+                  </div>
+                )}
 
                 {/* Quick Save Alert Toast */}
-                {(dailySaveSuccess || weeklySaveSuccess) && (
+                {(dailySaveSuccess || weeklySaveSuccess || monthlySaveSuccess) && (
                   <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 animate-fade-in">
                     <CheckCheck className="w-4 h-4 text-emerald-700" />
                     <span>Saved &amp; Synced with Parent Portal in Real-time!</span>
@@ -5160,7 +5363,7 @@ export const TeacherDashboard: React.FC = () => {
             </div>
 
             {/* VIEW 1: DAILY ATTENDANCE MARKING */}
-            {attendanceMode === 'daily' && (() => {
+            {attendanceMainTab === 'marking' && attendanceMode === 'daily' && (() => {
               const dailyRecord = classAttendanceConfig?.dailyRecords?.[selectedAttendanceDate];
               const lockStatus = attendanceLocks.getDateLockStatus(selectedAttendanceDate, dailyRecord);
               const isDailyRecorded = lockStatus.isRecorded;
@@ -5374,128 +5577,33 @@ export const TeacherDashboard: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Actions & Metrics Bar */}
-                    <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {!isDailyHoliday && !isScheduledOffDay && (
-                          <>
+                    {(isDailyHoliday || isScheduledOffDay) && (
+                      <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
+                        <div>
+                          {isScheduledOffDay && (
                             <button
                               type="button"
-                              onClick={markAllDailyPresent}
-                              disabled={isDailyLocked}
-                              className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition flex items-center gap-1 ${
-                                isDailyLocked
-                                  ? 'bg-slate-100 text-slate-400 border-slate-200 opacity-50 cursor-not-allowed'
-                                  : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 cursor-pointer'
-                              }`}
-                              title={isDailyLocked ? "Record is locked to prevent double entry" : "Mark All Present"}
+                              onClick={() => setIsSpecialWorkingDay(true)}
+                              className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white shadow-xs transition flex items-center gap-1.5 cursor-pointer"
                             >
-                              <Check className="w-3.5 h-3.5" />
-                              Mark All Present
+                              <CalendarCheck className="w-3.5 h-3.5" />
+                              <span>📅 Make it a Working Day</span>
                             </button>
-
-                            <button
-                              type="button"
-                              onClick={markAllDailyAbsent}
-                              disabled={isDailyLocked}
-                              className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition flex items-center gap-1 ${
-                                isDailyLocked
-                                  ? 'bg-slate-100 text-slate-400 border-slate-200 opacity-50 cursor-not-allowed'
-                                  : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100 cursor-pointer'
-                              }`}
-                              title={isDailyLocked ? "Record is locked to prevent double entry" : "Mark All Absent"}
-                            >
-                              <X className="w-3.5 h-3.5" />
-                              Mark All Absent
-                            </button>
-                          </>
-                        )}
-                        {isScheduledOffDay && (
-                          <button
-                            type="button"
-                            onClick={() => setIsSpecialWorkingDay(true)}
-                            className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white shadow-xs transition flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <CalendarCheck className="w-3.5 h-3.5" />
-                            <span>📅 Make it a Working Day</span>
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Counter Badges & Save / Unlock Request Button */}
-                      <div className="flex items-center gap-3 flex-wrap">
+                          )}
+                        </div>
                         {isDailyHoliday ? (
                           <div className="px-3 py-1.5 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 text-xs font-bold flex items-center gap-1.5">
                             <span>🏖️</span>
                             <span>Official Holiday · Working Day Exempt</span>
                           </div>
-                        ) : isScheduledOffDay ? (
+                        ) : (
                           <div className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold flex items-center gap-1.5">
                             <span>📅</span>
                             <span>Scheduled Off-Day</span>
                           </div>
-                        ) : (
-                          <>
-                            <div className="flex items-center gap-2 text-xs font-mono font-bold">
-                              <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900 border border-emerald-200">
-                                Present: {dailyPresentCount} / {classStudents.length} ({dailyPercentage}%)
-                              </span>
-                              <span className="px-2.5 py-1 rounded-lg bg-rose-100 text-rose-900 border border-rose-200">
-                                Absent: {dailyAbsentCount}
-                              </span>
-                            </div>
-
-                            {isDailyLocked ? (
-                              reqForDate?.status === 'pending' ? (
-                                <div className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-amber-950 bg-amber-100 rounded-xl border border-amber-300 shadow-2xs">
-                                  <Clock className="w-4 h-4 text-amber-700 animate-spin" />
-                                  <span>Request Sent - Pending Approval</span>
-                                </div>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenUnlockModal(selectedAttendanceDate)}
-                                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-amber-50 rounded-xl transition border border-slate-300 hover:border-amber-400 shadow-2xs cursor-pointer"
-                                  title="Request Principal to Unlock this record for corrections"
-                                >
-                                  <Unlock className="w-4 h-4 text-amber-600" />
-                                  <span>Request Unlock</span>
-                                </button>
-                              )
-                            ) : (
-                              <div className="flex items-center gap-2">
-                                {isDailyEditing && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRelockDate(selectedAttendanceDate)}
-                                    className="px-3 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer"
-                                  >
-                                    Cancel
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={handleSaveDailyAttendance}
-                                  disabled={isSavingDaily}
-                                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs disabled:opacity-50 cursor-pointer"
-                                >
-                                  <Save className="w-4 h-4" />
-                                  <span>
-                                    {isSavingDaily
-                                      ? 'Saving...'
-                                      : dailySaveSuccess
-                                      ? 'Saved!'
-                                      : isDailyEditing
-                                      ? 'Save Corrections'
-                                      : 'Save Attendance'}
-                                  </span>
-                                </button>
-                              </div>
-                            )}
-                          </>
                         )}
                       </div>
-                    </div>
+                    )}
                   </div>
 
                   {/* PROMINENT HOLIDAY BANNER (READ ONLY - NO REMOVE BUTTON FOR TEACHER) */}
@@ -5554,339 +5662,230 @@ export const TeacherDashboard: React.FC = () => {
                   {/* Student Daily Marking List */}
                   {!isScheduledOffDay && (
                     <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
-                      <div>
-                        <span className="text-xs font-bold text-slate-700">
-                          Enrolled Students ({classStudents.length})
-                        </span>
-                        <span className="text-[11px] text-slate-400 block sm:inline sm:ml-2">
-                          {isDailyHoliday
-                            ? '🏖️ Official Holiday: Attendance marking is disabled and exempt.'
-                            : isDailyLocked
-                            ? 'Attendance is locked. Click "Edit / Unlock Attendance" above to modify records.'
-                            : 'Tap button to toggle status. Roll No and Student Name remain frozen while scrolling.'}
-                        </span>
+                      <div className="flex flex-row justify-between items-center gap-2 pb-3 border-b border-slate-100">
+                        <h3 className="text-sm font-bold text-slate-800 tracking-tight">
+                          Attendance Register
+                        </h3>
+
+                        {!isDailyHoliday && (
+                          <div className="flex items-center gap-2 shrink-0">
+                            {isDailyLocked ? (
+                              reqForDate?.status === 'pending' ? (
+                                <div className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-amber-950 bg-amber-100 rounded-xl border border-amber-300 shadow-2xs">
+                                  <Clock className="w-4 h-4 text-amber-700 animate-spin" />
+                                  <span>Request Sent - Pending Approval</span>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenUnlockModal(selectedAttendanceDate)}
+                                  className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-amber-50 rounded-xl transition border border-slate-300 hover:border-amber-400 shadow-2xs cursor-pointer"
+                                  title="Request Principal to Unlock this record for corrections"
+                                >
+                                  <Unlock className="w-4 h-4 text-amber-600" />
+                                  <span>Request Unlock</span>
+                                </button>
+                              )
+                            ) : (
+                              <>
+                                {isDailyEditing && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRelockDate(selectedAttendanceDate)}
+                                    className="px-3 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={handleSaveDailyAttendance}
+                                  disabled={isSavingDaily}
+                                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-xs disabled:opacity-50 cursor-pointer"
+                                >
+                                  <Save className="w-4 h-4" />
+                                  <span>
+                                    {isSavingDaily
+                                      ? 'Saving...'
+                                      : dailySaveSuccess
+                                      ? 'Saved!'
+                                      : isDailyEditing
+                                      ? 'Save Corrections'
+                                      : 'Save Attendance'}
+                                  </span>
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
 
-                      {/* View Layout Switcher */}
-                      <div className="inline-flex p-0.5 bg-slate-100 rounded-lg border border-slate-200 text-xs font-semibold">
-                        <button
-                          type="button"
-                          onClick={() => setDailyViewLayout('table')}
-                          className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
-                            dailyViewLayout === 'table'
-                              ? 'bg-emerald-800 text-white shadow-2xs font-bold'
-                              : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          Roster Table
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDailyViewLayout('cards')}
-                          className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
-                            dailyViewLayout === 'cards'
-                              ? 'bg-emerald-800 text-white shadow-2xs font-bold'
-                              : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          Card Grid
-                        </button>
-                      </div>
-                    </div>
-
-                    {classStudents.length === 0 ? (
-                      <div className="text-center py-10 text-slate-400 text-xs">
-                        No active students found in this class.
-                      </div>
-                    ) : dailyViewLayout === 'table' ? (
-                      /* Daily Table Roster with Frozen Columns */
-                      <div
-                        onWheel={handleHorizontalWheel}
-                        className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 relative scrollbar-thin"
-                      >
-                        <table className="w-full min-w-max text-left text-xs border-collapse">
-                          <thead className="sticky top-0 bg-slate-100 z-30">
-                            <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                              <th className="py-3 px-3 text-center w-12 font-mono sticky left-0 bg-slate-100 z-40 shadow-[1px_0_0_0_#e5e7eb]">
-                                Roll
-                              </th>
-                              <th className="py-3 px-4 min-w-[180px] md:min-w-[220px] sticky left-12 bg-slate-100 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                                Student Name
-                              </th>
-                              <th className="py-3 px-2 w-20 text-center font-mono">
-                                Adm No
-                              </th>
-                              <th className="py-3 px-2 w-16 text-center">
-                                Gender
-                              </th>
-                              <th className="py-3 px-4 text-center min-w-[150px]">
-                                Attendance Status
-                              </th>
-                              <th className="py-3 px-3 text-right">
-                                Action
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
+                      {classStudents.length === 0 ? (
+                        <div className="text-center py-10 text-slate-400 text-xs">
+                          No active students found in this class.
+                        </div>
+                      ) : (
+                        <>
+                          {/* Attendance Register Card Grid */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                             {classStudents.map(st => {
                               const isPresent = dailyStatusMap[st.id] !== false;
                               const isDupAdm =
                                 (teacherAdmCounts.get(String(st.admissionNo || '').trim().toLowerCase()) || 0) > 1;
 
                               return (
-                                <tr
+                                <div
                                   key={st.id}
-                                  className={`transition group ${
+                                  onClick={() => !isDailyLocked && !isDailyHoliday && toggleDailyStudent(st.id)}
+                                  className={`flex items-center justify-between p-3 rounded-xl border transition-all select-none ${
                                     isDupAdm
-                                      ? 'bg-red-50/90 hover:bg-red-100/70'
+                                      ? 'bg-red-50/95 border-2 border-red-400 text-red-950'
                                       : isDailyHoliday
-                                      ? 'bg-amber-50/30'
-                                      : isPresent
-                                      ? 'bg-white hover:bg-slate-50/80'
-                                      : 'bg-rose-50/30 hover:bg-rose-50/60'
+                                      ? 'bg-amber-50/30 border-amber-200/60 cursor-default opacity-85'
+                                      : isDailyLocked
+                                      ? 'cursor-default'
+                                      : 'cursor-pointer'
+                                  } ${
+                                    !isDailyHoliday && !isDupAdm && (isPresent
+                                      ? isDailyLocked
+                                        ? 'bg-emerald-50/40 border-emerald-200/70'
+                                        : 'bg-emerald-50/60 border-emerald-200 hover:bg-emerald-50'
+                                      : isDailyLocked
+                                        ? 'bg-rose-50/30 border-rose-200/70'
+                                        : 'bg-rose-50/50 border-rose-200 hover:bg-rose-50')
                                   }`}
                                 >
-                                  <td
-                                    className={`py-3 px-3 text-center font-mono font-bold text-slate-700 w-12 sticky left-0 z-20 shadow-[1px_0_0_0_#e5e7eb] ${
-                                      isDupAdm
-                                        ? 'bg-red-50 group-hover:bg-red-100'
-                                        : isDailyHoliday
-                                        ? 'bg-amber-50 group-hover:bg-amber-100'
-                                        : isPresent
-                                        ? 'bg-white group-hover:bg-slate-50'
-                                        : 'bg-rose-50/70 group-hover:bg-rose-100/70'
-                                    }`}
-                                  >
-                                    {st.rollNo}
-                                  </td>
-                                  <td
-                                    className={`py-3 px-4 whitespace-nowrap min-w-[180px] md:min-w-[220px] sticky left-12 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
-                                      isDupAdm
-                                        ? 'bg-red-50 group-hover:bg-red-100'
-                                        : isDailyHoliday
-                                        ? 'bg-amber-50 group-hover:bg-amber-100'
-                                        : isPresent
-                                        ? 'bg-white group-hover:bg-slate-50'
-                                        : 'bg-rose-50/70 group-hover:bg-rose-100/70'
-                                    }`}
-                                  >
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                      <span className="font-bold text-slate-900">{st.nameEn}</span>
-                                      {isDupAdm && (
-                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-red-100 text-red-700 border border-red-300 shadow-2xs">
-                                          ⚠️ Duplicate Adm No
-                                        </span>
-                                      )}
-                                    </div>
-                                    {st.nameMl && (
-                                      <div className="text-[11px] text-slate-500 font-ml leading-tight mt-0.5">
-                                        {st.nameMl}
-                                      </div>
-                                    )}
-                                  </td>
-                                  <td className="py-3 px-2 text-center font-mono font-bold text-slate-700 w-20">
-                                    <span
-                                      className={
-                                        isDupAdm
-                                          ? 'text-red-700 bg-red-100 px-1 py-0.5 rounded border border-red-200'
-                                          : ''
-                                      }
-                                    >
-                                      {st.admissionNo}
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <span className="w-8 h-8 rounded-lg bg-white border border-slate-200 font-mono font-bold text-xs flex items-center justify-center shrink-0 text-slate-700 shadow-2xs">
+                                      {st.rollNo}
                                     </span>
-                                  </td>
-                                  <td className="py-3 px-2 text-center w-16">
-                                    <span
-                                      className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
-                                        normalizeGender(st.gender) === 'Girl' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
-                                      }`}
-                                    >
-                                      {normalizeGender(st.gender)}
-                                    </span>
-                                  </td>
-                                  <td className="py-3 px-4 text-center">
-                                    {isDailyHoliday ? (
-                                      <span className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-amber-100 text-amber-900 border border-amber-200 inline-block">
-                                        🏖️ Exempt (Holiday)
-                                      </span>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        disabled={isDailyLocked}
-                                        onClick={() => toggleDailyStudent(st.id)}
-                                        className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition-all inline-flex items-center justify-center gap-1.5 min-w-[120px] ${
-                                          isDailyLocked
-                                            ? isPresent
-                                              ? 'bg-emerald-100 text-emerald-800 border-emerald-300 cursor-not-allowed opacity-90'
-                                              : 'bg-rose-100 text-rose-800 border-rose-300 cursor-not-allowed opacity-90'
-                                            : isPresent
-                                            ? 'bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-800 shadow-2xs cursor-pointer'
-                                            : 'bg-white hover:bg-rose-50 text-rose-600 border-rose-300 cursor-pointer'
-                                        }`}
-                                        aria-label={`Toggle attendance for ${st.nameEn}`}
-                                        title={isDailyLocked ? "Record is locked" : `Toggle ${st.nameEn}`}
-                                      >
-                                        {isPresent ? (
-                                          <>
-                                            <Check className="w-4 h-4 stroke-[3]" />
-                                            <span>Present</span>
-                                          </>
-                                        ) : (
-                                          <>
-                                            <X className="w-4 h-4 stroke-[3]" />
-                                            <span>Absent</span>
-                                          </>
+                                    <div className="min-w-0">
+                                      <div className="font-bold text-slate-900 text-sm truncate flex items-center gap-1.5 flex-wrap">
+                                        <span className="whitespace-nowrap">{st.nameEn}</span>
+                                        {isDupAdm && (
+                                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-300 shadow-2xs">
+                                            ⚠️ Duplicate Adm No
+                                          </span>
                                         )}
-                                      </button>
-                                    )}
-                                  </td>
-                                  <td className="py-3 px-3 text-right">
+                                        <span
+                                          className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
+                                            normalizeGender(st.gender) === 'Girl' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                                          }`}
+                                        >
+                                          {normalizeGender(st.gender)}
+                                        </span>
+                                      </div>
+                                      <div className="text-[11px] text-slate-500 whitespace-nowrap">
+                                        Adm:{' '}
+                                        <span
+                                          className={`font-mono font-bold ${
+                                            isDupAdm
+                                              ? 'text-red-700 bg-red-100 px-1 py-0.5 rounded border border-red-200'
+                                              : 'text-slate-700'
+                                          }`}
+                                        >
+                                          {st.admissionNo}
+                                        </span>
+                                        {st.nameMl && (
+                                          <span className="ml-2 text-slate-500 font-ml">{st.nameMl}</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-2 shrink-0">
                                     {isDupAdm && (
                                       <span className="text-[10px] font-bold text-red-700 bg-red-100 border border-red-200 px-1.5 py-0.5 rounded shadow-2xs" title="Duplicate admission number - contact Principal to resolve">
                                         Duplicate Adm No
                                       </span>
                                     )}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      /* Card Grid Layout */
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                        {classStudents.map(st => {
-                          const isPresent = dailyStatusMap[st.id] !== false;
-                          const isDupAdm =
-                            (teacherAdmCounts.get(String(st.admissionNo || '').trim().toLowerCase()) || 0) > 1;
-
-                          return (
-                            <div
-                              key={st.id}
-                              onClick={() => !isDailyLocked && !isDailyHoliday && toggleDailyStudent(st.id)}
-                              className={`flex items-center justify-between p-3 rounded-xl border transition-all select-none ${
-                                isDupAdm
-                                  ? 'bg-red-50/95 border-2 border-red-400 text-red-950'
-                                  : isDailyHoliday
-                                  ? 'bg-amber-50/30 border-amber-200/60 cursor-default opacity-85'
-                                  : isDailyLocked
-                                  ? 'cursor-default'
-                                  : 'cursor-pointer'
-                              } ${
-                                !isDailyHoliday && !isDupAdm && (isPresent
-                                  ? isDailyLocked
-                                    ? 'bg-emerald-50/40 border-emerald-200/70'
-                                    : 'bg-emerald-50/60 border-emerald-200 hover:bg-emerald-50'
-                                  : isDailyLocked
-                                    ? 'bg-rose-50/30 border-rose-200/70'
-                                    : 'bg-rose-50/50 border-rose-200 hover:bg-rose-50')
-                              }`}
-                            >
-                              <div className="flex items-center gap-3 min-w-0">
-                                <span className="w-8 h-8 rounded-lg bg-white border border-slate-200 font-mono font-bold text-xs flex items-center justify-center shrink-0 text-slate-700 shadow-2xs">
-                                  {st.rollNo}
-                                </span>
-                                <div className="min-w-0">
-                                  <div className="font-bold text-slate-900 text-sm truncate flex items-center gap-1.5 flex-wrap">
-                                    <span className="whitespace-nowrap">{st.nameEn}</span>
-                                    {isDupAdm && (
-                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-300 shadow-2xs">
-                                        ⚠️ Duplicate Adm No
+                                    {isDailyHoliday ? (
+                                      <span className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-amber-100 text-amber-900 border border-amber-200">
+                                        🏖️ Exempt (Holiday)
                                       </span>
-                                    )}
-                                    <span
-                                      className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
-                                        normalizeGender(st.gender) === 'Girl' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
-                                      }`}
-                                    >
-                                      {normalizeGender(st.gender)}
-                                    </span>
-                                  </div>
-                                  <div className="text-[11px] text-slate-500 whitespace-nowrap">
-                                    Adm:{' '}
-                                    <span
-                                      className={`font-mono font-bold ${
-                                        isDupAdm
-                                          ? 'text-red-700 bg-red-100 px-1 py-0.5 rounded border border-red-200'
-                                          : 'text-slate-700'
-                                      }`}
-                                    >
-                                      {st.admissionNo}
-                                    </span>
-                                    {st.nameMl && (
-                                      <span className="ml-2 text-slate-500 font-ml">{st.nameMl}</span>
+                                    ) : (
+                                      <>
+                                        <span
+                                          className={`text-[11px] font-bold px-2 py-0.5 rounded-md hidden sm:inline-block ${
+                                            isPresent
+                                              ? 'bg-emerald-100 text-emerald-800'
+                                              : 'bg-rose-100 text-rose-800'
+                                          }`}
+                                        >
+                                          {isPresent ? 'Present' : 'Absent'}
+                                        </span>
+
+                                        <button
+                                          type="button"
+                                          disabled={isDailyLocked || isDailyHoliday}
+                                          onClick={e => {
+                                            e.stopPropagation();
+                                            if (!isDailyLocked && !isDailyHoliday) {
+                                              toggleDailyStudent(st.id);
+                                            }
+                                          }}
+                                          className={`min-h-10 min-w-10 w-10 h-10 rounded-xl flex items-center justify-center transition-all border ${
+                                            isDailyLocked
+                                              ? isPresent
+                                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300 cursor-not-allowed opacity-90'
+                                                : 'bg-rose-100 text-rose-800 border-rose-300 cursor-not-allowed opacity-90'
+                                              : isPresent
+                                                ? 'bg-emerald-700 text-white border-emerald-800 shadow-2xs cursor-pointer'
+                                                : 'bg-white text-rose-600 border-rose-300 cursor-pointer'
+                                          }`}
+                                          aria-label={`Toggle attendance for ${st.nameEn}`}
+                                          title={isDailyLocked ? "Record is locked to prevent duplicate entry" : `Toggle ${st.nameEn}`}
+                                        >
+                                          {isPresent ? (
+                                            <Check className="w-5 h-5 stroke-[3]" />
+                                          ) : (
+                                            <X className="w-5 h-5 stroke-[3]" />
+                                          )}
+                                        </button>
+                                      </>
                                     )}
                                   </div>
                                 </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Sticky Bottom Stats Bar */}
+                          {!isDailyHoliday && (
+                            <div className="sticky bottom-0 z-10 bg-white/95 backdrop-blur-sm p-3 shadow-md border border-slate-200 rounded-xl mt-3 flex flex-wrap items-center justify-between gap-2.5">
+                              <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                                <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-900">
+                                  <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                                  <span>Present:</span>
+                                  <span className="font-mono text-sm">{dailyPresentCount}</span>
+                                </div>
+                                <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-50 border border-rose-200 text-xs font-bold text-rose-900">
+                                  <span className="w-2 h-2 rounded-full bg-rose-600" />
+                                  <span>Absent:</span>
+                                  <span className="font-mono text-sm">{dailyAbsentCount}</span>
+                                </div>
                               </div>
 
-                              <div className="flex items-center gap-2 shrink-0">
-                                {isDupAdm && (
-                                  <span className="text-[10px] font-bold text-red-700 bg-red-100 border border-red-200 px-1.5 py-0.5 rounded shadow-2xs" title="Duplicate admission number - contact Principal to resolve">
-                                    Duplicate Adm No
-                                  </span>
-                                )}
-                                {isDailyHoliday ? (
-                                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-amber-100 text-amber-900 border border-amber-200">
-                                    🏖️ Exempt (Holiday)
-                                  </span>
-                                ) : (
-                                  <>
-                                    <span
-                                      className={`text-[11px] font-bold px-2 py-0.5 rounded-md hidden sm:inline-block ${
-                                        isPresent
-                                          ? 'bg-emerald-100 text-emerald-800'
-                                          : 'bg-rose-100 text-rose-800'
-                                      }`}
-                                    >
-                                      {isPresent ? 'Present' : 'Absent'}
-                                    </span>
-
-                                    <button
-                                      type="button"
-                                      disabled={isDailyLocked || isDailyHoliday}
-                                      onClick={e => {
-                                        e.stopPropagation();
-                                        if (!isDailyLocked && !isDailyHoliday) {
-                                          toggleDailyStudent(st.id);
-                                        }
-                                      }}
-                                      className={`min-h-10 min-w-10 w-10 h-10 rounded-xl flex items-center justify-center transition-all border ${
-                                        isDailyLocked
-                                          ? isPresent
-                                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300 cursor-not-allowed opacity-90'
-                                            : 'bg-rose-100 text-rose-800 border-rose-300 cursor-not-allowed opacity-90'
-                                          : isPresent
-                                            ? 'bg-emerald-700 text-white border-emerald-800 shadow-2xs cursor-pointer'
-                                            : 'bg-white text-rose-600 border-rose-300 cursor-pointer'
-                                      }`}
-                                      aria-label={`Toggle attendance for ${st.nameEn}`}
-                                      title={isDailyLocked ? "Record is locked to prevent duplicate entry" : `Toggle ${st.nameEn}`}
-                                    >
-                                      {isPresent ? (
-                                        <Check className="w-5 h-5 stroke-[3]" />
-                                      ) : (
-                                        <X className="w-5 h-5 stroke-[3]" />
-                                      )}
-                                    </button>
-                                  </>
-                                )}
+                              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-800 text-white border border-emerald-900 shadow-xs">
+                                <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-100">
+                                  Percentage
+                                </span>
+                                <span className="font-mono text-sm sm:text-base font-extrabold">
+                                  {dailyPercentage}%
+                                </span>
                               </div>
                             </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
             })()}
 
             {/* VIEW 2: WEEKLY ATTENDANCE MARKING */}
-            {attendanceMode === 'weekly' && (
+            {attendanceMainTab === 'marking' && attendanceMode === 'weekly' && (
               <div className="space-y-4">
                 <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -6313,8 +6312,27 @@ export const TeacherDashboard: React.FC = () => {
               </div>
             )}
 
-            {/* VIEW 3: MONTHLY ATTENDANCE SUMMARY REPORT */}
-            {attendanceMode === 'monthly_report' && (
+            {/* VIEW 3: MONTHLY ATTENDANCE MARKING (CALENDAR) */}
+            {attendanceMainTab === 'marking' && attendanceMode === 'monthly' && (
+              <MonthlyMarkingCalendar
+                classId={effectiveClassId}
+                className={selectedClass?.name || effectiveClassId}
+                classStudents={classStudents}
+                classAttendanceConfig={classAttendanceConfig}
+                todayStr={todayStr}
+                isDateHoliday={isDateHoliday}
+                getHolidayInfo={getHolidayInfo}
+                isDateSunday={isDateSunday}
+                isSundayUnlockedForClass={isSundayUnlockedForClass}
+                onSaveMonthlyAttendance={handleSaveMonthlyAttendance}
+                isSaving={isSavingMonthly}
+                saveSuccess={monthlySaveSuccess}
+                isMl={lang === 'ml'}
+              />
+            )}
+
+            {/* REPORT VIEW A: MONTHLY REPORT */}
+            {attendanceMainTab === 'report' && attendanceReportSubTab === 'monthly_report' && (
               <MonthlyAttendanceReport
                 initialClassId={attendanceClassId || inChargeClass?.id || classes[0]?.id || 'cls_1'}
                 classes={classes}
@@ -6322,8 +6340,8 @@ export const TeacherDashboard: React.FC = () => {
               />
             )}
 
-            {/* SECTION: MONTH-WISE ATTENDANCE OVERVIEW SHEET */}
-            {attendanceMode !== 'monthly_report' && (
+            {/* REPORT VIEW B: MONTHLY WISE ATTENDANCE OVERVIEW */}
+            {attendanceMainTab === 'report' && attendanceReportSubTab === 'overview' && (
             <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden space-y-4">
               <div className="p-5 border-b border-slate-200 bg-slate-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>

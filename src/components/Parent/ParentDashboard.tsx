@@ -1924,16 +1924,13 @@ export const ParentDashboard: React.FC = () => {
                           </h2>
                         </div>
                         <p className="text-xs text-slate-500 mt-1">
-                          Official attendance log for {selectedChild?.nameEn} (Class: {(classesMap[selectedChild?.classId || ''] || selectedChild?.classId || '').replace(/^Class\s*/i, '')})
+                          Comprehensive attendance history and daily presence record.
                         </p>
                       </div>
 
-                      {/* 4 Stat Cards in a Single Horizontal Row */}
-                      <div
-                        onWheel={handleHorizontalWheel}
-                        className="flex flex-row overflow-x-auto no-scrollbar sm:grid sm:grid-cols-4 gap-2.5 sm:gap-3 pt-5 text-xs"
-                      >
-                        <div className="bg-slate-50 p-3.5 sm:p-4 rounded-xl border border-slate-200 min-w-[130px] flex-1 sm:min-w-0 shrink-0">
+                      {/* 4 Stat Cards in a 2x2 Grid */}
+                      <div className="grid grid-cols-2 gap-3 pt-5 text-xs">
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                           <span className="text-[10px] font-bold text-slate-500 uppercase block">
                             Total Working Days
                           </span>
@@ -1942,7 +1939,7 @@ export const ParentDashboard: React.FC = () => {
                           </span>
                         </div>
 
-                        <div className="bg-emerald-50/70 p-3.5 sm:p-4 rounded-xl border border-emerald-200 min-w-[130px] flex-1 sm:min-w-0 shrink-0">
+                        <div className="bg-emerald-50/70 p-4 rounded-xl border border-emerald-200">
                           <span className="text-[10px] font-bold text-emerald-800 uppercase block">
                             Attended Days
                           </span>
@@ -1951,7 +1948,7 @@ export const ParentDashboard: React.FC = () => {
                           </span>
                         </div>
 
-                        <div className="bg-amber-50/80 p-3.5 sm:p-4 rounded-xl border border-amber-300 min-w-[130px] flex-1 sm:min-w-0 shrink-0">
+                        <div className="bg-amber-50/80 p-4 rounded-xl border border-amber-300">
                           <span className="text-[10px] font-bold text-amber-900 uppercase block">
                             Official Holidays
                           </span>
@@ -1960,7 +1957,7 @@ export const ParentDashboard: React.FC = () => {
                           </span>
                         </div>
 
-                        <div className="bg-rose-50/70 p-3.5 sm:p-4 rounded-xl border border-rose-200 min-w-[130px] flex-1 sm:min-w-0 shrink-0">
+                        <div className="bg-rose-50/70 p-4 rounded-xl border border-rose-200">
                           <span className="text-[10px] font-bold text-rose-800 uppercase block">
                             Leaves Taken
                           </span>
