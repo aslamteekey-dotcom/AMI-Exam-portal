@@ -960,7 +960,10 @@ export const ParentDashboard: React.FC = () => {
     <div className="w-full flex-1 flex flex-col min-h-0">
       {/* Welcome Banner: Spacious */}
       <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-[#047857] text-white rounded-2xl sm:rounded-3xl p-4 sm:p-5 shadow-xl border border-white/30 print:hidden shrink-0 mb-3 sm:mb-4">
-        <div className="flex flex-col gap-2.5">
+        <div className="flex flex-col gap-2">
+          <div className="w-full text-center font-serif font-semibold text-emerald-100 text-sm sm:text-base tracking-wide" dir="rtl">
+            السلام عليكم و رحمة الله
+          </div>
           <div className="min-w-0 w-full">
             <h1 className="text-lg sm:text-2xl font-bold font-serif leading-tight whitespace-normal break-words">
               {isMl && user?.nameMl ? user.nameMl : user?.name}
@@ -969,9 +972,6 @@ export const ParentDashboard: React.FC = () => {
               <span className="block whitespace-normal">{t.parentRole}</span>
               <span className="block whitespace-normal">{currentMadrasaName}</span>
             </p>
-          </div>
-          <div className="w-full text-center font-serif text-emerald-300 text-sm sm:text-base" dir="rtl">
-            السلام عليكم و رحمة الله
           </div>
         </div>
       </div>
@@ -1346,7 +1346,7 @@ export const ParentDashboard: React.FC = () => {
           </div>
 
           {/* VIEW SWITCHER LOGIC: BELOW THE TOP SECTION */}
-          <div className="w-full pb-20 space-y-4">
+          <div className="w-full max-md:pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-6 space-y-4">
             {activeTab === 'home' && (
               isStandalone ? (
                 /* PWA 'Home' View: Render ONLY the 12 Dashboard Tiles grid */
@@ -3138,8 +3138,8 @@ export const ParentDashboard: React.FC = () => {
             </div>
           )}
 
-            {/* Compact Integrated Glassmorphic Footer - Flows Naturally Below Tiles */}
-            <Footer className="mt-6 sm:mt-8 mb-0 rounded-xl" />
+            {/* Integrated Parent Portal Footer - Medium Green Bar with Clear Gap Above Bottom Nav */}
+            <Footer variant="green" className="mt-8 sm:mt-10 mb-6 rounded-xl" />
           </div>
         </div>
       )}
